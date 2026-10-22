@@ -1,0 +1,33 @@
+# A `v*` tag builds the wheel + sdist from the tagged commit and attaches them to a GitHub
+# release. Consumers pin the WHEEL URL (immutable bytes, no git CLI needed in a slim image):
+#   llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/vX.Y.Z/llm_ports-X.Y.Z-py3-none-any.whl
+# The tag must match pyproject's version, or the release is refused before anything uploads.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - name: tag matches pyproject version
+        run: |
+          v=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME != pyproject v$v"; exit 1; }
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+      - run: uv build
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # no --clobber fallback: a published wheel's bytes are what consumers locked a hash of
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
