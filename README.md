@@ -5,7 +5,7 @@ ports are ours and tiny; structured output, output retries and validation come f
 [pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
 
 ```
-pip install "llm-ports @ git+https://github.com/mjdevaccount/llm-ports@v0.1.0"
+pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.1.1/llm_ports-0.1.1-py3-none-any.whl"
 ```
 
 ## What is in it
