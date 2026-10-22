@@ -1,0 +1,6 @@
+id: demo.multi
+version: 0.1.0
+role: small-web
+templates:
+  prompt: prompt.j2
+  second: second.j2

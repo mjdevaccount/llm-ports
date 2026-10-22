@@ -1,0 +1,5 @@
+id: demo.one
+version: 1.2.3
+role: small-chat
+templates:
+  prompt: prompt.j2

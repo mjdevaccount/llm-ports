@@ -1,0 +1,24 @@
+# A consumer's tier table, as a test fixture: two self-hosted tiers and one cloud tier.
+[ladder]
+web_deadline_s = 240.0
+web_timeout_s = 260.0
+default_s = 120.0
+cloud_s = 60.0
+
+[models]
+chat = "small-chat"
+web = "small-web"
+cloud = "gpt-5-nano"
+
+[tiers.box]
+model = "chat"
+timeout = "default_s"
+
+[tiers.box-web]
+model = "web"
+timeout = "web_timeout_s"
+
+[tiers.cloud]
+model = "cloud"
+timeout = "cloud_s"
+box = false
