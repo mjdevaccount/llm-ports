@@ -5,7 +5,7 @@ ports are ours and tiny; structured output, output retries and validation come f
 [pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
 
 ```
-pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.1.1/llm_ports-0.1.1-py3-none-any.whl"
+pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.2.0/llm_ports-0.2.0-py3-none-any.whl"
 ```
 
 ## What is in it
@@ -18,6 +18,7 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `call` | `generate(role, prompt=, output=, generator=, hooks=)` -- the one call path; outcome is always NAMED: `ok \| gated \| unavailable \| request_fault \| truncated \| invalid` |
 | `call_graders` | per-call graders (`schema_complete`, `numbers_from_inputs`, `echo`); a grader result is a recorded score, a crashed grader scores `-1.0` |
 | `pydantic_ai_generator` | the first `Generator` adapter (`PydanticAIGenerator`, `openai_compatible(base_url, key)` for any OpenAI-wire endpoint, e.g. a LiteLLM gateway) |
+| `grounding` | the shapes a grounded generator shares: `Problem(path, reason, detail)`, `retry_message` (the ONE retry text), `belt` (numbers no input rendered; 0 by construction) and `allowed_numbers` |
 | `testing` | `StubGenerator`, `RecordingTracer` for consumers' tests |
 | `failure`, `context`, `json_schema`, `numbers`, `claim_refute` | small EDGE-free helpers the call path and graders use |
 

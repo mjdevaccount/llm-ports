@@ -9,6 +9,7 @@ operator feed through a reason field, one row per tick. And a proxy error can em
 from __future__ import annotations
 
 from collections.abc import Iterator
+from itertools import islice
 
 REASON_MAX = 200
 
@@ -24,9 +25,23 @@ class GenerationFailed(RuntimeError):
         self.reason = reason
 
 
-def failure_reason(exc: BaseException) -> str:
+def failure_reason(exc: BaseException, *, with_cause: bool = False) -> str:
     """Exception class, the status code when the exception carries one, and the first line of its
-    message cut BEFORE any `body:` payload -- never the body."""
+    message cut BEFORE any `body:` payload -- never the body.
+
+    `with_cause`: append ` <- <the cause's reason>`, cut by the same rule. A wrapper's own line
+    can name nothing ("Exceeded maximum output retries"); its cause ("Invalid JSON: EOF while
+    parsing a string" -- the reply hit max_tokens) is what names the fix. The whole line stays
+    within REASON_MAX, and the cause keeps up to half of it."""
+    head = _reason(exc)
+    cause = next(islice(exception_chain(exc), 1, None), None) if with_cause else None
+    if cause is None:
+        return head
+    tail = _reason(cause)[: REASON_MAX // 2]
+    return f"{head[: REASON_MAX - len(tail) - 4]} <- {tail}"
+
+
+def _reason(exc: BaseException) -> str:
     cls = type(exc).__name__
     code = getattr(exc, "status_code", None)
     head = (str(exc).splitlines() or [""])[0]
