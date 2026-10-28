@@ -19,7 +19,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from llm_ports.numbers import NUM, NUMBER_WORDS, digits
+from llm_ports.numbers import NUM, NUMBER_WORDS, canon, digits
 
 RETRY_PREFIX = "Fix these and answer again: "
 # A code-written citation link is provenance, not a claim: `[example.com](https://example.com/2026/10/07/x)`.
@@ -64,7 +64,7 @@ def belt(text: str, allowed: set[str], words_ok: str = "", *, strip_links: bool 
     `words_ok` is a substring haystack: to license a word found in ANY of several inputs, join them
     on a newline (a number word holds no whitespace, so a join can never glue two halves into one)."""
     body = _LINK.sub("", text or "") if strip_links else (text or "")
-    hits = sum(1 for n in NUM.findall(body) if n.replace(",", "") not in allowed)
+    hits = sum(1 for n in NUM.findall(body) if canon(n) not in allowed)
     ok = words_ok.lower()
     return hits + sum(1 for w in NUMBER_WORDS.findall(body) if w.lower() not in ok)
 

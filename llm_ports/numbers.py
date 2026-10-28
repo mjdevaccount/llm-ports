@@ -37,9 +37,18 @@ def redact(text: str, *, hole: str, pattern: re.Pattern[str] = NUM) -> str:
     return pattern.sub(hole, text or "")
 
 
+def canon(run: str) -> str:
+    """One digit run as its VALUE reads: thousands separators and trailing decimal zeros dropped.
+    "2.20" and "2.2" are one number, "7.0" is "7", "1,234.50" is "1234.5"; an integer is unchanged
+    ("100" keeps its zeros). An exact-string compare failed honest replies that wrote "peak 2.20"
+    against a rendered 2.2 (EDGE trade.autopsy, 5 of 40 failing replies on 2026-10-27)."""
+    n = run.replace(",", "")
+    return n.rstrip("0").rstrip(".") if "." in n else n
+
+
 def digits(text: str) -> set[str]:
-    """Digit runs in `text`, thousands separators dropped: the set a belt compares against."""
-    return {n.replace(",", "") for n in NUM.findall(text or "")}
+    """Digit runs in `text` by value (`canon`): the set a belt compares against."""
+    return {canon(n) for n in NUM.findall(text or "")}
 
 
 def spelled(text: str) -> set[str]:
