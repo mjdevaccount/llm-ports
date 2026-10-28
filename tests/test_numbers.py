@@ -10,6 +10,13 @@ def test_digits_drops_thousands_separators_and_keeps_decimals() -> None:
     assert numbers.digits("") == set() and numbers.digits(None) == set()  # type: ignore[arg-type]
 
 
+def test_a_digit_run_is_compared_by_value_so_trailing_zeros_never_fail_an_honest_figure() -> None:
+    assert numbers.canon("2.20") == "2.2" and numbers.canon("7.0") == "7"
+    assert numbers.canon("1,234.50") == "1234.5" and numbers.canon("100") == "100"
+    assert numbers.digits("peak 2.20, held 7.0") == {"2.2", "7"}
+    assert numbers.uncited("peak 2.20", [("", "peak_px 2.2")]) == []
+
+
 def test_spelled_catches_number_words_and_their_fragments() -> None:
     assert numbers.spelled("Nine one point seven million") == {"nine", "seven", "million"}
     assert numbers.spelled("an ighteen-year high, from ills to ills") == {"ighteen", "ills"}
