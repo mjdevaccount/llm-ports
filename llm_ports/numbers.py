@@ -56,15 +56,30 @@ def spelled(text: str) -> set[str]:
     return {w.lower() for w in NUMBER_WORDS.findall(text or "")}
 
 
+def loose(text: str, allowed: set[str], words_ok: str = "") -> list[str]:
+    """THE number law, in one place: every figure in `text` that no input licensed, in order of
+    appearance, repeats kept -- a digit run whose VALUE (`canon`) is not in `allowed`, then a
+    spelled number or number-word tail not found in `words_ok`. Empty = every number is licensed.
+
+    `words_ok` is a substring haystack, lower-cased: join several inputs on a newline (a number
+    word holds no whitespace, so a join can never glue two halves into one), and an input that
+    shows '%' licenses 'percent' ("3 percent" says what "3%" says). Every belt, grader and
+    validator reads a number through this one function, so they can never disagree about what a
+    number is or what licenses it: `grounding.belt` / `slots.belt` count it, `uncited` sorts it,
+    `call_graders.numbers_from_inputs` scores it."""
+    ok = (words_ok or "").lower()
+    if "%" in ok:
+        ok += "\npercent"
+    out = [canon(n) for n in NUM.findall(text or "") if canon(n) not in allowed]
+    return out + [w.lower() for w in NUMBER_WORDS.findall(text or "") if w.lower() not in ok]
+
+
 def uncited(claim: str, spans: Iterable[tuple[str, str]]) -> list[str]:
-    """THE number law, in one place: every digit run and spelled number in `claim` must appear in
-    a cited span -- digits in a span's title or text, spelled words in its text, and a span that
-    shows '%' licenses 'percent'. `spans` are (title, text) pairs. Returns the figures no span
-    rendered, digits then words, each sorted; empty = every number is cited. No spans -> every
-    number is missing. One rule, so every validator and Grounder that applies it moves together."""
+    """`loose` in the cited-spans shape: every digit run and spelled number in `claim` must appear
+    in a cited span -- digits in a span's title or text, spelled words in its text. `spans` are
+    (title, text) pairs. Returns the figures no span rendered, digits then words, each sorted and
+    unique; empty = every number is cited. No spans -> every number is missing."""
     pairs = list(spans)
     have = set().union(*(digits(t) | digits(ti) for ti, t in pairs)) if pairs else set()
-    words = set().union(*(spelled(t) for _, t in pairs)) if pairs else set()
-    if any("%" in t for _, t in pairs):
-        words.add("percent")            # "3 percent" says what a span's "3%" says
-    return sorted(digits(claim) - have) + sorted(spelled(claim) - words)
+    hits = loose(claim, have, "\n".join(t for _, t in pairs))
+    return sorted({h for h in hits if h[0].isdigit()}) + sorted({h for h in hits if not h[0].isdigit()})

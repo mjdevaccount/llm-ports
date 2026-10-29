@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from llm_ports.grounding import RETRY_PREFIX, Problem, allowed_numbers, belt, describe, retry_message
+from llm_ports.grounding import RETRY_PREFIX, Problem, allowed_numbers, belt, describe, loose, retry_message
 
 
 def test_retry_text_names_path_reason_and_detail_only_when_there_is_one() -> None:
@@ -34,6 +34,17 @@ def test_the_belt_counts_unrendered_digits_and_spelled_numbers() -> None:
 def test_a_newline_join_cannot_glue_a_spelled_word_from_two_inputs() -> None:
     assert belt("ten", set(), "Bit\nen route") == 1
     assert belt("ten", set(), "Biten route") == 0                     # glued, the join would lie
+
+
+def test_the_belt_is_loose_counted_so_a_verifier_can_name_what_it_refused() -> None:
+    allowed = allowed_numbers(["Into the close, shock's elevated at 58; vol jump 1.8x; sizing 0.56x"])
+    tl = "Into the close, shock's elevated at 58; vol jump 1.8x; sizing 0.56x"
+    assert loose("Shock's up to 58, vol popping 1.8x, sizing cut to 0.56x.", allowed, tl) == []
+    assert loose("Shock's ripping to 62 into the close.", allowed, tl) == ["62"]
+    assert loose("Shock's at fifty-eight.", allowed, tl) == ["fifty", "eight"]   # spelled is a number too
+    assert loose("3 percent", {"3"}, "up 3%") == [] and belt("3 percent", {"3"}, "up 3 points") == 1
+    md = "rally [example.com](https://example.com/2026/10/07/x) to 741"
+    assert loose(md, {"740"}, strip_links=True) == ["741"] and belt(md, {"740"}) == 4
 
 
 def test_strip_links_drops_link_targets_only() -> None:

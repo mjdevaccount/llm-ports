@@ -28,7 +28,23 @@ def test_redact_fills_every_number_with_the_callers_hole() -> None:
     assert numbers.redact("SPY at 580.5, up 3%", hole="[n]") == "SPY at [n], up [n]%"
 
 
-def test_uncited_is_the_one_number_law() -> None:
+def test_loose_names_every_unlicensed_figure_in_order_with_repeats() -> None:
+    allowed = numbers.digits("the level is 580.50, nine voters")
+    words = "the level is 580.50\nnine voters"
+    assert numbers.loose("held 580.5 then 581 and 581, nine then ten", allowed, words) == ["581", "581", "ten"]
+    assert numbers.loose("an ighteen-year high", allowed, words) == ["ighteen"]
+    assert numbers.loose("peak 2.20", {"2.2"}) == []                       # by value, never by spelling
+    assert numbers.loose("", allowed, words) == [] and numbers.loose(None, set()) == []  # type: ignore[arg-type]
+
+
+def test_a_percent_sign_in_the_inputs_licenses_the_word_and_a_newline_join_never_glues_words() -> None:
+    assert numbers.loose("up three percent", {"3"}, "up 3%") == ["three"]
+    assert numbers.loose("up three percent", {"3"}, "up 3 points") == ["three", "percent"]
+    assert numbers.loose("ten", set(), "Bit\nen route") == ["ten"]
+    assert numbers.loose("ten", set(), "Biten route") == []               # glued, the join would lie
+
+
+def test_uncited_is_loose_in_the_cited_spans_shape() -> None:
     spans = [("Close 580", "SPY closed at 580.5, up 3%")]
     assert numbers.uncited("at 580.5 and 580, up 3 percent", spans) == []
     assert numbers.uncited("at 581, up three percent", spans) == ["581", "three"]

@@ -24,6 +24,12 @@ def test_a_filled_text_is_clean_on_the_belt_and_an_invented_figure_is_not() -> N
     assert slots.belt("held twenty minutes", VALUES) == 1                # spelled is a number too
 
 
+def test_loose_names_the_figure_so_a_retry_can_say_which() -> None:
+    assert slots.loose("in at {entry_px}, held twenty minutes near 2.40", VALUES) == ["2.4", "twenty"]
+    assert slots.loose("in at {entry_px}, out at {exit_px}", VALUES) == []
+    assert slots.loose("fourteen minutes", {**VALUES, "note": "fourteen minutes in"}) == []   # any value licenses it
+
+
 def test_problems_name_an_unknown_slot_a_stray_brace_and_a_value_cited_twice() -> None:
     assert slots.problems("in at {entry_px}", VALUES) == []
     assert slots.problems("in at {strike}", VALUES) == ["unknown slot {strike}"]

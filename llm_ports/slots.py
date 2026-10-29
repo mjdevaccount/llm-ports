@@ -90,13 +90,20 @@ def problems(text: str, rendered: Mapping[str, str], *, once: bool = True) -> li
     return out
 
 
-def belt(text: str, rendered: Mapping[str, str]) -> int:
-    """Numbers in FILLED `text` that no rendered value shows, digits or spelled out. Must be 0.
-    A spelled word is licensed by any value that renders it (values are joined on newlines, and a
-    number word holds no whitespace)."""
+def loose(text: str, rendered: Mapping[str, str]) -> list[str]:
+    """The figures in `text` that no rendered value shows, digits or spelled out, in order
+    (`grounding.loose`). A spelled word is licensed by any value that renders it (values are
+    joined on newlines, and a number word holds no whitespace). Over the UNFILLED text it names
+    what the model wrote around the grammar (a spelled number); over the FILLED text it is the
+    belt's evidence."""
     values = list(rendered.values())
-    return grounding.belt(text, grounding.allowed_numbers(values), "\n".join(values))
+    return grounding.loose(text, grounding.allowed_numbers(values), "\n".join(values))
 
 
-__all__ = ["ID", "PROSE_CHARS", "PROSE_PATTERN", "SLOT", "belt", "cited", "fill", "problems",
+def belt(text: str, rendered: Mapping[str, str]) -> int:
+    """How many figures in FILLED `text` no rendered value shows (`loose`, counted). Must be 0."""
+    return len(loose(text, rendered))
+
+
+__all__ = ["ID", "PROSE_CHARS", "PROSE_PATTERN", "SLOT", "belt", "cited", "fill", "loose", "problems",
            "prose_pattern", "slot_pattern"]
