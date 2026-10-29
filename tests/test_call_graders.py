@@ -48,6 +48,16 @@ class TestEachGrader:
         bad = cg.numbers_from_inputs(PROMPT, {"why": "spot sat at 999 after a 42 point drop"}, ROLE)
         assert not bad.passed and bad.value == 2.0 and "999" in bad.reason
 
+    def test_numbers_from_inputs_reads_a_spelled_number_as_the_writers_belts_do(self) -> None:
+        # A digit-free grammar made the model SPELL it ("nine one point seven million"): no input
+        # rendered that figure, and the per-call grader must agree with slots.belt about it.
+        spelled = cg.numbers_from_inputs(PROMPT, {"why": "spot sat seven points above the wall"}, ROLE)
+        assert not spelled.passed and spelled.value == 1.0 and "seven" in spelled.reason
+        # The prompt's own words license a word; a '%' in the prompt licenses 'percent'.
+        ok = cg.numbers_from_inputs("nine voters, up 3% (three points)", {"why": "nine voted for three percent"}, ROLE)
+        assert ok.passed, ok.reason
+        assert cg.numbers_from_inputs(PROMPT, {"why": "peak 766.20"}, ROLE).passed, "766.20 is 766.2 by value"
+
     def test_echo(self) -> None:
         own = cg.echo(PROMPT, {"a": "Breadth was the tell and the dealer book was short gamma all session."}, ROLE)
         assert own.passed and own.value == 0.0

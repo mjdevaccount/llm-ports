@@ -13,8 +13,10 @@ Three built-in graders, for the `structured` family (dict or pydantic outputs un
                        required key, so "parsed" is not "answered". An EMPTY LIST is an answer
                        (prompts ask for `[]` when nothing applies), so only None and blank text
                        count as unanswered.
-  numbers_from_inputs  digit runs in the reply's prose that no part of the prompt rendered
-                       (`numbers.digits`). The number law, per call.
+  numbers_from_inputs  figures in the reply's prose that no part of the prompt rendered: digit
+                       runs by value AND spelled numbers (`numbers.loose`, the one number law;
+                       a digit-free grammar made models SPELL the figure, so a digits-only
+                       grader passed what the writers' belts refused). The number law, per call.
   echo                 share of the reply's sentences copied verbatim from the prompt. A model
                        that hands the evidence back is not analysing it.
 
@@ -33,7 +35,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from llm_ports.numbers import digits
+from llm_ports.numbers import digits, loose
 from llm_ports.roles import Role
 
 ECHO_MAX_SHARE = 0.5          # bar for `echo`: half the sentences copied is a reply, not an analysis
@@ -90,10 +92,12 @@ def schema_complete(_prompt: str, value: Any, _role: Role) -> CallScore:
 
 
 def numbers_from_inputs(prompt: str, value: Any, _role: Role) -> CallScore:
+    """Distinct figures (digit runs by value, spelled numbers) in the reply's prose that the prompt
+    did not render; the prompt's own text licenses a spelled word and '%' licenses 'percent'."""
     have = digits(prompt)
-    loose = sorted({n for s in prose(value) for n in digits(s) if n not in have})
-    return CallScore("numbers_from_inputs", float(len(loose)), not loose,
-                     f"numbers no input rendered: {loose[:3]}" if loose else "")
+    hits = sorted({n for s in prose(value) for n in loose(s, have, prompt)})
+    return CallScore("numbers_from_inputs", float(len(hits)), not hits,
+                     f"numbers no input rendered: {hits[:3]}" if hits else "")
 
 
 def _sentences(text: str) -> list[str]:

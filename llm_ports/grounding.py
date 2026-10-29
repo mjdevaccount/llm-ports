@@ -19,7 +19,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from llm_ports.numbers import NUM, NUMBER_WORDS, canon, digits
+from llm_ports.numbers import digits
+from llm_ports.numbers import loose as _loose
 
 RETRY_PREFIX = "Fix these and answer again: "
 # A code-written citation link is provenance, not a claim: `[example.com](https://example.com/2026/10/07/x)`.
@@ -54,9 +55,10 @@ def allowed_numbers(texts: Iterable[str]) -> set[str]:
     return out
 
 
-def belt(text: str, allowed: set[str], words_ok: str = "", *, strip_links: bool = False) -> int:
-    """Numbers in `text` that no input rendered: digit runs not in `allowed`, plus spelled numbers
-    (and number-word tails) that do not appear in `words_ok`. Must be 0.
+def loose(text: str, allowed: set[str], words_ok: str = "", *, strip_links: bool = False) -> list[str]:
+    """The figures in `text` that no input rendered (`numbers.loose`: digit runs not in `allowed`
+    by value, then spelled numbers and number-word tails not found in `words_ok`), named so a
+    verifier can say WHICH figure it refused and a retry can fix exactly that.
 
     `strip_links` drops every markdown link WHOLE, label and target: use it only where code writes
     the links (e.g. `[host](url)` citations), since a number in a label is not checked.
@@ -64,9 +66,12 @@ def belt(text: str, allowed: set[str], words_ok: str = "", *, strip_links: bool 
     `words_ok` is a substring haystack: to license a word found in ANY of several inputs, join them
     on a newline (a number word holds no whitespace, so a join can never glue two halves into one)."""
     body = _LINK.sub("", text or "") if strip_links else (text or "")
-    hits = sum(1 for n in NUM.findall(body) if canon(n) not in allowed)
-    ok = words_ok.lower()
-    return hits + sum(1 for w in NUMBER_WORDS.findall(body) if w.lower() not in ok)
+    return _loose(body, allowed, words_ok)
 
 
-__all__ = ["RETRY_PREFIX", "Problem", "allowed_numbers", "belt", "describe", "retry_message"]
+def belt(text: str, allowed: set[str], words_ok: str = "", *, strip_links: bool = False) -> int:
+    """How many figures in `text` no input rendered (`loose`, counted). Must be 0."""
+    return len(loose(text, allowed, words_ok, strip_links=strip_links))
+
+
+__all__ = ["RETRY_PREFIX", "Problem", "allowed_numbers", "belt", "describe", "loose", "retry_message"]
