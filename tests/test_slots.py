@@ -62,3 +62,26 @@ def test_prose_pattern_carries_its_cap_and_admits_no_digit() -> None:
     assert re.fullmatch(slots.prose_pattern(5), "abcde")
     assert not re.fullmatch(slots.prose_pattern(5), "abcdef")
     assert not re.fullmatch(slots.PROSE_PATTERN, "up 3")
+
+
+def test_to_prose_removes_every_digit_run_whole_and_every_non_prose_character() -> None:
+    # the shapes that fed the 2026-10-30 loops: an entry note, a JSON key, a `k=v`, a percent
+    assert slots.to_prose("p_reverse=0.81 (trusted, at level +0.13%)") == "p reverse (trusted, at level )"
+    assert slots.to_prose("exit 14:00 at 3.1% on 5,000 lots") == "exit at on lots"   # no half a number
+    assert slots.to_prose('{"stop_level": 277.89, "action": "hold"}') == "stop level : , action : hold"
+    assert slots.to_prose("twenty lots near the wall") == "twenty lots near the wall"   # spelled: the belt's
+    assert slots.to_prose("") == "" and slots.to_prose(None) == ""  # type: ignore[arg-type]
+    assert slots.to_prose("  two\tlines\nhere ") == "two lines here"
+
+
+def test_to_prose_admits_every_prose_character_and_its_output_always_matches_the_grammar() -> None:
+    import string
+    admitted = "".join(c for c in string.printable if re.fullmatch(slots.PROSE_CHARS, c))
+    assert "a" in admitted and "'" in admitted and "-" in admitted and " " in admitted
+    assert slots.to_prose(admitted) == admitted.strip()          # nothing admitted is touched
+    refused = [c for c in string.printable if not re.fullmatch(slots.PROSE_CHARS, c)]
+    assert "0" in refused and "_" in refused and "=" in refused and "{" in refused
+    for c in refused:
+        assert slots.to_prose(f"a{c}b") in ("a b", "ab"), c       # a space, or gone with its digits
+    for s in ("a1b", "x{y}", "k=v", "a_b", "50%", "#tag", "say \"hi\"", "14:00 ET"):
+        assert re.fullmatch(slots.PROSE_PATTERN, slots.to_prose(s)), s

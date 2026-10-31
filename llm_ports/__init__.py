@@ -29,7 +29,7 @@ from llm_ports.ports import (
 )
 from llm_ports.roles import Role, Tier, TierTable, load_tiers
 
-__version__ = "0.3.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "Chunk",

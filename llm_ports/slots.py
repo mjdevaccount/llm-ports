@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 
-from llm_ports import grounding
+from llm_ports import grounding, numbers
 
 #: Every character a prose run may hold: no digits, nothing JSON must escape.
 PROSE_CHARS = r"[A-Za-z ,.;:'()/&?!-]"
@@ -105,5 +105,26 @@ def belt(text: str, rendered: Mapping[str, str]) -> int:
     return len(loose(text, rendered))
 
 
+#: A character no prose run may hold: the complement of PROSE_CHARS, derived from it so the two
+#: cannot drift (a test pins that every admitted character survives `to_prose`).
+_NOT_PROSE = re.compile(PROSE_CHARS.replace("[", "[^", 1))
+
+
+def to_prose(text: str) -> str:
+    """`text` as CONTEXT a grounded writer may read: every digit run removed WHOLE
+    (`numbers.DIGITS`, so `14:00`, `3.1%` and `5,000` leave no half a number behind), every
+    character outside PROSE_CHARS a space, whitespace collapsed.
+
+    Why: the grammar forbids the model a digit, but the prompt's context in WORDS (an operator's
+    entry note, a tool's reason string, a JSON key) still shows it figures -- and a 9B at low
+    temperature reaches for a figure it can SEE. With the digit token masked, the top admissible
+    token is the tail of a number word, and with `repeat_penalty 1.0` it emits that tail to the
+    length cap (EDGE trade.autopsy, 2026-10-30: ` ight` x80, 47 of 105 rows; with the context
+    sanitised, 0 of 3 replays looped). A figure stays citable by its id; the digits the model must
+    not copy are gone before it reads. Pure. Never for a rendered VALUE -- code fills those."""
+    out = numbers.DIGITS.sub(" ", text or "")
+    return " ".join(_NOT_PROSE.sub(" ", out).split())
+
+
 __all__ = ["ID", "PROSE_CHARS", "PROSE_PATTERN", "SLOT", "belt", "cited", "fill", "loose", "problems",
-           "prose_pattern", "slot_pattern"]
+           "prose_pattern", "slot_pattern", "to_prose"]
