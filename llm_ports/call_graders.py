@@ -12,7 +12,12 @@ Three built-in graders, for the `structured` family (dict or pydantic outputs un
   schema_complete      share of fields that carry a value. A strict grammar admits `""` for every
                        required key, so "parsed" is not "answered". An EMPTY LIST is an answer
                        (prompts ask for `[]` when nothing applies), so only None and blank text
-                       count as unanswered.
+                       count as unanswered -- and for a PYDANTIC value, a None on a field whose
+                       annotation admits None (`float | None`, `Optional[X]`) is an answer too:
+                       the schema declared "unknown" legal and the prompt ordered null when the
+                       source never stated the figure, so an honest reply must not fail by
+                       construction. A None on a REQUIRED field still fails; a dict value (no
+                       annotations to read) is graded exactly as before.
   numbers_from_inputs  figures in the reply's prose that no part of the prompt rendered: digit
                        runs by value AND spelled numbers (`numbers.loose`, the one number law;
                        a digit-free grammar made models SPELL the figure, so a digits-only
@@ -31,9 +36,12 @@ must not read as a pass.
 from __future__ import annotations
 
 import re
+import types
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any, Union, get_args, get_origin
+
+from pydantic import BaseModel
 
 from llm_ports.numbers import digits, loose
 from llm_ports.roles import Role
@@ -43,6 +51,7 @@ ECHO_MIN_CHARS = 40           # a sentence shorter than this is a label ("unclea
 CRASHED = -1.0                # the value of a grader that raised; every honest value is >= 0
 _SENTENCE = re.compile(r"[.!?\n]+")
 _WS = re.compile(r"\s+")
+_INDEX = re.compile(r"\[\d+\]")   # `tickers[3].entry_low` -> `tickers[].entry_low`: the field, not the row
 
 
 @dataclass(frozen=True)
@@ -82,11 +91,54 @@ def _empty(v: Any) -> bool:
     return v is None or (isinstance(v, str) and not v.strip())
 
 
+def _admits_none(ann: Any) -> bool:
+    """Does the annotation accept None (`X | None`, `Optional[X]`, `Annotated[X | None, ...]`)?"""
+    if ann is None or ann is type(None):
+        return True
+    origin = get_origin(ann)
+    if origin is Annotated:
+        return _admits_none(get_args(ann)[0])
+    return origin in (Union, types.UnionType) and any(_admits_none(a) for a in get_args(ann))
+
+
+def _models_in(ann: Any, suffix: str = "") -> Iterator[tuple[str, type[BaseModel]]]:
+    """(path suffix, model) for every BaseModel an annotation reaches: `""` for the model itself
+    or through a union, `[]` per list/tuple/set layer -- the spelling `leaves` emits, index-free."""
+    if isinstance(ann, type) and issubclass(ann, BaseModel):
+        yield suffix, ann
+        return
+    origin, args = get_origin(ann), get_args(ann)
+    if origin is Annotated or origin in (Union, types.UnionType):
+        for a in args[:1] if origin is Annotated else args:
+            yield from _models_in(a, suffix)
+    elif isinstance(origin, type) and issubclass(origin, (list, tuple, set, frozenset)):
+        for a in args:
+            if a is not Ellipsis:
+                yield from _models_in(a, suffix + "[]")
+
+
+def nullable_paths(model: type[BaseModel], prefix: str = "", _seen: frozenset[type] = frozenset()) -> frozenset[str]:
+    """Index-free leaf paths (`tickers[].entry_low`) of every field whose annotation admits None,
+    through nested models and lists of models. Read off the class, so it never depends on which
+    rows a reply happened to carry. A self-referential model stops at its own repeat. Pure."""
+    out: set[str] = set()
+    seen = _seen | {model}
+    for name, field in model.model_fields.items():
+        path = f"{prefix}.{name}" if prefix else name
+        if _admits_none(field.annotation):
+            out.add(path)
+        for suffix, sub in _models_in(field.annotation):
+            if sub not in seen:
+                out |= nullable_paths(sub, path + suffix, seen)
+    return frozenset(out)
+
+
 def schema_complete(_prompt: str, value: Any, _role: Role) -> CallScore:
     fields = list(leaves(value))
     if not fields:
         return CallScore("schema_complete", 0.0, False, "the reply carries no fields")
-    empty = [p for p, v in fields if _empty(v)]
+    nullable = nullable_paths(type(value)) if isinstance(value, BaseModel) else frozenset()
+    empty = [p for p, v in fields if _empty(v) and _INDEX.sub("[]", p) not in nullable]
     share = round(1 - len(empty) / len(fields), 4)
     return CallScore("schema_complete", share, not empty, f"empty: {empty[:4]}" if empty else "")
 
@@ -159,5 +211,5 @@ def board_graders(role: Role, table: Mapping[str, CallGrader] | None = None,
 
 
 __all__ = ["CRASHED", "ECHO_MAX_SHARE", "GRADERS", "CallGrader", "CallScore", "board_graders",
-           "echo", "leaves", "numbers_from_inputs", "prose", "schema_complete", "score_all",
-           "score_one"]
+           "echo", "leaves", "nullable_paths", "numbers_from_inputs", "prose", "schema_complete",
+           "score_all", "score_one"]
