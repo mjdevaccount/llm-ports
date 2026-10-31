@@ -3,9 +3,9 @@ FAILED score (never an exception), and the board shape names an outage."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from llm_ports import call_graders as cg
 from tests.conftest import Role
@@ -19,6 +19,20 @@ COPIED = "The market rallied hard into the close on strong breadth today."
 class _Note(BaseModel):
     summary: str
     keys: list[str]
+
+
+class _Level(BaseModel):
+    """A deep_extract.mentions row: the prompt orders null unless the advisor STATED the figure."""
+    ticker: str
+    entry_low: float | None = Field(default=None)
+    note: str | None = None
+
+
+class _Call(BaseModel):
+    thesis: str
+    stop: Optional[float] = None  # noqa: UP045 -- the old spelling must read as nullable too
+    tickers: list[_Level]
+    hedge: _Level | None = None
 
 
 class TestLeaves:
@@ -41,6 +55,29 @@ class TestEachGrader:
         assert cg.schema_complete(PROMPT, {"a": "x", "cited": []}, ROLE).passed, "an empty list is an answer"
         none = cg.schema_complete(PROMPT, {}, ROLE)
         assert not none.passed and none.value == 0.0
+
+    def test_schema_complete_reads_a_null_on_a_nullable_field_as_an_answer(self) -> None:
+        # The alert this fixes: deep_extract.mentions / post.axes declared `entry_low: float | None`
+        # and ORDERED null when the advisor never said the number -- an honest reply failed by law.
+        ok = cg.schema_complete(PROMPT, _Level(ticker="SPY"), ROLE)
+        assert (ok.passed, ok.value, ok.reason) == (True, 1.0, ""), ok.reason
+        nested = cg.schema_complete(PROMPT, _Call(thesis="t", tickers=[_Level(ticker="SPY", entry_low=1.0),
+                                                                        _Level(ticker="QQQ")]), ROLE)
+        assert nested.passed and nested.value == 1.0, nested.reason
+        assert cg.nullable_paths(_Call) == {"stop", "tickers[].entry_low", "tickers[].note", "hedge",
+                                            "hedge.entry_low", "hedge.note"}
+
+    def test_schema_complete_still_fails_a_null_on_a_required_field(self) -> None:
+        # The annotation is the law: a REQUIRED field left None (model_construct skips validation,
+        # as a grammar-parsed reply with a missing key would) is still unanswered.
+        bad = cg.schema_complete(PROMPT, _Level.model_construct(ticker=None, entry_low=None), ROLE)
+        assert not bad.passed and bad.reason == "empty: ['ticker']"
+        row = _Call.model_construct(thesis="t", stop=None, tickers=[_Level.model_construct(ticker=None)], hedge=None)
+        deep = cg.schema_complete(PROMPT, row, ROLE)
+        assert not deep.passed and deep.reason == "empty: ['tickers[0].ticker']", deep.reason
+        # A dict carries no annotations, so a None in one is graded exactly as before.
+        plain = cg.schema_complete(PROMPT, {"ticker": "SPY", "entry_low": None}, ROLE)
+        assert not plain.passed and plain.value == 0.5 and plain.reason == "empty: ['entry_low']"
 
     def test_numbers_from_inputs(self) -> None:
         ok = cg.numbers_from_inputs(PROMPT, {"why": "spot sat at 766.2 above 765.0"}, ROLE)
