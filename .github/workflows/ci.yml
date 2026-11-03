@@ -2,6 +2,7 @@
 #
 #   lint         ruff check + ruff format --check, vulture (dead code), pre-commit (all files),
 #                actionlint + zizmor over the workflows
+#   types        mypy --strict over the package; pyright --verifytypes: every public name fully typed
 #   pytest       the locked suite on 3.12 / 3.13 / 3.14 / 3.15 (ubuntu) and 3.13 (windows), with a
 #                coverage floor (pyproject `[tool.coverage.report] fail_under`, raised only); one leg
 #                uploads to Codecov over OIDC.
@@ -55,6 +56,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }} # online audits (impostor commits, known-vulnerable actions)
         run: uv run --no-sync zizmor --format=github .
+
+  types:
+    name: types
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --frozen --group types
+      - name: mypy --strict
+        run: uv run --no-sync mypy
+      - name: pyright --verifytypes
+        run: uv run --no-sync pyright --verifytypes llm_ports --ignoreexternal
 
   pytest:
     name: pytest (${{ matrix.os }}, ${{ matrix.python }})
@@ -150,7 +168,7 @@ jobs:
   test:
     name: test
     if: always()
-    needs: [lint, pytest, test-lowest, core-only, build]
+    needs: [lint, types, pytest, test-lowest, core-only, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

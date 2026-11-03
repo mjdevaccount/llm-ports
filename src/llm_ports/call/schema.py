@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from llm_ports.call.roles import Role
 from llm_ports.ports import Generated, json_output
@@ -46,7 +46,8 @@ def research_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
 def without_analysis[T](res: Generated[T]) -> Generated[T]:
     """Return `res` with the `analysis` scratchpad popped from a dict value; other values pass unchanged."""
     if isinstance(res.value, dict) and ANALYSIS_KEY in res.value:
-        return replace(res, value={k: v for k, v in res.value.items() if k != ANALYSIS_KEY})  # type: ignore[arg-type]
+        kept = {k: v for k, v in res.value.items() if k != ANALYSIS_KEY}
+        return replace(res, value=cast(T, kept))  # a dict value stays a dict: T is unchanged
     return res
 
 

@@ -239,7 +239,7 @@ async def generate[T](
     role: Role,
     *,
     prompt: str,
-    output: type[T] = str,  # type: ignore[assignment]
+    output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
     generator: Generator,
     hooks: Hooks | None = None,
     system: str = "",

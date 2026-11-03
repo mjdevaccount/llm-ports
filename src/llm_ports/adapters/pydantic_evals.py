@@ -33,7 +33,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from typing import Any, cast
 
 from llm_ports._extras import extra
 from llm_ports.call.roles import Role
@@ -43,9 +43,10 @@ with extra("evals"):
     from pydantic_ai.messages import BinaryContent
     from pydantic_ai.models import Model
     from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators import EvaluatorContext, LLMJudge
-    from pydantic_evals.evaluators.context import SpanTreeRecordingError
     from pydantic_evals.evaluators.evaluator import EvaluationReason
+    from pydantic_evals.otel import SpanTreeRecordingError
 
 JudgeModelFor = Callable[[], AbstractAsyncContextManager[Model]]
 
@@ -176,7 +177,7 @@ class PydanticEvalsJudge:
             rubric=rubric,
             model=model,
             include_input=True,
-            model_settings=self._role.model_settings(),  # type: ignore[arg-type]
+            model_settings=cast(ModelSettings, self._role.model_settings()),
             score={"evaluation_name": SCORE_KEY, "include_reason": True},
             assertion={"evaluation_name": PASS_KEY, "include_reason": True},
         )

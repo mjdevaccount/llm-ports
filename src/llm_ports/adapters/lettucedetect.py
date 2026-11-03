@@ -54,7 +54,8 @@ def load_detector(model: str = MODEL) -> Detector:
             "lettucedetect is not installed: install the `llm-ports[lettucedetect]` extra "
             "(or the consumer's dependency group that carries lettucedetect)"
         ) from exc
-    return HallucinationDetector(method="transformer", model_path=model)
+    detector: Detector = HallucinationDetector(method="transformer", model_path=model)
+    return detector
 
 
 class LettuceDetectGrounder:
@@ -89,7 +90,8 @@ class LettuceDetectGrounder:
         # Unknown is never zero: a flagged span with no confidence must not score 1.0, this
         # scale's fully-supported end. No score is the honest reading; `supported` still gates.
         confs = [f.get("confidence") for f in found]
-        score = None if any(c is None for c in confs) else round(1.0 - max((float(c) for c in confs), default=0.0), 4)
+        known = [float(c) for c in confs if c is not None]
+        score = round(1.0 - max(known, default=0.0), 4) if len(known) == len(confs) else None
         why = "; ".join(str(f.get("text") or "")[:_SPAN_PREVIEW] for f in found[:3]) if found else "no unsupported span"
         n_chars = sum(len(c) for c in context)
         if n_chars > MAX_CONTEXT_CHARS:
