@@ -23,6 +23,8 @@ from llm_ports.ports import Chunk, Claim, Grader, GroundingVerdict, Prompt, Seed
 
 BOARD_EXAMPLES = 3  # (id, reason) pairs kept per grader: the wound named, never the corpse
 
+_Monitors = Callable[[list[dict[str, Any]]], dict[str, Any]]  # a surface's own rates over all rows
+
 
 class GauntletEvaluator:
     """`Evaluator` = the gauntlet: run the deterministic graders over a set of rows and produce ONE
@@ -43,7 +45,7 @@ class GauntletEvaluator:
         graders: Mapping[str, Grader],
         *,
         id_field: str = "id",
-        monitors: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None,
+        monitors: _Monitors | None = None,
     ) -> dict[str, Any]:
         by_grader: dict[str, dict[str, Any]] = {name: {"pass": 0, "fail": 0, "examples": []} for name in graders}
         failed_rows: set[Any] = set()
