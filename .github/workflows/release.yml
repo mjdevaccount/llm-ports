@@ -1,21 +1,48 @@
-# A `v*` tag builds the wheel + sdist from the tagged commit and attaches them to a GitHub
-# release. Consumers pin the wheel URL (immutable bytes, no git CLI needed in a slim image):
+# Publishing. Two triggers, one pipeline, one index:
+#
+#   push of a `v*` tag   ci (the whole gate, reused) -> build X.Y.Z -> PyPI
+#                                                              -> GitHub release with dist/* attached
+#   workflow_dispatch    ci -> build a PEP 440 dev release -> PyPI
+#
+# The dispatch build is `X.Y.Z.devN` (N = this workflow's run number): pyproject's version when it is
+# already a dev version, else the next patch (0.12.0 -> 0.12.1.devN). Installers skip pre-releases
+# unless asked (`pip install --pre`), so a dev upload is the end-to-end dry run of a real release.
+#
+# Uploads use PyPI trusted publishing: GitHub's OIDC token is exchanged for a short-lived upload
+# token, so no secret is stored. PyPI's publisher names this repo, this file and the `pypi`
+# environment; renaming any of the three breaks publishing.
+#
+# The GitHub release does NOT depend on the PyPI upload: consumers pin the wheel URL
 #   llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/vX.Y.Z/llm_ports-X.Y.Z-py3-none-any.whl
-# The tag must match pyproject's version, or the release is refused before anything uploads.
+# and that asset must exist for every tag whatever the index did. A tag that does not match
+# pyproject's version publishes nothing.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
-  release:
+  ci:
+    name: ci
+    permissions:
+      contents: read
+      id-token: write # ci.yml's Codecov upload
+      pull-requests: read # ci-kit gitleaks
+    # A job-level reusable workflow resolves from this commit, never the runner's filesystem; the
+    # `$/` self-repository form is not yet parsed by actionlint 1.7.12.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+
+  build:
+    name: build
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write # create the release and upload its assets
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -24,17 +51,60 @@ jobs:
         with:
           enable-cache: false # a release builds from a clean resolve, never a shared cache
       - name: tag matches pyproject version
+        if: github.event_name == 'push'
         run: |
-          v=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          v=$(uv version --short)
           [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME != pyproject v$v"; exit 1; }
-      - run: uv sync --frozen
-      - run: uv run --no-sync pytest -q
-      - run: uv build
+      - name: dev version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          case "$(uv version --short)" in
+            *.dev*) uv version --frozen --bump "dev=$GITHUB_RUN_NUMBER" ;;
+            *) uv version --frozen --bump patch --bump "dev=$GITHUB_RUN_NUMBER" ;;
+          esac
+      - run: uv build --no-sources
       - name: twine check
         run: uv run --frozen --only-group lint twine check --strict dist/*
-      - name: publish release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  pypi:
+    name: publish (PyPI)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/llm-ports/
+    permissions:
+      id-token: write # trusted publishing; the action also uploads PEP 740 attestations
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  github-release:
+    name: GitHub release
+    if: github.event_name == 'push'
+    needs: build # never on `pypi`: the wheel URL consumers pin must exist whatever the index did
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release and upload its assets
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # no --clobber fallback: a published wheel's bytes are what consumers locked a hash of
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --generate-notes
