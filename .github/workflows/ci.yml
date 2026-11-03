@@ -1,9 +1,9 @@
 # llm-ports' own gate. Every job starts from `permissions: {}` and grants only what it needs.
 #
-#   lint         ruff check + ruff format --check, zizmor over the workflows
-#   pytest       the locked suite on 3.12 / 3.13 / 3.14 (ubuntu) and 3.13 (windows), with a coverage
-#                floor (pyproject `[tool.coverage.report] fail_under`, raised only); one leg uploads
-#                to Codecov over OIDC. 3.15 runs but cannot fail the gate until its wheels exist.
+#   lint         ruff check + ruff format --check, pre-commit (all files), zizmor over the workflows
+#   pytest       the locked suite on 3.12 / 3.13 / 3.14 / 3.15 (ubuntu) and 3.13 (windows), with a
+#                coverage floor (pyproject `[tool.coverage.report] fail_under`, raised only); one leg
+#                uploads to Codecov over OIDC.
 #   test-lowest  every direct dependency at its declared lower bound (`--resolution lowest-direct`)
 #   build        sdist + wheel, `twine check --strict`
 #   test         the one required check: green only when every job above is
@@ -39,6 +39,8 @@ jobs:
         run: uv run --no-sync ruff check --output-format=github .
       - name: ruff format
         run: uv run --no-sync ruff format --check .
+      - name: pre-commit
+        run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
       - name: zizmor
         env:
           GH_TOKEN: ${{ github.token }} # online audits (impostor commits, known-vulnerable actions)
@@ -48,7 +50,6 @@ jobs:
     name: pytest (${{ matrix.os }}, ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    continue-on-error: ${{ matrix.experimental }}
     permissions:
       contents: read
       id-token: write # Codecov OIDC upload, no stored token
@@ -56,11 +57,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ["3.12", "3.13", "3.14"]
-        experimental: [false]
+        python: ["3.12", "3.13", "3.14", "3.15"]
         include:
-          - { os: windows-latest, python: "3.13", experimental: false }
-          - { os: ubuntu-latest, python: "3.15", experimental: true }
+          - { os: windows-latest, python: "3.13" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

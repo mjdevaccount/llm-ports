@@ -1,21 +1,25 @@
-"""testing -- the doubles a consumer's tests need, so each one does not hand-roll its own.
+"""Test doubles for the library's ports, so a consumer's tests do not hand-roll their own.
 
+- `StubGenerator` fakes `Generator` with a reply function and records every request.
+- `RecordingTracer` fakes `Tracer` and records every generation, its end and its scores.
+- `StubEmbedder` fakes `Embedder` with deterministic unit vectors hashed from each text, and
+  records every call.
+- `StubReranker` fakes `Reranker` with a predictable word-overlap score, and records every call.
+- `StubCiter` and `StubPromptSource` fake the `Citer` and `PromptSource` seams with no model and
+  no store.
+- `StubDetector` fakes the LettuceDetect model under `lettucedetect_grounder.LettuceDetectGrounder`.
+
+Invariants:
+    - Every port double passes its port's `isinstance` check.
+    - No double performs I/O.
+
+Example:
     gen = StubGenerator(lambda req, output: {"category": "groceries"})
     tracer = RecordingTracer()
     res = await call.generate(ROLE, prompt="...", output=Reply, generator=gen,
                               hooks=Hooks(trace=tracer_trace(tracer)))
     assert gen.requests[0].model == ROLE.resolved_model
     assert tracer.generations[0].ended["usage"] is None
-
-`StubGenerator` satisfies the `Generator` port without a framework: its reply function returns a
-VALUE (wrapped `ok`), a `Generated` (returned as-is, any outcome), or raises (returned as
-`unavailable` -- the port never raises). `RecordingTracer` satisfies `Tracer` and keeps every
-generation, its end and its scores. `StubEmbedder` satisfies `Embedder` with deterministic
-unit vectors hashed from each text (same text -> same vector), and records every call.
-`StubReranker` satisfies `Reranker` with a predictable word-overlap score.
-`StubCiter` and `StubPromptSource` prove the `Citer` / `PromptSource` seams' shape with no model
-and no store. All pass the ports' `isinstance` checks. `StubDetector` stands in for the
-LettuceDetect model under `lettucedetect_grounder.LettuceDetectGrounder`.
 """
 
 from __future__ import annotations
@@ -34,8 +38,23 @@ Reply = Callable[[GenRequest, type[Any]], Any]
 
 
 class StubGenerator:
-    """A `Generator` over a reply function. Records every request in `requests`. `validate` runs on
-    an `ok` value and its problems are kept (no re-ask: a stub has no model to re-ask)."""
+    """A `Generator` that answers from a reply function and records every request.
+
+    The reply function's result maps onto a `Generated`: a plain value is wrapped as `ok`, a
+    `Generated` is returned as-is (any outcome), and a raised exception becomes `unavailable`.
+
+    Args:
+        reply: A function of `(request, output type)`, or a non-callable value returned for every
+            request.
+
+    Attributes:
+        requests: Every `GenRequest` received, in call order.
+
+    Invariants:
+        - `generate` never raises.
+        - `validate` runs on an `ok` value and its problems are kept on the result; there is no
+          re-ask.
+    """
 
     def __init__(self, reply: Reply | Any) -> None:
         self._reply: Reply = reply if callable(reply) else (lambda _req, _out: reply)
@@ -49,6 +68,7 @@ class StubGenerator:
         validate: Callable[[T], Sequence[Any]] | None = None,
         retry_message: Callable[[Sequence[Any]], str] | None = None,
     ) -> Generated[T]:
+        """Return the reply function's answer to `req` as a `Generated`; `retry_message` is unused."""
         del retry_message
         self.requests.append(req)
         try:
@@ -65,7 +85,13 @@ class StubGenerator:
 
 @dataclass
 class RecordedGeneration:
-    """One `start_generation` call: what it was opened with, how it ended, what it was scored."""
+    """One `start_generation` call: what it was opened with, how it ended and how it was scored.
+
+    Attributes:
+        opened: The keyword arguments `start_generation` received.
+        ended: The keyword arguments of `end`, or None while the generation is open.
+        scores: Every `(name, value, comment)` passed to `score`, in call order.
+    """
 
     opened: dict[str, Any]
     ended: dict[str, Any] | None = None
@@ -80,6 +106,7 @@ class RecordedGeneration:
         status_message: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        """Record how the generation ended, replacing any earlier end."""
         self.ended = {
             "output": output,
             "usage": usage,
@@ -89,11 +116,16 @@ class RecordedGeneration:
         }
 
     def score(self, name: str, value: float, comment: str | None = None) -> None:
+        """Record one score."""
         self.scores.append((name, value, comment))
 
 
 class RecordingTracer:
-    """A `Tracer` that keeps every generation in `generations`, in open order."""
+    """A `Tracer` that records every generation.
+
+    Attributes:
+        generations: Every `RecordedGeneration`, in open order.
+    """
 
     def __init__(self) -> None:
         self.generations: list[RecordedGeneration] = []
@@ -109,6 +141,7 @@ class RecordingTracer:
         session_id: str | None,
         prompt_name: str | None,
     ) -> RecordedGeneration:
+        """Open, record and return one generation."""
         g = RecordedGeneration(
             opened={
                 "name": name,
@@ -125,9 +158,19 @@ class RecordingTracer:
 
 
 class StubEmbedder:
-    """The `Embedder` port with no wire: each text hashes to a deterministic unit vector of `dims`.
-    `fail` (an Outcome other than ok) makes every call fail that way. `calls` keeps
-    (texts, input_type) per call."""
+    """An `Embedder` with no wire: each text hashes to a deterministic unit vector.
+
+    Args:
+        dims: The length of every vector.
+        stamp: The embedding stamp reported on every result.
+        fail: An outcome other than `ok`; when set, every call fails with it.
+
+    Attributes:
+        calls: `(texts, input_type)` for every call, in call order.
+
+    Invariants:
+        - The same text always maps to the same vector.
+    """
 
     def __init__(self, *, dims: int = 8, stamp: str = "stub@8", fail: str | None = None) -> None:
         self.dims = dims
@@ -137,15 +180,18 @@ class StubEmbedder:
 
     @property
     def stamp(self) -> str:
+        """The embedding stamp reported on every result."""
         return self._stamp
 
     def vector(self, text: str) -> tuple[float, ...]:
+        """Return the unit vector for `text`, derived from its sha256 digest."""
         raw = hashlib.sha256(text.encode()).digest()
         vals = [(raw[i % len(raw)] - 127.5) for i in range(self.dims)]
         norm = math.sqrt(sum(v * v for v in vals)) or 1.0
         return tuple(v / norm for v in vals)
 
     async def embed(self, texts: Sequence[str], *, input_type: EmbedInput = "document") -> Embedded:
+        """Return one vector per text, or fail with the configured outcome."""
         self.calls.append((tuple(texts), input_type))
         if self._fail:
             return Embedded(
@@ -160,9 +206,17 @@ class StubEmbedder:
 
 
 class StubReranker:
-    """The `Reranker` port with no model: a document scores the count of query words it holds
-    (case-folded), so a test can predict the order. `fail` (an Outcome other than ok) makes every
-    call fail that way. `calls` keeps (query, documents) per call."""
+    """A `Reranker` with no model: a document scores the count of its words found in the query.
+
+    Words are case-folded, so a test can predict the order.
+
+    Args:
+        model: The model name reported on every result.
+        fail: An outcome other than `ok`; when set, every call fails with it.
+
+    Attributes:
+        calls: `(query, documents)` for every call, in call order.
+    """
 
     def __init__(self, *, model: str = "stub-reranker", fail: str | None = None) -> None:
         self.model = model
@@ -170,6 +224,7 @@ class StubReranker:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
+        """Score each document by word overlap with `query`, or fail with the configured outcome."""
         self.calls.append((query, tuple(documents)))
         if self._fail:
             return Reranked(
@@ -187,35 +242,55 @@ class StubReranker:
 
 
 class StubCiter:
-    """`Citer` that asserts nothing: every chunk id known, no claims (no chunks -> no claims).
-    `model` is '' by contract -- a stub has none."""
+    """A `Citer` that asserts nothing.
+
+    Every chunk id is known to the answer, and the answer has no claims. `model` is the empty
+    string, since a stub has no model.
+    """
 
     async def answer(self, q: str, chunks: Sequence[Chunk]) -> CitedAnswer:
+        """Return an answer to `q` with no claims, keyed over `chunks`."""
         return CitedAnswer(question=q, claims=(), chunks={c.id: c for c in chunks}, model="")
 
 
 class StubPromptSource:
-    """`PromptSource` with no managed store: every name serves its fixed in-memory text as the repo
-    seed (`version None`, `source "repo"`), the label asked for recorded in `config` so a test can
-    see it was passed through. A name it was not given RAISES (the port's law: no seed, nothing to
-    serve) -- it never invents text."""
+    """A `PromptSource` with no managed store, serving fixed in-memory texts.
+
+    Each name serves its text as the repo seed (`version` None, `source` "repo"). The requested
+    label is recorded in `config["label"]`, so a test can see it was passed through.
+
+    Args:
+        texts: The text served for each prompt name.
+    """
 
     def __init__(self, texts: Mapping[str, str]) -> None:
         self._texts = dict(texts)
 
     def get(self, name: str, *, label: str = "production") -> Prompt:
+        """Return the fixed text for `name` as a repo-seed `Prompt`.
+
+        Raises:
+            KeyError: `name` was not given. The stub never invents text: with no seed, the port
+                has nothing to serve.
+        """
         return Prompt(name, self._texts[name], None, "repo", config={"label": label})
 
 
 class StubDetector:
-    """`lettucedetect_grounder.Detector` with no model: flags every digit run in the answer that no
-    context string holds (a number-law stand-in with LettuceDetect's span shape, confidence 0.9).
-    Records every call in `calls`."""
+    """A `lettucedetect_grounder.Detector` with no model.
+
+    It flags every digit run in the answer that no context string contains, in LettuceDetect's
+    span shape with confidence 0.9: a stand-in for the number law.
+
+    Attributes:
+        calls: The keyword arguments of every `predict` call, in call order.
+    """
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
     def predict(self, *, context: list[str], answer: str, output_format: str) -> list[dict[str, Any]]:
+        """Return one span for each digit run in `answer` that no `context` string contains."""
         self.calls.append({"context": context, "answer": answer, "output_format": output_format})
         joined = " ".join(context)
         return [

@@ -1,21 +1,22 @@
-"""pydantic_ai_replay -- record a live model's replies once, replay them in CI (pydantic-ai models).
+"""Record a live model's replies once and replay them in CI, for pydantic-ai models.
 
-    rec = Recorder(real_model)                 # wraps any pydantic-ai Model; keeps every reply
-    ...run the pipeline once against the live model...
-    json.dump(rec.replies, f)                  # {key(messages): reply text}
-    model = replay(json.load(f))               # a FunctionModel answering from that dict
+Example:
+    rec = Recorder(real_model)    # wraps any pydantic-ai Model; keeps every reply
+    ...                           # run the pipeline once against the live model
+    json.dump(rec.replies, f)     # {key(messages): reply text}
+    model = replay(json.load(f))  # a FunctionModel answering from that dict
 
-`key(messages)` is the sha of the FIRST user prompt plus the attempt number (the count of model
+`key(messages)` is the sha of the first user prompt plus the attempt number (the count of model
 responses already in the conversation, so an output retry's second attempt has its own key).
-Keying on the prompt TEXT is the point: change a prompt and the lookup misses, the call fails with
-`NotRecorded`, and a golden gate goes red until the set is re-recorded -- a reply to a different
-prompt proves nothing about this one. The pipeline under test is TODAY's code either way.
+Because the key covers the prompt text, a changed prompt misses the lookup, the call raises
+`NotRecorded`, and the golden set must be re-recorded. The code under test always runs live; only
+the model's replies are replayed.
 
-`Recording` keeps every raw reply PARSED (`attempts`: an agent returns only the last one, a
-grader wants every attempt); an unparsable reply is kept as `{"_unparsed": head}`, never dropped.
-Wire either into a `pydantic_ai_generator.PydanticAIGenerator` as its model wrapper.
+`Recording` keeps every raw reply parsed in `attempts` (an agent returns only the last attempt; a
+grader wants every one); an unparsable reply is kept as `{"_unparsed": head}`, never dropped.
+Either wrapper plugs into `pydantic_ai_generator.PydanticAIGenerator` as its `wrap=` model wrapper.
 
-Framework-bound (pydantic-ai), so import it explicitly, like `pydantic_ai_generator`.
+The module depends on pydantic-ai, so it is imported explicitly, like `pydantic_ai_generator`.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from pydantic_ai.settings import ModelSettings
 
 from llm_ports.packs import sha
 
+#: Characters of an unparsable reply that `Recording` keeps.
 UNPARSED_HEAD = 2000
 
 
@@ -39,7 +41,7 @@ class NotRecorded(RuntimeError):
 
 
 def key(messages: list[ModelMessage]) -> str:
-    """`<sha of the first user prompt>:<attempt>` -- the recording's lookup key."""
+    """Return the recording's lookup key, `<sha of the first user prompt>:<attempt>`."""
     first = next(
         (p.content for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, UserPromptPart)),
         "",
@@ -53,7 +55,10 @@ def _text(resp: ModelResponse) -> str:
 
 
 class Recorder(WrapperModel):
-    """The wrapped model, with every reply's text kept in `replies` under `key(messages)`."""
+    """A model wrapper that keeps every reply's text in `replies` under `key(messages)`.
+
+    Pass `replies` to share one dict across several wrapped models.
+    """
 
     def __init__(self, wrapped: Any, replies: dict[str, str] | None = None) -> None:
         super().__init__(wrapped)
@@ -65,13 +70,17 @@ class Recorder(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        """Forward to the wrapped model and record the reply's text under `key(messages)`."""
         resp = await super().request(messages, model_settings, model_request_parameters)
         self.replies[key(messages)] = _text(resp)
         return resp
 
 
 def replay(recorded: dict[str, str]) -> FunctionModel:
-    """A model answering from a `Recorder`'s dict; a prompt it never saw raises `NotRecorded`."""
+    """Return a model that answers from a `Recorder`'s dict.
+
+    The returned model raises `NotRecorded` for a prompt the recording never saw.
+    """
 
     def fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         k = key(messages)
@@ -83,8 +92,11 @@ def replay(recorded: dict[str, str]) -> FunctionModel:
 
 
 class Recording(WrapperModel):
-    """The wrapped model, with every raw reply kept parsed in `attempts` (a shared list: one per
-    run, many wrapped models). An unparsable reply is kept as `{"_unparsed": head}`."""
+    """A model wrapper that keeps every raw reply, parsed, in `attempts`.
+
+    Pass `attempts` to share one list across several wrapped models (one list per run). An
+    unparsable reply is kept as `{"_unparsed": head}`, its first `UNPARSED_HEAD` characters.
+    """
 
     def __init__(self, wrapped: Any, attempts: list[Any] | None = None) -> None:
         super().__init__(wrapped)
@@ -96,6 +108,7 @@ class Recording(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        """Forward to the wrapped model and append the reply, parsed, to `attempts`."""
         resp = await super().request(messages, model_settings, model_request_parameters)
         text = _text(resp)
         try:

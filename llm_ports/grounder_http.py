@@ -1,18 +1,20 @@
-"""HttpGrounder -- the `Grounder` port over HTTP to a grounder SIDECAR (the model in its own process).
+"""The `Grounder` port over HTTP, to a grounder sidecar that runs the model in its own process.
 
-A grounding model (e.g. `LettuceDetectGrounder`: torch + a 575 MB checkpoint) belongs in its own
-container, not in every image that wants a verdict. This is the client half: one
-`POST {url}/verdict` per claim with `payload(claim, spans)`, the sidecar's JSON
-(`{supported, reason, score, checker}`) mapped back onto `GroundingVerdict`. Its `checker` is
-whatever the sidecar reports, so a reader of a verdict sees which model spoke, not the transport.
+This is the client half: one `POST {url}/verdict` per claim with `payload(claim, spans)`, and the
+sidecar's JSON (`{supported, reason, score, checker}`) mapped back onto `GroundingVerdict`. A
+verdict's `checker` is whatever the sidecar reports, so a reader sees which model spoke, not the
+transport.
 
-Fails LOUD with `GrounderUnavailable` on transport / non-200 / a malformed reply. The CALLER is
-what fails soft (stops checking and records that it could not), and the consumer's watcher reads
-that record. This client never guesses a verdict -- an unreachable judge is not a `supported`.
+The port's `verdict` is synchronous, so this client makes a blocking httpx call; an async caller
+runs it in a thread. Configuration (where the sidecar is, and whether there is one) belongs to the
+consumer, which builds `HttpGrounder(url, timeout_s=...)` or skips the step.
 
-The port's `verdict` is synchronous; this client is a blocking httpx call on purpose, and an async
-caller runs it in a thread. Configuration (where the sidecar is, whether there is one) is the
-consumer's: it builds `HttpGrounder(url, timeout_s=...)` or skips the step.
+Invariants:
+    - A transport error, a non-200 or a malformed reply raises `GrounderUnavailable`. The caller
+      decides how to fail soft (stop checking and record that it could not).
+    - The client never guesses a verdict: an unreachable judge is never `supported`.
+
+Rationale: ADR-0001.
 """
 
 from __future__ import annotations
@@ -28,19 +30,34 @@ _REASON_CAP = 300
 
 
 class GrounderUnavailable(Exception):
-    """The sidecar did not answer with a verdict (transport, non-200, bad payload)."""
+    """The sidecar did not answer with a verdict: a transport error, a non-200 or a malformed reply."""
 
 
 def payload(claim: Claim, spans: Sequence[Chunk]) -> dict[str, Any]:
-    """The wire shape, shared with the sidecar's request model: title and text ride separately
-    so the sidecar's Grounder reads them exactly as an in-process one would."""
+    """Return the request body, the shape the sidecar's request model reads.
+
+    Title and text travel separately, so the sidecar's `Grounder` reads them exactly as an
+    in-process one would.
+    """
     return {"claim": claim.text, "spans": [{"id": s.id, "title": s.title, "text": s.text} for s in spans]}
 
 
 class HttpGrounder:
-    """`Grounder` whose model is behind `{url}/verdict`. EVERY verdict is the sidecar's, the
-    no-spans law included (its own Grounder enforces it): one judge, one `checker` name on every
-    verdict. A dead sidecar RAISES for a no-spans claim rather than answering for it."""
+    """A `Grounder` whose model is behind `{url}/verdict`.
+
+    Args:
+        url: The sidecar's base URL; a trailing slash is dropped.
+        timeout_s: The httpx timeout, in seconds, of the client this grounder builds.
+        client: A ready httpx client, used instead of building one from `timeout_s`.
+
+    Attributes:
+        checker: "http" until the first verdict, then the sidecar's own checker name.
+
+    Invariants:
+        - Every verdict is the sidecar's, the no-spans rule included (its own `Grounder` enforces
+          it): one judge, one `checker` name on every verdict.
+        - A dead sidecar raises for a no-spans claim rather than answering for it.
+    """
 
     checker = "http"  # replaced by the sidecar's own name on the first verdict
 
@@ -49,6 +66,11 @@ class HttpGrounder:
         self._client = client or httpx.Client(timeout=timeout_s)
 
     def verdict(self, claim: Claim, spans: Sequence[Chunk]) -> GroundingVerdict:
+        """Return the sidecar's verdict on `claim` against `spans`.
+
+        Raises:
+            GrounderUnavailable: A transport error, a non-200, or a malformed reply.
+        """
         try:
             r = self._client.post(f"{self.url}/verdict", json=payload(claim, spans))
         except httpx.HTTPError as exc:

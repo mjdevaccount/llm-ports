@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "0.11.0"
+version = "0.12.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -49,6 +49,7 @@ dev = [
     "opentelemetry-semantic-conventions>=0.58b0",
     "sqlglot>=30.22",
     "pytest-cov>=7.1.0",
+    "pre-commit>=4.7",
 ]
 lint = [
     "twine>=7.0",
@@ -60,8 +61,17 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "RUF"]
-ignore = ["E501", "RUF002", "RUF022"]
+select = ["E", "F", "W", "I", "B", "UP", "RUF", "D"]
+# D105/D107: magic methods and `__init__` are documented on the class (Google style).
+ignore = ["E501", "RUF002", "RUF022", "D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Docstring rules are for the package; tests and markdown examples are read as code.
+"tests/**" = ["D"]
+"*.md" = ["D"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,26 +1,32 @@
-"""PydanticAIGenerator -- the `Generator` port on pydantic-ai (OUR seam, THEIR impl).
+"""The `Generator` port implemented on pydantic-ai.
 
-One `Agent` per call: `NativeOutput(T)` sends T's schema as a strict json_schema (the grammar a
-llama.cpp server compiles; the structured-output mode OpenAI honours) and validates the reply into
-T; `str` asks for prose. The caller's `validate` runs as an `output_validator`: a non-empty problem
-list raises `ModelRetry(retry_message(problems))` while re-asks remain, after which the value is
-KEPT with its problems (the caller prunes or drops). Retries, schema validation and re-asks are
-pydantic-ai's; nothing here re-implements them.
+One `Agent` runs per call. `NativeOutput(T)` sends T's schema as a strict json_schema (the grammar
+a llama.cpp server compiles; the structured-output mode OpenAI honours) and validates the reply
+into T; `str` asks for prose. The caller's `validate` runs as an `output_validator`: a non-empty
+problem list raises `ModelRetry(retry_message(problems))` while re-asks remain; after the last
+re-ask the value is kept with its problems, and the caller prunes or drops it. Retries, schema
+validation and re-asks are pydantic-ai's; this module does not re-implement them.
 
-WHERE THE MODEL COMES FROM is the consumer's:
-  * `model=`      a fixed pydantic-ai `Model` (tests pass a `FunctionModel`);
-  * `model_for=`  `(GenRequest) -> async context manager yielding a Model`, per call -- how a
-                  consumer puts the model on its own transport (admission, leases, a work row);
-  * `openai_compatible(base_url, api_key)` builds a `model_for` for any OpenAI-wire endpoint
-                  (a LiteLLM gateway, vLLM, llama.cpp's server, OpenAI itself).
+The model source is the caller's choice:
 
-`capture=` is a context-manager factory whose value carries `finish_reason`, `usage` and
-`sources` of the last reply as the WIRE saw them (pydantic-ai drops non-standard keys);
-`openai_compatible` installs an httpx response hook that fills `capture()` for you.
+- `model=`: a fixed pydantic-ai `Model` (tests pass a `FunctionModel`).
+- `model_for=`: `(GenRequest) -> async context manager yielding a Model`, called per request, so
+  a caller can put the model on its own transport (admission control, leases, a work queue).
+- `openai_compatible(base_url, api_key)` builds a `model_for` for any OpenAI-wire endpoint (a
+  LiteLLM gateway, vLLM, llama.cpp's server, OpenAI itself).
 
-NEVER RAISES for a model, wire or gate failure. `classify` names the outcome from the exception
-chain (the cause is at the bottom: pydantic-ai -> openai -> httpx -> the transport); exception
-types in `gated=` (a consumer's switchboard refusal raised from its transport) map to `gated`.
+`capture=` is a context-manager factory whose value carries the last reply's `finish_reason`,
+`usage` and `sources` as they appeared on the wire (pydantic-ai drops non-standard keys);
+`openai_compatible` installs an httpx response hook that fills `capture()`.
+
+Invariants:
+    - A model, wire or gate failure never raises; it returns a `Generated` with a named outcome.
+    - `classify` names the outcome from the exception chain, whose root cause is at the bottom
+      (pydantic-ai -> openai -> httpx -> the transport).
+    - Exception types passed as `gated=` (a refusal raised by the caller's transport) map to
+      `gated`.
+
+Rationale: ADR-0001.
 """
 
 from __future__ import annotations
@@ -41,13 +47,15 @@ from pydantic_ai.models import Model
 from llm_ports.failure import exception_chain, failure_reason
 from llm_ports.ports import Generated, GenRequest, JsonOutput, Outcome
 
-#: Statuses that blame the REQUEST (the input), not the model server.
+#: HTTP statuses that blame the request (the input) rather than the model server.
 REQUEST_FAULT = frozenset({400, 413, 422})
 
 ModelFor = Callable[[GenRequest], AbstractAsyncContextManager[Model]]
 
 
 class CaptureLike(Protocol):
+    """The fields `PydanticAIGenerator` reads from a capture after a call."""
+
     finish_reason: str | None
     usage: Mapping[str, int | None]
     sources: tuple[str, ...] | None
@@ -55,7 +63,13 @@ class CaptureLike(Protocol):
 
 @dataclass
 class Capture:
-    """What the wire saw on the LAST chat-completions reply of one call."""
+    """What the wire showed on the last chat-completions reply of one call.
+
+    Attributes:
+        finish_reason: The reply's `finish_reason`, or None when the reply had none.
+        usage: `input` and `output` token counts; a count the server did not report is None.
+        sources: The reply's non-standard top-level `sources` strings, or None when it had none.
+    """
 
     finish_reason: str | None = None
     usage: dict[str, int | None] = field(default_factory=dict)
@@ -80,8 +94,15 @@ def capture() -> Iterator[Capture]:
 
 
 async def record_response(response: httpx.Response) -> None:
-    """httpx `event_hooks["response"]` hook: the active capture takes the reply's finish_reason,
-    usage and a non-standard top-level `sources` list. Never raises; no capture open = no-op."""
+    """Record a chat-completions reply into the active capture.
+
+    Installed as an httpx `event_hooks["response"]` hook. The active capture takes the reply's
+    `finish_reason`, its usage, and a non-standard top-level `sources` list.
+
+    Invariants:
+        - Never raises; an unreadable body is ignored.
+        - With no capture open, does nothing.
+    """
     cap = _capture.get()
     if cap is None:
         return
@@ -108,11 +129,21 @@ def openai_compatible(
     max_retries: int = 0,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> ModelFor:
-    """A `model_for` over any OpenAI-wire endpoint (`base_url` ends where `/chat/completions`
-    starts, e.g. `http://litellm:4000/v1`). One httpx client per call with the request's timeout
-    and the capture hook. The SDK's own retries default OFF (`max_retries=0`): a gateway in front
-    retries, and two stacked policies multiply. `transport` replaces httpx's own (a consumer's
-    admitting/counting transport, or `httpx.MockTransport` in a test)."""
+    """Build a `model_for` over any OpenAI-wire chat-completions endpoint.
+
+    Each call opens one httpx client with the request's timeout and the capture hook.
+
+    Args:
+        base_url: The URL up to where `/chat/completions` starts, e.g. `http://localhost:4000/v1`.
+        api_key: The bearer key; None sends a placeholder, for servers that need no key.
+        max_retries: The OpenAI SDK's own retry count. Defaults to 0, so retries are not stacked
+            on those of a gateway in front.
+        transport: Replaces httpx's own transport (a caller's admitting or counting transport, or
+            `httpx.MockTransport` in a test).
+
+    Returns:
+        A `ModelFor` that yields an `OpenAIChatModel` for `req.model`.
+    """
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -131,9 +162,23 @@ def openai_compatible(
 def classify(
     exc: BaseException, finish_reason: str | None = None, *, gated: tuple[type[BaseException], ...] = ()
 ) -> tuple[Outcome, str]:
-    """Pure. The outcome a failed run maps to, and its one-line reason. Order matters: a gate
-    refusal anywhere in the chain wins; a `length` finish is a BUDGET failure even though it
-    surfaces as a parse error; then status codes; then the parse failure itself."""
+    """Name the outcome a failed run maps to, with a one-line reason.
+
+    The checks run in order: an exception of a `gated` type anywhere in the chain is `gated`; a
+    `length` finish is `truncated`, even though it surfaces as a parse error; an HTTP status in
+    `REQUEST_FAULT` is `request_fault` and any other status is `unavailable`; a parse failure is
+    `invalid`. Anything else is `unavailable`. Pure.
+
+    Args:
+        exc: The exception the run raised.
+        finish_reason: The last reply's `finish_reason`, when the wire reported one.
+        gated: Exception types that mean the caller's gate refused the call.
+
+    Returns:
+        The outcome and its reason.
+
+    Rationale: ADR-0001.
+    """
     chain = list(exception_chain(exc))
     if gated:
         for e in chain:
@@ -153,22 +198,30 @@ def classify(
 
 
 def structured_dict(schema: Mapping[str, Any], name: str) -> type[dict[str, Any]]:
-    """A hand-written JSON schema as an output type: compiled into the grammar unchanged (maxLength
-    / enum / maxItems / required all survive) and returned as a plain dict. `name` is the schema's
-    title and the name a `FunctionModel` stub dispatches on. NO shape validation past the grammar."""
+    """Wrap a hand-written JSON schema as an output type that returns a plain dict.
+
+    The schema is compiled into the grammar unchanged, so `maxLength`, `enum`, `maxItems` and
+    `required` all survive. `name` is the schema's title and the name a `FunctionModel` stub
+    dispatches on. No shape validation runs beyond what the grammar enforces.
+    """
     return StructuredDict(dict(schema), name=name)
 
 
 def framework_output(output: Any) -> Any:
-    """The port's `JsonOutput` becomes pydantic-ai's `StructuredDict`; a pydantic model passes."""
+    """Map the port's `JsonOutput` to pydantic-ai's `StructuredDict`; any other type passes unchanged."""
     if isinstance(output, type) and issubclass(output, JsonOutput):
         return structured_dict(output.json_schema, output.schema_name)
     return output
 
 
 def _usage(res: Any, fallback: Mapping[str, int | None]) -> dict[str, int | None] | None:
-    """pydantic-ai's run usage SUMS every request (re-asks included); the capture holds only the
-    last reply's. None-safe: an unreported count stays None, never 0."""
+    """Return the run's token usage, else the capture's.
+
+    pydantic-ai's run usage sums every request, re-asks included; the capture holds only the last
+    reply's. A count nobody reported stays None, never 0.
+
+    Rationale: ADR-0007.
+    """
     try:
         u = res.usage()
         got = {"input": u.input_tokens, "output": u.output_tokens}
@@ -187,7 +240,19 @@ def _last_finish(res: Any) -> str | None:
 
 
 class PydanticAIGenerator:
-    """See the module docstring. Exactly one of `model` / `model_for` is required."""
+    """The `Generator` port on pydantic-ai; the module docstring states the contract.
+
+    Args:
+        model: A fixed pydantic-ai `Model`.
+        model_for: A per-request model factory.
+        capture: The capture factory; the default is filled by `record_response`.
+        gated: Exception types that classify as `gated`.
+        wrap: Applied to each model that `model_for` yields (not to a fixed `model`), e.g. a
+            `pydantic_ai_replay.Recorder`.
+
+    Raises:
+        ValueError: When neither or both of `model` and `model_for` are given.
+    """
 
     def __init__(
         self,
@@ -214,6 +279,19 @@ class PydanticAIGenerator:
         validate: Callable[[T], Sequence[Any]] | None = None,
         retry_message: Callable[[Sequence[Any]], str] | None = None,
     ) -> Generated[T]:
+        """Run one generation; a model, wire or gate failure returns a named outcome, never raises.
+
+        Args:
+            req: The call's prompt, model and limits.
+            output: `str` for prose, a pydantic model, or a `JsonOutput` subclass.
+            validate: Returns the problems in a parsed value. A non-empty list triggers a re-ask
+                while `req.output_retries` remain; after that the value is kept with its problems.
+            retry_message: Renders the problems into the re-ask message; by default they are
+                joined with "; ".
+
+        Returns:
+            A `Generated` whose `outcome` is `ok` or a named failure.
+        """
         if self._model is not None:
             return await self.run(self._model, req, output, validate, retry_message)
         assert self._model_for is not None
@@ -234,8 +312,11 @@ class PydanticAIGenerator:
         validate: Callable[[T], Sequence[Any]] | None,
         retry_message: Callable[[Sequence[Any]], str] | None,
     ) -> Generated[T]:
-        """One agent run on `model`. Public so a consumer's subclass can put `model` on its own
-        transport and still share the run, the validator and the classification."""
+        """Run one agent on `model` and classify the result; the arguments are as for `generate`.
+
+        A subclass that supplies `model` on its own transport calls this to share the run, the
+        validator and the classification.
+        """
         out_spec: Any = str if output is str else NativeOutput(framework_output(output))
         agent: Agent[None, Any] = Agent(
             model,

@@ -1,14 +1,23 @@
-"""llm-ports -- our seam, their impl.
+"""Thin Protocols for LLM work, and the one call path around them.
 
-Thin Protocols for LLM work (`ports`), and the one call path around them (`call.generate`): a
-`Role` resolved from the consumer's tier table (`roles`), a prompt pack with a frozen content sha
-(`packs`), per-call graders whose failures are recorded scores (`call_graders`), and an outcome
-that is always NAMED (`ok | gated | unavailable | request_fault | truncated | invalid`) -- the
-Generator never raises for a model, wire or gate failure.
+The package root exports:
 
-Frameworks live behind the ports. `pydantic_ai_generator.PydanticAIGenerator` is the first
-`Generator` adapter and `pydantic_ai_embedder.PydanticAIEmbedder` the first `Embedder` adapter
-(import them explicitly: this package root imports no framework).
+- the ports and their value types (`ports`);
+- the call path `call.generate`, which resolves a `Role` from the consumer's tier table (`roles`),
+  renders a prompt pack named by its content sha (`packs`), runs per-call graders whose failures
+  are recorded as scores (`call_graders`), and ends in a named `Outcome` (`ok`, `gated`,
+  `unavailable`, `request_fault`, `truncated` or `invalid`);
+- the data-rights gate (`content.print_gate`) and `GenerationFailed`.
+
+Frameworks live behind the ports. `pydantic_ai_generator.PydanticAIGenerator` implements
+`Generator` and `pydantic_ai_embedder.PydanticAIEmbedder` implements `Embedder`; import adapters
+by module path.
+
+Invariants:
+    - The package root imports no framework.
+    - A `Generator` never raises for a model, wire or gate failure.
+
+Rationale: ADR-0001.
 """
 
 from llm_ports.call import Hooks, generate, json_output, request_for, require_ok, tracer_trace
@@ -37,7 +46,7 @@ from llm_ports.ports import (
 )
 from llm_ports.roles import Role, Tier, TierTable, load_tiers
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 __all__ = [
     "Activity",

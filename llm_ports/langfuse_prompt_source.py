@@ -1,31 +1,37 @@
-"""LangfusePromptSource -- the `PromptSource` port over Langfuse prompt management.
+"""The `PromptSource` port over Langfuse prompt management.
 
+Example:
     source = LangfusePromptSource(Langfuse(...), seed_for)
-    prompt = source.get("summarize")          # Prompt(text, version, source="langfuse:v7" | "repo")
+    prompt = source.get("summarize")  # Prompt(text, version, source="langfuse:v7" | "repo")
 
-THE REPO LEADS, the managed label MIRRORS, never leads. Per `get(name, label)`:
+The repository seed leads; the managed label mirrors it and never leads. Per `get(name, label)`:
 
-  1. `get_prompt(name, label, fallback=<seed>, cache_ttl_seconds=ttl)` -- the SDK's own cache
-     (an expired entry is served and refreshed on a background thread).
-  2. If the reply is the fallback, or its `config.content_sha` is not the seed's sha, the managed
-     copy is absent or stale: `create_prompt(...)` the seed under the label, refetch uncached.
-  3. Still the fallback, or text that is not the seed's: serve the SEED as `Prompt(source="repo")`.
-     Otherwise `Prompt(source="langfuse:vN")` with the managed version and its stored config.
+1. `get_prompt(name, label, fallback=<seed>, cache_ttl_seconds=ttl)` goes through the SDK's own
+   cache (an expired entry is served and refreshed on a background thread).
+2. If the reply is the fallback, or its `config.content_sha` is not the seed's sha, the managed copy
+   is absent or stale: the seed is pushed under the label with `create_prompt(...)` and refetched
+   uncached.
+3. If the reply is still the fallback, or its text is not the seed's, the seed is served as
+   `Prompt(source="repo")`. Otherwise the result is `Prompt(source="langfuse:vN")` with the managed
+   version and its stored config.
 
-`seed_for(name) -> Seed` is injected: the adapter knows nothing about where a repo prompt lives or
-how it is fingerprinted. A seed with a non-empty `system` (or `kind="chat"`) is a CHAT prompt:
-pushed as `type="chat"` with the message list, fetched as chat, compared message for message on
-role + content. Langfuse refuses a type change on an existing name, which is why `kind` can force
-chat for a seed with no system message.
+`seed_for(name) -> Seed` is injected: the adapter knows nothing about where a repository prompt
+lives or how it is fingerprinted. A seed with a non-empty `system` (or `kind="chat"`) is a chat
+prompt: pushed as `type="chat"` with the message list, fetched as chat, and compared message by
+message on role and content. Langfuse refuses a type change on an existing name, so `kind` can
+force chat for a seed with no system message.
 
-The client is duck-typed: anything with the SDK's `get_prompt` / `create_prompt` signatures. Its
-construction is the consumer's, so this module imports no SDK.
+The client is duck-typed: anything with the SDK's `get_prompt` / `create_prompt` signatures. The
+caller builds it, so this module imports no SDK.
 
-FAILS SOFT by contract: unreachable, a refused push, a malformed reply -- each serves the seed as
-`source == "repo"` plus a warning event through `on_event` (default: the stdlib logger
-`llm_ports.langfuse_prompt_source`), never a raise. The SDK never caches a fallback reply, so the
-down-verdict is held per name for one ttl here: a store that is down costs one round-trip per ttl,
-not one per call.
+Invariants:
+    - Fails soft: an unreachable store, a refused push or a malformed reply each serves the seed
+      as `source == "repo"` and emits a warning event through `on_event` (default: the stdlib
+      logger `llm_ports.langfuse_prompt_source`); none of them raises.
+    - The SDK never caches a fallback reply, so the down verdict is held per name for one TTL
+      here: a store that is down costs one round-trip per TTL, not one per call.
+
+Rationale: ADR-0008.
 """
 
 from __future__ import annotations
@@ -49,13 +55,16 @@ def _log_event(level: int, event: str, fields: Mapping[str, Any]) -> None:
 
 
 def kind(seed: Seed) -> str:
-    """ "chat" or "text": the seed's forced `kind`, else chat exactly when it has a system message."""
+    """Return "chat" or "text": the seed's forced `kind`, else "chat" exactly when it has a system message."""
     return seed.kind or ("chat" if seed.system else "text")
 
 
 def wire(seed: Seed) -> str | list[dict[str, str]]:
-    """What the store holds for this seed: the text, or the chat list -- a system message only
-    when the seed has one, so a system-less chat seed is a one-message list, never ""."""
+    """Return what the store holds for a seed: the text, or the chat message list.
+
+    The list has a system message only when the seed has one, so a system-less chat seed is a
+    one-message list, never "".
+    """
     if kind(seed) == "text":
         return seed.text
     msgs = [{"role": "system", "content": seed.system}] if seed.system else []
@@ -63,8 +72,11 @@ def wire(seed: Seed) -> str | list[dict[str, str]]:
 
 
 def served(p: Any) -> Any:
-    """A reply's prompt in `wire`'s shape: a chat reply compared on role + content only (the SDK may
-    carry more keys per message). A message that is not a mapping RAISES (-> the seed serves)."""
+    """Return a reply's prompt in `wire`'s shape.
+
+    A chat reply is reduced to role and content per message (the SDK may carry more keys). A
+    message that is not a mapping raises, and `LangfusePromptSource.get` then serves the seed.
+    """
     body = p.prompt
     if isinstance(body, list):
         return [{"role": m["role"], "content": m["content"]} for m in body]
@@ -76,7 +88,17 @@ def _is_fallback(p: Any) -> bool:
 
 
 class LangfusePromptSource:
-    """`PromptSource` whose managed store is Langfuse. One instance per client; the SDK caches."""
+    """`PromptSource` whose managed store is Langfuse.
+
+    One instance per client; the SDK caches.
+
+    Args:
+        client: A Langfuse client, or anything with its `get_prompt` / `create_prompt` signatures.
+        seed_for: Returns the repository seed for a prompt name.
+        cache_ttl_s: The SDK cache TTL, and how long a down verdict is held per name.
+        clock: A monotonic clock, injectable for tests.
+        on_event: The warning sink; defaults to the stdlib logger `llm_ports.langfuse_prompt_source`.
+    """
 
     def __init__(
         self,
@@ -101,6 +123,11 @@ class LangfusePromptSource:
         return self._client.get_prompt(name, label=label, type=kind(seed), fallback=wire(seed), cache_ttl_seconds=ttl)
 
     def get(self, name: str, *, label: str = "production") -> Prompt:
+        """Return prompt `name`, mirrored to the managed store under `label`.
+
+        Serves the managed version when it matches the seed, else the seed as `source == "repo"`;
+        the module docstring gives the steps. A store failure never raises.
+        """
         seed = self._seed_for(name)
         repo = Prompt(name, seed.text, None, "repo", config=dict(seed.config), system=seed.system)
         if self._down(name):
@@ -136,7 +163,7 @@ class LangfusePromptSource:
             self._down_until[name] = self._clock() + self._ttl
             return repo
         self._down_until.pop(name, None)
-        # `got == want`, so the seed's text/system ARE the managed copy's: serve them with its version.
+        # `got == want`, so the seed's text and system are the managed copy's: serve them with its version.
         return Prompt(
             name, seed.text, int(p.version), f"langfuse:v{p.version}", config=dict(p.config or {}), system=seed.system
         )

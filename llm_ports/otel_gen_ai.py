@@ -1,31 +1,35 @@
-"""otel_gen_ai -- OpenTelemetry GenAI spans for model calls (extra `[otel]`).
+"""OpenTelemetry GenAI spans for model calls (extra `[otel]`).
 
+Example:
     with gen_ai_span(tracer, operation="chat", model=m, provider="openai") as rec:
         reply = await client.call(...)
         rec.set_usage(reply.in_tok, reply.out_tok)
 
     record_gen_ai(tracer, operation="embeddings", model=m, provider="openai", latency_ms=840)
 
-The SHAPE of a model call -- who, which model, how long, how many tokens -- as a span in the
+A span records the shape of a model call (who, which model, how long, how many tokens) in the
 trace the rest of the request already lives in, named and attributed by the OpenTelemetry GenAI
-semantic conventions (`opentelemetry-semantic-conventions`' constants, so a rename upstream is a
-version bump, not a hunt). Prompt and completion BODIES are never carried: that is a prompt
-store's job, and a trace store fills up on them. There is no switch to turn bodies on.
+semantic conventions. Attribute keys come from `opentelemetry-semantic-conventions`' constants,
+so an upstream rename arrives with a version bump.
 
-`tracer` is any OTel `Tracer`, or None when tracing is off -- every function then does nothing,
-so a call site needs no conditional. `attributes` carries the consumer's own dimensions under its
-own prefix (never inside the reserved `gen_ai.*` namespace).
+`tracer` is any OTel `Tracer`, or None when tracing is off; every function then does nothing, so a
+call site needs no conditional. `attributes` carries the caller's own dimensions under its own
+prefix, outside the reserved `gen_ai.*` namespace.
 
-- `gen_ai_span` opens a CHILD of the ambient context (`start_as_current_span`), so the model call
-  lands inside the job or request span that already exists. Only span CREATION is guarded: an
-  exception from the caller's block propagates and the SDK records it on the span.
-- `record_gen_ai` is the after-the-fact shape, for a call that learns its latency and usage only
-  once it is over. The span is BACK-DATED by the measured `latency_ms`: opened and closed in the
-  same instant it would publish a 0 ms model call into a latency waterfall.
-- NONE IS NOT ZERO: a provider that reported neither count gets the `unmeasured_attr` flag and no
-  token attributes; a reported zero stays a zero.
+- `gen_ai_span` opens a child of the ambient context (`start_as_current_span`), so the model call
+  lands inside the existing job or request span. Only span creation is guarded: an exception from
+  the caller's block propagates, and the SDK records it on the span.
+- `record_gen_ai` records a call after it is over, for a call that learns its latency and usage
+  only then. The span is back-dated by the measured `latency_ms`, so its duration is the call's.
 - `gen_ai.system` (deprecated in the conventions) is emitted beside `gen_ai.provider.name`, which
   replaced it, so a query written against either keeps working.
+
+Invariants:
+    - Prompt and completion bodies are never carried, and no switch turns them on.
+    - None is not zero: a provider that reported neither count gets the `unmeasured_attr` flag
+      and no token attributes; a reported zero stays zero.
+
+Rationale: ADR-0007.
 """
 
 from __future__ import annotations
@@ -46,11 +50,15 @@ INPUT_TOKENS = ga.GEN_AI_USAGE_INPUT_TOKENS
 OUTPUT_TOKENS = ga.GEN_AI_USAGE_OUTPUT_TOKENS
 #: The default unmeasured flag. Not a convention key (the conventions have none), so it is not under `gen_ai.*`.
 UNMEASURED = "llm.tokens_unmeasured"
+#: Characters of an error message kept in a span status.
 ERROR_MAX = 200
 
 
 class GenAiRecorder:
-    """What a call site attaches once the call returns. A no-op over `span=None`; never raises."""
+    """Attaches a call's results to its span once the call returns.
+
+    A no-op over `span=None`. Never raises.
+    """
 
     __slots__ = ("_span", "_unmeasured")
 
@@ -65,7 +73,7 @@ class GenAiRecorder:
             self._span.set_attribute(key, value)
 
     def set_usage(self, input_tokens: int | None, output_tokens: int | None) -> None:
-        """Token counts as reported; neither reported = the unmeasured flag, never zeros."""
+        """Set the token counts as reported; when neither is reported, set the unmeasured flag, never zeros."""
         self._set(INPUT_TOKENS, input_tokens)
         self._set(OUTPUT_TOKENS, output_tokens)
         if input_tokens is None and output_tokens is None:
@@ -73,14 +81,14 @@ class GenAiRecorder:
 
 
 def span_name(operation: str, model: str) -> str:
-    """The conventions' `{operation} {model}`: low cardinality, the call's identity is attributes."""
+    """Return the conventions' span name, `{operation} {model}`; the call's identity lives in attributes."""
     return f"{operation} {model}"
 
 
 def attributes_for(
     *, operation: str, model: str, provider: str, attributes: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Pure. The convention attributes plus the consumer's own (None values dropped)."""
+    """Return the convention attributes plus the caller's own, with None values dropped. Pure."""
     out: dict[str, Any] = {SYSTEM: provider, PROVIDER_NAME: provider, OPERATION: operation, REQUEST_MODEL: model}
     out.update({k: v for k, v in (attributes or {}).items() if v is not None})
     return out
@@ -96,12 +104,17 @@ def gen_ai_span(
     attributes: Mapping[str, Any] | None = None,
     unmeasured_attr: str = UNMEASURED,
 ) -> Iterator[GenAiRecorder]:
-    """A child span around one live model call (module docstring)."""
+    """Open a child span around one live model call; the module docstring states the contract.
+
+    Yields:
+        A `GenAiRecorder` over the span, or a no-op recorder when `tracer` is None or span
+        creation failed.
+    """
     null = GenAiRecorder(None)
     if tracer is None:
         yield null
         return
-    # Guard creation ONLY: a try around the `yield` would re-enter this generator on the caller's
+    # Guard creation only: a try around the `yield` would re-enter this generator on the caller's
     # exception and lose it behind "generator didn't stop after throw()".
     try:
         cm = tracer.start_as_current_span(
@@ -128,9 +141,11 @@ def record_gen_ai(
     attributes: Mapping[str, Any] | None = None,
     unmeasured_attr: str = UNMEASURED,
 ) -> None:
-    """A span for a call that already FINISHED, back-dated by `latency_ms`; `error` set = status
-    ERROR (a swallowed failure would otherwise close the span UNSET and read as a healthy call).
-    Never raises."""
+    """Record a span for a call that already finished, back-dated by `latency_ms`; never raises.
+
+    A non-empty `error` sets the span status to `ERROR`, with the message cut to `ERROR_MAX`
+    characters; without one, the status is left unset.
+    """
     if tracer is None:
         return
     try:

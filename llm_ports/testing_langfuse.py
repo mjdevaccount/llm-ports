@@ -1,15 +1,16 @@
-"""testing_langfuse -- test doubles for the Langfuse adapters (extra `[langfuse]`).
+"""Test doubles for the Langfuse adapters (extra `[langfuse]`).
 
-`LangfuseRig` is a REAL SDK 5 client whose exporter is in memory: SDK 5 is OpenTelemetry
-underneath, so the wire IS the exported span, and `observed()` reads each one back as the
-observation the server stores. Each rig builds under a fresh public key, because the SDK's
-resource manager is a singleton per key and a reused key would hand a later test an earlier one's
-exporter. Scores are an ingestion-API call, not a span, so the rig records `create_score` calls.
+`LangfuseRig` is a real Langfuse SDK 5 client whose exporter is in memory. SDK 5 is
+OpenTelemetry underneath, so the exported span is the wire, and `observed()` reads each span
+back as the observation the server stores. Each rig builds under a fresh public key: the SDK's
+resource manager is a singleton per key, and a reused key hands a later test an earlier test's
+exporter. Scores are an ingestion-API call rather than a span, so the rig records `create_score`
+calls.
 
 `RefusingLangfuse` is a client whose server is down: every call raises `ConnectionError`, so a
-test can prove the adapter over it never raises into the caller.
+test can prove an adapter over it never raises into the caller.
 
-`FakeLangfusePrompts` stands in for the two prompt-management calls `LangfusePromptSource` makes:
+`FakeLangfusePrompts` fakes the two prompt-management calls `LangfusePromptSource` makes:
 `get_prompt` returns what `create_prompt` last stored (versions numbered in order), else the
 fallback.
 """
@@ -28,7 +29,10 @@ _HTTP: httpx.Client | None = None
 
 
 def _http() -> httpx.Client:
-    """One HTTP client for every rig: building one loads the OS trust store (slow on some hosts)."""
+    """Return the one HTTP client every rig shares.
+
+    Building an `httpx.Client` loads the OS trust store, which is slow on some hosts.
+    """
     global _HTTP
     if _HTTP is None:
         _HTTP = httpx.Client()
@@ -36,9 +40,14 @@ def _http() -> httpx.Client:
 
 
 def observed(span: Any) -> dict[str, Any]:
-    """One exported span as the observation the server stores: the `langfuse.*` keys unpacked
-    (metadata is one JSON attribute PER KEY; usage is one JSON blob). Only keys the span carries
-    appear -- an absent field is absent, never None."""
+    """Return one exported span as the observation the server stores.
+
+    The `langfuse.*` attributes are unpacked: metadata is one JSON attribute per key, and usage is
+    one JSON blob.
+
+    Invariants:
+        - Only keys the span carries appear; an absent field is absent, never None.
+    """
     a = dict(span.attributes)
     out: dict[str, Any] = {"name": span.name}
     for key, name in (
@@ -63,7 +72,13 @@ def observed(span: Any) -> dict[str, Any]:
 
 
 class LangfuseRig:
-    """A real SDK 5 client exporting to memory, plus `scores` (every `create_score` call's kwargs)."""
+    """A real SDK 5 client exporting to memory.
+
+    Attributes:
+        exporter: The in-memory span exporter.
+        client: The `Langfuse` client under test.
+        scores: The keyword arguments of every `create_score` call, in call order.
+    """
 
     def __init__(self) -> None:
         from langfuse import Langfuse  # type: ignore[import-untyped]
@@ -85,19 +100,29 @@ class LangfuseRig:
         self.client.create_score = lambda **kw: self.scores.append(kw)
 
     def spans(self) -> list[Any]:
+        """Flush the client and return every finished span."""
         self.client.flush()
         return list(self.exporter.get_finished_spans())
 
     def attrs(self) -> dict[str, Any]:
+        """Return the attributes of the one finished span.
+
+        Raises:
+            ValueError: The rig has not exported exactly one span.
+        """
         (span,) = self.spans()
         return dict(span.attributes)
 
     def observed(self) -> list[dict[str, Any]]:
+        """Return every finished span as an observation (see the module-level `observed`)."""
         return [observed(s) for s in self.spans()]
 
 
 class RefusingLangfuse:
-    """A Langfuse client whose server is down: every SDK call the adapters make raises."""
+    """A Langfuse client whose server is down.
+
+    Every SDK call the adapters make raises `ConnectionError` with `error` as its message.
+    """
 
     error = "langfuse refused"
 
@@ -108,8 +133,13 @@ class RefusingLangfuse:
 
 
 class FakeLangfusePrompts:
-    """The prompt-management half of a Langfuse client, in memory. `created` keeps every
-    `create_prompt` kwargs; `fetches` keeps (name, label, type, cache_ttl_seconds) per fetch."""
+    """The prompt-management half of a Langfuse client, in memory.
+
+    Attributes:
+        stored: The prompt `get_prompt` returns, or None to return the fallback.
+        created: The keyword arguments of every `create_prompt` call.
+        fetches: `(name, label, type, cache_ttl_seconds)` for every `get_prompt` call.
+    """
 
     def __init__(self, stored: SimpleNamespace | None = None) -> None:
         self.stored = stored
@@ -117,12 +147,14 @@ class FakeLangfusePrompts:
         self.fetches: list[tuple[str, str, str, int]] = []
 
     def get_prompt(self, name: str, *, label: str, type: str, fallback: Any, cache_ttl_seconds: int) -> SimpleNamespace:
+        """Record the fetch and return the stored prompt, or the fallback when nothing is stored."""
         self.fetches.append((name, label, type, cache_ttl_seconds))
         if self.stored is None:
             return SimpleNamespace(is_fallback=True, prompt=fallback, config={}, version=0)
         return self.stored
 
     def create_prompt(self, **kw: Any) -> None:
+        """Record the call and store its prompt as the next version."""
         self.created.append(kw)
         self.stored = SimpleNamespace(
             is_fallback=False,

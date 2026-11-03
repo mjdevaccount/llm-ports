@@ -1,24 +1,29 @@
-"""call -- THE one generation path: role -> request -> gate -> trace -> Generator -> graders.
+"""The single generation path: role, request, gate, trace, `Generator`, graders.
 
+Example:
     res = await call.generate(CATEGORIZE, prompt=text, output=Reply, generator=gen, hooks=HOOKS)
-    if res.outcome != "ok": ...          # gated | unavailable | request_fault | truncated | invalid
+    if res.outcome != "ok": ...  # gated | unavailable | request_fault | truncated | invalid
 
-Per call: the role resolves to one `GenRequest` (`request_for`) -> `context.llm_feature(category)`
--> the `admit` hook (a refusal returns `gated` BEFORE any trace opens: a switched-off category is
-not an error) -> one trace observation (the `trace` hook) around the `Generator` -> every `ok`
-reply scored by the graders its role names, each written as a score on the observation and
-carried under `stamp["scores"]` -> `on_scores` (a gauge) -> `on_ok` (a sampler). Feature code
-carries no model literal, no timeout and no framework import: the role does, and the Generator is
-passed in (an adapter, a test stub, a recording replay).
+Per call, the role resolves to one `GenRequest` (`request_for`), the category is entered with
+`context.llm_feature`, and the `admit` hook runs. A refusal returns `gated` before any trace opens:
+a switched-off category is not an error. Otherwise one trace observation (the `trace` hook) wraps
+the `Generator` call. Every `ok` reply is scored by the graders its role names; each score is
+written on the observation and carried under `stamp["scores"]`, then handed to `on_scores` (a
+gauge) and `on_ok` (a sampler). Feature code carries no model literal, no timeout and no framework
+import: the role carries them, and the `Generator` is passed in (an adapter, a test stub, a
+recording replay).
 
-The hooks are where a consumer's own planes plug in -- a category switchboard, a tracing backend,
-a metrics sink, an LLM-judge sampler. Every hook is optional; with none, the path is role ->
-Generator -> graders, which is already more than a bare client call: the outcome is NAMED, and a
-grader failure is a recorded score, never a silent drop.
+The hooks are where a consumer's own planes plug in: a category switchboard, a tracing backend, a
+metrics sink, an LLM-judge sampler. Every hook is optional. With none, the path is role,
+`Generator`, graders, and the outcome is still named and a grader failure still recorded as a score.
 
-NEVER RAISES for a model, wire or gate failure. A non-`ok`, non-`gated` outcome ends the
-observation in error (`_NotOk` is raised INSIDE the trace block only) and emits `llm_call_failed`.
-A caller whose ledger is an `except` uses `require_ok`.
+Invariants:
+    - `generate` never raises for a model, wire or gate failure; the outcome names it.
+    - A non-`ok`, non-`gated` outcome ends the observation in error and emits `llm_call_failed`.
+      `_NotOk` is raised inside the trace block only and never escapes.
+    - A caller whose ledger is an `except` uses `require_ok`.
+
+Rationale: ADR-0001.
 """
 
 from __future__ import annotations
@@ -43,29 +48,44 @@ OUTPUT_TRACE_MAX = 4000
 _log = logging.getLogger("llm_ports.call")
 
 
-#: `(role, request, prompt, metadata) -> async context manager yielding an Observation`. On an
-#: exception inside the block the hook ends the observation in error and lets it propagate.
+#: Trace hook: `(role, request, prompt, metadata)` to an async context manager yielding an
+#: `Observation`. On an exception inside the block, the hook ends the observation in error and lets
+#: the exception propagate.
 TraceHook = Callable[[Role, GenRequest, str, Mapping[str, Any]], AbstractAsyncContextManager[Observation]]
-#: `(role) -> None` to admit, or the refusal reason (the outcome becomes `gated`).
+#: Admission hook: `(role)` to None to admit, or to the refusal reason (the outcome becomes `gated`).
 AdmitHook = Callable[[Role], str | None]
-#: `(logging level, event, fields)`. Default: the stdlib logger `llm_ports.call`.
+#: Event hook: `(logging level, event, fields)`. Without one, events go to the stdlib logger
+#: `llm_ports.call`.
 EventHook = Callable[[int, str, Mapping[str, Any]], None]
 
 
 @dataclass(frozen=True)
 class Hooks:
+    """Optional consumer hooks for `generate`.
+
+    Attributes:
+        admit: Runs before any trace opens; a returned reason makes the outcome `gated`.
+        trace: Opens the call's observation; without one, a sink-less tracer is used.
+        graders: The grader table by name; None means `call_graders.GRADERS`.
+        on_scores: Awaited with the role and its scores whenever a reply was graded.
+        on_ok: Called with the role, prompt and result after an `ok` reply.
+        on_event: Receives `llm_call_failed` and `llm_call_graded`; without one, they are logged.
+    """
+
     admit: AdmitHook | None = None
     trace: TraceHook | None = None
-    graders: Mapping[str, CallGrader] | None = None  # None = call_graders.GRADERS
+    graders: Mapping[str, CallGrader] | None = None  # None means call_graders.GRADERS
     on_scores: Callable[[Role, tuple[CallScore, ...]], Awaitable[Any]] | None = None
     on_ok: Callable[[Role, str, Generated[Any]], Any] | None = None
     on_event: EventHook | None = None
 
 
 def tracer_trace(tracer: Tracer, *, provider: str = "openai") -> TraceHook:
-    """A `trace` hook over any `Tracer` port adapter (Langfuse, OTel, a test recorder): one
-    generation per call (`observation.observe`), NAMED BY THE ROLE'S CATEGORY, ended in error on a
-    non-ok outcome."""
+    """Return a `trace` hook over any `Tracer` port adapter (Langfuse, OTel, a test recorder).
+
+    The hook opens one generation per call (`observation.observe`), named by the role's category,
+    and ends it in error on a non-`ok` outcome.
+    """
 
     def trace(
         role: Role, req: GenRequest, prompt: str, meta: Mapping[str, Any]
@@ -83,13 +103,13 @@ def tracer_trace(tracer: Tracer, *, provider: str = "openai") -> TraceHook:
     return trace
 
 
-#: The trace when no hook is given: the port path over the sink-less tracer, so the package has ONE
-#: null sink (`reference.NoopGeneration`) at either layer.
+#: The trace used when no hook is given: the port path over the sink-less tracer, so the package
+#: has one null sink (`reference.NoopGeneration`) at either layer.
 _null_trace = tracer_trace(NoopTracer())
 
 
 class _NotOk(Exception):
-    """Raised INSIDE the trace block only, so the observation ends in error; never escapes."""
+    """Ends the observation in error; raised inside the trace block only and never escapes."""
 
 
 def request_for(
@@ -100,8 +120,11 @@ def request_for(
     images: Sequence[tuple[bytes, str]] = (),
     settings: Mapping[str, Any] | None = None,
 ) -> GenRequest:
-    """Pure. The role resolved into one wire request. `settings` override the role's per call
-    (a seed for a vote, a tighter max_tokens) -- the role stays the default, never a literal."""
+    """Resolve the role into one wire request.
+
+    Pure. `settings` override the role's model settings for this call (a seed for a vote, a tighter
+    `max_tokens`); the role stays the default.
+    """
     tier = role.resolved_tier
     return GenRequest(
         model=role.resolved_model,
@@ -117,23 +140,35 @@ def request_for(
 
 
 def json_output(schema: Mapping[str, Any], name: str) -> type[dict[str, Any]]:
-    """A hand-written JSON schema as `output=`: the grammar goes to the model unchanged and the
-    value is a plain dict. `name` is what a test stub dispatches on. A port value type
-    (`ports.JsonOutput`); the Generator adapter translates it."""
+    """Return a hand-written JSON schema as an `output=` type.
+
+    The schema goes to the model unchanged as the grammar, and the value is a plain dict. `name` is
+    what a test stub dispatches on. The result is a port value type (`ports.JsonOutput`); the
+    `Generator` adapter translates it.
+    """
     return ports.json_output(schema, name)
 
 
 def require_ok[T](res: Generated[T]) -> T:
-    """The value, or the failure RAISED as `GenerationFailed(outcome, reason)` -- `gated` included.
-    For a caller whose `except Exception` is its ledger, where the never-raise contract would
-    otherwise turn a dead model into an unrecorded None."""
+    """Return the result's value, or raise its failure.
+
+    For a caller whose `except Exception` is its ledger: under the never-raise contract a dead model
+    would otherwise become an unrecorded None.
+
+    Raises:
+        GenerationFailed: `(outcome, reason)` for any non-`ok` outcome, `gated` included, and for an
+            `ok` result without a value.
+    """
     if res.outcome != "ok" or res.value is None:
         raise GenerationFailed(res.outcome, res.reason)
     return res.value
 
 
 def trace_output(value: Any) -> str:
-    """What the observation records as output: JSON for a model or a mapping, capped."""
+    """Return the observation's output text, capped at `OUTPUT_TRACE_MAX` characters.
+
+    A pydantic model or a mapping is rendered as JSON; None is the empty string.
+    """
     if value is None:
         return ""
     dump = getattr(value, "model_dump_json", None)
@@ -152,8 +187,11 @@ def _event(h: Hooks, level: int, event: str, **fields: Any) -> None:
 
 
 def _grade(role: Role, prompt: str, res: Generated[Any], obs: Observation, h: Hooks) -> Generated[Any]:
-    """Score an `ok` reply with the role's graders onto its observation; the scores ride in the
-    stamp. Pure but for the scores written; a failed grader is also emitted by name."""
+    """Score an `ok` reply with the role's graders and write each score on its observation.
+
+    The scores ride in the returned stamp under `"scores"`. Failed graders are also emitted by name
+    as `llm_call_graded`.
+    """
     scores = score_all(role, prompt, res.value, h.graders)
     for s in scores:
         obs.score(name=f"{role.name}.{s.name}", value=s.value, comment=s.reason or None)
@@ -185,9 +223,19 @@ async def generate[T](
     metadata: Mapping[str, Any] | None = None,
     web: bool = False,
 ) -> Generated[T]:
-    """One generation for `role` through `generator`. See the module docstring. `web=True` says the
-    role's tier fetches pages the prompt never rendered: like an image, an input no text grader
-    sees, so `call_graders.TEXT_ONLY_GRADERS` are dropped for THIS call (the role is untouched)."""
+    """Run one generation for `role` through `generator`.
+
+    The path and the hooks are described in the module docstring. `web=True` says the role's tier
+    fetches pages the prompt never rendered: like an image, an input no text grader sees, so
+    `call_graders.TEXT_ONLY_GRADERS` are dropped for this call. The role itself is unchanged.
+
+    Returns:
+        The result, with a named outcome. A model, wire or gate failure is an outcome, never an
+        exception.
+
+    Raises:
+        RuntimeError: Only when a trace hook swallowed a generator exception, leaving no result.
+    """
     h = hooks or Hooks()
     seen = graders_for_inputs(tuple(role.graders), has_images=bool(images), has_web=web)
     if seen != tuple(role.graders):
@@ -228,7 +276,7 @@ async def generate[T](
                 outcome=res.outcome if res else None,
                 reason=res.reason if res else None,
             )
-        if res is None:  # only reachable if a trace hook swallowed a generator crash
+        if res is None:  # reachable only when a trace hook swallowed a generator exception
             raise RuntimeError(f"llm_call {role.name}: the generator returned nothing")
         if res.stamp.get("scores") and h.on_scores is not None:
             await h.on_scores(role, res.stamp["scores"])

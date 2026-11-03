@@ -1,28 +1,32 @@
-"""sql_guard -- a read-only AST guard for SQL an agent wrote (extra `[sql]`, sqlglot).
+"""A read-only AST guard for SQL an agent wrote (extra `[sql]`, sqlglot).
 
+The guard is one layer of a defense stack, not the stack: run its result as a role that cannot
+write, in a `READ ONLY` transaction with a statement timeout. It parses with sqlglot, validates the
+tree, and regenerates the SQL from the tree. The returned string is the only thing to execute, so
+comments and formatting tricks do not survive the parser.
+
+A frozen `SqlGuardPolicy` holds the rules' data; the consumer owns its schema allowlist.
+
+Invariants:
+    - An admitted statement is exactly one statement, and it is a SELECT (UNION, CTE and subquery
+      are fine).
+    - No DML, DDL, transaction or utility node appears anywhere in the tree (`FORBIDDEN_NODES`),
+      and there is no `SELECT ... INTO`.
+    - Every real table is schema-qualified and inside `allowed_schemas`. CTE names are exempt, so
+      the system catalogs are denied unless a policy names them.
+    - No function in `deny_functions` is called (`POSTGRES_DENY_FUNCTIONS`: sleep, file,
+      backend-signal, advisory-lock, dblink and xml-dump functions).
+    - LIMIT is at most `max_rows`: injected when absent, lowered when larger. A non-integer LIMIT
+      is refused.
+    - A policy may tighten the structural rules but never loosen them: `forbidden_nodes` keeps
+      every type in `FORBIDDEN_NODES`, and `single_statement` stays True. Both are refused at
+      construction, so no instance widens what the guard admits.
+    - The guard fails closed: anything unparseable raises.
+
+Example:
     POLICY = SqlGuardPolicy(allowed_schemas=("reporting",), deny_functions=POSTGRES_DENY_FUNCTIONS,
                             max_rows=200)
-    safe_sql = guard(agent_sql, POLICY)      # raises SqlGuardError with a reason the agent can act on
-
-One layer of a defense stack, not the stack: run the result as a role that cannot write, in a
-READ ONLY transaction with a statement timeout. What this layer does: parse with sqlglot, validate
-the tree, and REGENERATE the SQL from the tree -- the returned string is the only thing to execute,
-so comments and formatting tricks do not survive the parser.
-
-The rules (a frozen `SqlGuardPolicy` holds the data; the consumer owns its schema allowlist):
-- exactly one statement, and it is a SELECT (UNION / CTE / subquery fine);
-- no DML / DDL / transaction / utility node anywhere in the tree (`FORBIDDEN_NODES`), no
-  `SELECT ... INTO`;
-- every real table schema-qualified and inside `allowed_schemas` (CTE names exempt, so the system
-  catalogs are denied unless a policy names them);
-- no function in `deny_functions` (`POSTGRES_DENY_FUNCTIONS`: sleep, file, backend-signal,
-  advisory-lock, dblink and xml-dump functions);
-- LIMIT forced to <= `max_rows` (injected when absent; a non-integer LIMIT is refused).
-
-A policy may TIGHTEN the structural rules but never loosen them: `forbidden_nodes` must keep every
-type in `FORBIDDEN_NODES`, and `single_statement` cannot be turned off. Both are refused at
-construction, so no instance exists that widens what the guard admits. Fail-closed: anything
-unparseable raises.
+    safe_sql = guard(agent_sql, POLICY)  # raises SqlGuardError with a reason the agent can act on
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ import sqlglot
 from sqlglot import expressions as exp
 
 #: Node types that never appear anywhere in an admitted tree. `exp.Command` is sqlglot's catch-all
-#: for a raw or unmodelled statement -- fail-closed includes it.
+#: for a raw or unmodelled statement, so failing closed forbids it too.
 FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
     exp.Insert,
     exp.Update,
@@ -54,7 +58,7 @@ FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
     exp.Lock,
 )
 
-#: PostgreSQL functions an agent's read has no business calling (lower-case, as policies hold them).
+#: PostgreSQL functions a read-only query has no reason to call, lower-case as policies hold them.
 POSTGRES_DENY_FUNCTIONS: frozenset[str] = frozenset(
     {
         "pg_sleep",
@@ -90,7 +94,21 @@ class SqlGuardError(ValueError):
 
 @dataclass(frozen=True)
 class SqlGuardPolicy:
-    """What the guard admits. `allowed_schemas` is an ordered tuple so the error text is stable."""
+    """What the guard admits.
+
+    Attributes:
+        allowed_schemas: The queryable schemas, lower-case. An ordered tuple, so the error text is
+            stable.
+        deny_functions: Function names refused anywhere in the tree, lower-case.
+        max_rows: The largest LIMIT an admitted statement carries; at least 1.
+        forbidden_nodes: Node types refused anywhere in the tree; a superset of `FORBIDDEN_NODES`.
+        single_statement: Always True.
+        dialect: The sqlglot dialect that parses and regenerates the statement.
+
+    Raises:
+        ValueError: At construction, for a policy that loosens the structural rules, a `max_rows`
+            below 1, or a schema or function name that is not lower-case.
+    """
 
     allowed_schemas: tuple[str, ...]
     deny_functions: frozenset[str]
@@ -114,6 +132,7 @@ class SqlGuardPolicy:
 
     @property
     def schemas_text(self) -> str:
+        """The allowed schemas as one comma-separated string, for error text."""
         return ", ".join(self.allowed_schemas)
 
 
@@ -154,8 +173,20 @@ def _enforce_limit(tree: exp.Expression, policy: SqlGuardPolicy) -> exp.Expressi
 
 
 def guard(sql: str, policy: SqlGuardPolicy) -> str:
-    """Validate `sql` under `policy` and return the regenerated statement to execute (comments
-    stripped). Raises SqlGuardError."""
+    """Validate `sql` under `policy` and return the regenerated statement to execute.
+
+    Args:
+        sql: The statement the agent wrote.
+        policy: The rules to enforce.
+
+    Returns:
+        The statement regenerated from its parse tree in `policy.dialect`, comments stripped, with
+        a LIMIT of at most `policy.max_rows`.
+
+    Raises:
+        SqlGuardError: The statement is empty, unparseable, or breaks a rule; the message names
+            the rule.
+    """
     if not sql or not sql.strip():
         raise SqlGuardError("empty query")
     try:

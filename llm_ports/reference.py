@@ -1,14 +1,15 @@
-"""reference -- the framework-free impl behind each port that has one, so a consumer has a working
-default before (or instead of) a framework adapter.
+"""Framework-free implementations behind the ports that have one.
 
-- `GauntletEvaluator`  -- `Evaluator`: deterministic graders over rows -> ONE board (the shape the
-                          port promises). Pure: rows in, board out.
-- `NumberLawGrounder`  -- `Grounder`: the number law (`numbers.uncited`) -- every figure in a claim
-                          must appear in a cited span. NUMBERS ONLY: necessary, never sufficient.
-- `RepoPromptSource`   -- `PromptSource` with no managed store: every name is its repo `Seed`.
-- `NoopTracer`         -- `Tracer` with no sink: every generation is a `NoopGeneration`. Also the
-                          null trace `call.generate` uses when no `trace` hook is given -- ONE null
-                          sink in the package.
+A consumer gets a working default before, or instead of, a framework adapter.
+
+- `GauntletEvaluator`: an `Evaluator` that runs deterministic graders over rows into one board,
+  the shape the port promises. Pure: rows in, board out.
+- `NumberLawGrounder`: a `Grounder` that applies the number law (`numbers.uncited`): every figure
+  in a claim must appear in a cited span. It judges numbers only, a necessary check and never a
+  sufficient one.
+- `RepoPromptSource`: a `PromptSource` with no managed store; every name is its repo `Seed`.
+- `NoopTracer`: a `Tracer` with no sink; every generation is a `NoopGeneration`. It is also the
+  null trace `call.generate` uses when no `trace` hook is given, so the package has one null sink.
 
 The test doubles (`StubCiter`, `StubPromptSource`, ...) live in `llm_ports.testing`.
 """
@@ -21,22 +22,23 @@ from typing import Any
 from llm_ports import numbers
 from llm_ports.ports import Chunk, Claim, Grader, GroundingVerdict, Prompt, Seed
 
-BOARD_EXAMPLES = 3  # (id, reason) pairs kept per grader: the wound named, never the corpse
+BOARD_EXAMPLES = 3  # (id, reason) pairs a board keeps per failing grader
 
 _Monitors = Callable[[list[dict[str, Any]]], dict[str, Any]]  # a surface's own rates over all rows
 
 
 class GauntletEvaluator:
-    """`Evaluator` = the gauntlet: run the deterministic graders over a set of rows and produce ONE
-    board, so every reader of a surface's quality (a CI golden gate, a scheduled scorer, an ad-hoc
-    script) gets the same numbers:
+    """An `Evaluator` that runs deterministic graders over a set of rows into one board.
+
+    Every reader of a surface's quality (a CI golden gate, a scheduled scorer, an ad-hoc script)
+    gets the same numbers. The board's shape:
 
         {"surface": ..., "n": ..., "rows_failed": N,
          "by_grader": {grader: {"pass": n, "fail": n, "examples": [...]}},
          "monitors": {...}}
 
-    `examples` carries at most `BOARD_EXAMPLES` (id, reason) pairs per grader. A grader that RAISES
-    is a bug in the consumer's code and raises out of here; where that lands is the caller's job."""
+    `examples` carries at most `BOARD_EXAMPLES` `(id, reason)` pairs per grader.
+    """
 
     def run(
         self,
@@ -47,6 +49,12 @@ class GauntletEvaluator:
         id_field: str = "id",
         monitors: _Monitors | None = None,
     ) -> dict[str, Any]:
+        """Grade every row with every grader and return the board.
+
+        `id_field` names the row key reported in `examples`; `monitors`, when given, computes the
+        board's `monitors` entry over all rows. A grader that raises is a bug in the consumer's
+        code: the exception propagates unchanged, and where it lands is the caller's concern.
+        """
         by_grader: dict[str, dict[str, Any]] = {name: {"pass": 0, "fail": 0, "examples": []} for name in graders}
         failed_rows: set[Any] = set()
         for row in rows:
@@ -70,15 +78,24 @@ class GauntletEvaluator:
 
 
 class NumberLawGrounder:
-    """`Grounder` = the number law (`numbers.uncited`): every digit run and spelled number in the
-    claim must appear in a cited span. It judges NUMBERS ONLY -- a necessary check, never
-    sufficient: a numberless claim passes with reason `no_numbers` because this checker has nothing
-    to say about it, not because the span entails it. Entailment is another Grounder behind the
-    same port. No spans -> unsupported, always. `score` is None -- no scale."""
+    """A `Grounder` that applies the number law (`numbers.uncited`).
+
+    Every digit run and spelled number in the claim must appear in a cited span.
+
+    Invariants:
+        - It judges numbers only: a necessary check, never a sufficient one. A numberless claim
+          passes with reason `no_numbers` because this checker has nothing to say about it, not
+          because a span entails it. Entailment is another `Grounder` behind the same port.
+        - No spans means unsupported, always.
+        - `score` is None: the verdict has no scale.
+
+    Rationale: ADR-0003.
+    """
 
     checker = "number_law"
 
     def verdict(self, claim: Claim, spans: Sequence[Chunk]) -> GroundingVerdict:
+        """Return supported only when every number in the claim appears in one of `spans`."""
         if not spans:
             return GroundingVerdict(False, "no evidence spans", checker=self.checker)
         missing = numbers.uncited(claim.text, ((s.title, s.text) for s in spans))
@@ -90,36 +107,51 @@ class NumberLawGrounder:
 
 
 class RepoPromptSource:
-    """`PromptSource` for a process with NO managed store: every name is its repo SEED (`seed_for`,
-    the same callable a managed-store adapter mirrors), served as `Prompt(repo)` with the seed's
-    config and system template -- what a managed adapter serves when its store is down, minus the
-    round-trip. `label` is accepted and ignored: a repo has one copy. A name without a seed RAISES
-    from `seed_for` (the port's law: no seed, no text)."""
+    """A `PromptSource` for a process with no managed store.
+
+    Every name is its repo seed (`seed_for`, the same callable a managed-store adapter mirrors),
+    served as `Prompt(repo)` with the seed's config and system template: what a managed adapter
+    serves when its store is down, without the round-trip.
+    """
 
     def __init__(self, seed_for: Callable[[str], Seed]) -> None:
         self._seed_for = seed_for
 
     def get(self, name: str, *, label: str = "production") -> Prompt:
+        """Return the repo seed for `name` as a prompt.
+
+        `label` is accepted and ignored: a repo has one copy. A name without a seed raises from
+        `seed_for` (the port's law: no seed, no text).
+        """
         s = self._seed_for(name)
         return Prompt(name, s.text, None, "repo", config=dict(s.config), system=s.system)
 
 
 class NoopGeneration:
-    """`Generation` that records nothing: what a sink-less `Tracer` hands back, and so what
-    `call.generate` observes into when no `trace` hook is given."""
+    """A `Generation` that records nothing.
+
+    It is what a sink-less `Tracer` returns, and so what `call.generate` observes into when no
+    `trace` hook is given.
+    """
 
     def end(self, **_kw: Any) -> None:
+        """Record nothing."""
         return None
 
     def score(self, *_a: Any, **_kw: Any) -> None:
+        """Record nothing."""
         return None
 
 
 class NoopTracer:
-    """`Tracer` for a process with no observability sink: every `start_generation` is a
-    `NoopGeneration`, so a producer never branches on whether a sink is configured."""
+    """A `Tracer` for a process with no observability sink.
+
+    Every `start_generation` returns a `NoopGeneration`, so a producer never branches on whether a
+    sink is configured.
+    """
 
     def start_generation(self, **_kw: Any) -> NoopGeneration:
+        """Return a `NoopGeneration`."""
         return NoopGeneration()
 
 

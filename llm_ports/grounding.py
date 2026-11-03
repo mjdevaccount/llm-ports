@@ -1,16 +1,21 @@
-"""grounding -- the shapes every grounded generator shares: a Problem, the retry text, the belt (pure).
+"""Shapes every grounded generator shares: a `Problem`, the retry text, and the belt.
 
-A grounded generator audits a model's structured answer into `Problem`s. The output validator
-raises a retry ONCE with `retry_message(problems)` (pydantic-ai's `ModelRetry` carries it; the
-`Generator` port's `validate=` / `retry_message=` arguments are the seam), and after that the
-caller prunes what still fails -- a part that failed twice is never shipped. What a problem IS
-stays with each generator (its audit); how a problem is carried, said back to the model, and
-counted is here.
+A grounded generator audits a model's structured answer into `Problem`s. Its output validator asks
+for one retry with `retry_message(problems)` (pydantic-ai's `ModelRetry` carries it; the
+`Generator` port's `validate=` and `retry_message=` arguments are the seam). After that retry the
+caller prunes what still fails. What counts as a problem is each generator's own audit; how a
+problem is carried, said back to the model and counted lives here.
 
-The belt is the last check on rendered text: every number in it must be one the inputs rendered.
-Code renders every number-bearing sentence and the model cites inputs by id, so the belt is 0 BY
-CONSTRUCTION, and a non-zero count is an alarm, never a tolerated rate. Numbers are read by the one
-number law, `llm_ports.numbers`.
+The belt is the last check on rendered text: every number in it must be one the inputs rendered,
+read by the number law (`numbers`).
+
+Invariants:
+    - Pure: no I/O.
+    - A part that failed its retry is pruned, never shipped.
+    - When code renders every number-bearing sentence and the model cites inputs by id, the belt
+      is 0 by construction; a non-zero count is an alarm, never a tolerated rate.
+
+Rationale: ADR-0002, ADR-0003.
 """
 
 from __future__ import annotations
@@ -23,14 +28,19 @@ from llm_ports.numbers import digits
 from llm_ports.numbers import loose as _loose
 
 RETRY_PREFIX = "Fix these and answer again: "
-# A code-written citation link is provenance, not a claim: `[example.com](https://example.com/2026/10/07/x)`.
+# A code-written citation link is provenance, not a claim: `[example.com](https://example.com/a/b)`.
 _LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
 
 
 @dataclass(frozen=True)
 class Problem:
-    """One thing wrong with a model answer. `path` names the part (`headline`, `claims.3`, ...),
-    `reason` says what is wrong, `detail` names the evidence (the figures, the ids) when there is any."""
+    """One thing wrong with a model answer.
+
+    Attributes:
+        path: The part of the answer (`headline`, `claims.3`, ...).
+        reason: What is wrong.
+        detail: The evidence (the figures, the ids), when there is any.
+    """
 
     path: str
     reason: str
@@ -38,17 +48,17 @@ class Problem:
 
 
 def describe(problems: Iterable[Problem]) -> str:
-    """`path: reason (detail); ...` -- the one way a list of problems is said, to a model or a row."""
+    """Return problems as `path: reason (detail); ...`, the one way they are said to a model or a log."""
     return "; ".join(f"{p.path}: {p.reason}{f' ({p.detail})' if p.detail else ''}" for p in problems)
 
 
 def retry_message(problems: Iterable[Problem]) -> str:
-    """The text of the ONE retry: what failed, so the model can fix exactly that."""
+    """Return the text of the one retry: what failed, so the model can fix exactly that."""
     return RETRY_PREFIX + describe(problems)
 
 
 def allowed_numbers(texts: Iterable[str]) -> set[str]:
-    """Every digit run the inputs render, by the one number law (thousands separators dropped)."""
+    """Return every digit run the inputs render, by value (`numbers.digits`)."""
     out: set[str] = set()
     for t in texts:
         out |= digits(t)
@@ -56,21 +66,28 @@ def allowed_numbers(texts: Iterable[str]) -> set[str]:
 
 
 def loose(text: str, allowed: set[str], words_ok: str = "", *, strip_links: bool = False) -> list[str]:
-    """The figures in `text` that no input rendered (`numbers.loose`: digit runs not in `allowed`
-    by value, then spelled numbers and number-word tails not found in `words_ok`), named so a
-    verifier can say WHICH figure it refused and a retry can fix exactly that.
+    """Return the figures in `text` that no input rendered (`numbers.loose`).
 
-    `strip_links` drops every markdown link WHOLE, label and target: use it only where code writes
-    the links (e.g. `[host](url)` citations), since a number in a label is not checked.
+    Each figure is named, so a verifier can say which one it refused and a retry can fix exactly
+    that.
 
-    `words_ok` is a substring haystack: to license a word found in ANY of several inputs, join them
-    on a newline (a number word holds no whitespace, so a join can never glue two halves into one)."""
+    Args:
+        text: The text to check.
+        allowed: Licensed digit runs by value (see `allowed_numbers`).
+        words_ok: A substring haystack for spelled numbers. To license a word found in any of
+            several inputs, join them on a newline.
+        strip_links: Drop every markdown link whole, label and target, before checking. Use it only
+            where code writes the links: a number inside a label is not checked.
+
+    Returns:
+        The unlicensed figures in order; empty when every number is licensed.
+    """
     body = _LINK.sub("", text or "") if strip_links else (text or "")
     return _loose(body, allowed, words_ok)
 
 
 def belt(text: str, allowed: set[str], words_ok: str = "", *, strip_links: bool = False) -> int:
-    """How many figures in `text` no input rendered (`loose`, counted). Must be 0."""
+    """Return how many figures in `text` no input rendered (`loose`, counted). Expected: 0."""
     return len(loose(text, allowed, words_ok, strip_links=strip_links))
 
 
