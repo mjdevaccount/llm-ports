@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "0.12.0"
+version = "1.0.0.dev0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -37,18 +37,18 @@ Changelog = "https://github.com/mjdevaccount/llm-ports/blob/main/CHANGELOG.md"
 Decisions = "https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr"
 
 [project.optional-dependencies]
-# `pydantic_evals_judge` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
+# `adapters.pydantic_evals` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
 # pydantic-ai-slim to its own version, so it moves with the core dependency above.
 evals = ["pydantic-evals>=2.57,<3"]
-# `lettucedetect_grounder` with the REAL model (torch + transformers, hundreds of MB). The module
+# `adapters.lettucedetect` with the REAL model (torch + transformers, hundreds of MB). The module
 # imports it lazily; without the extra it runs over an injected detector (`testing.StubDetector`).
 lettucedetect = ["lettucedetect>=0.1.6"]
-# `langfuse_tracer` (the Tracer on the Langfuse SDK 5, OpenTelemetry underneath) and the
-# `testing_langfuse` rig. `langfuse_prompt_source` duck-types the client and needs no SDK.
+# `adapters.langfuse.tracer` (the Tracer on the Langfuse SDK 5, OpenTelemetry underneath) and the
+# `testing.langfuse` rig. `adapters.langfuse.prompt_source` duck-types the client and needs no SDK.
 langfuse = ["langfuse>=5.0.2,<6"]
-# `otel_gen_ai` (GenAI spans; the attribute names are the semantic-conventions package's constants).
+# `adapters.otel` (GenAI spans; the attribute names are the semantic-conventions package's constants).
 otel = ["opentelemetry-api>=1.30", "opentelemetry-semantic-conventions>=0.58b0"]
-# `sql_guard` (the read-only AST guard for agent-written SQL).
+# `adapters.sqlglot` (the read-only AST guard for agent-written SQL).
 sql = ["sqlglot>=30.22"]
 
 [build-system]
@@ -56,7 +56,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["llm_ports"]
+packages = ["src/llm_ports"]
 
 [dependency-groups]
 # pydantic-evals: the judge adapter's tests run in CI (the `evals` extra's one package). lettucedetect
@@ -73,6 +73,7 @@ dev = [
     "sqlglot>=30.22",
     "pytest-cov>=7.1.0",
     "pre-commit>=4.7",
+    "import-linter>=2.15",
 ]
 lint = [
     "actionlint-py==1.7.12.25",
@@ -87,7 +88,7 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "RUF", "D"]
 # D105/D107: magic methods and `__init__` are documented on the class (Google style).
-ignore = ["E501", "RUF002", "RUF022", "D105", "D107"]
+ignore = ["E501", "RUF002", "D105", "D107"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -97,12 +98,79 @@ convention = "google"
 "tests/**" = ["D"]
 "*.md" = ["D"]
 
+# The layers, bottom-up (docs/REDESIGN.md §1). `|` separates siblings that may not import each
+# other. tests/contract/test_layers.py runs these contracts, so every pytest leg enforces them.
+[tool.importlinter]
+root_package = "llm_ports"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "layers: adapters | testing > evals | rag | provenance > call > grounding | prompts | observability > ports"
+type = "layers"
+containers = ["llm_ports"]
+layers = [
+    "adapters | testing",
+    "evals | rag | provenance",
+    "call",
+    "grounding | prompts | observability",
+    "ports",
+]
+
+[[tool.importlinter.contracts]]
+id = "adapter-independence"
+name = "adapters do not import each other"
+type = "independence"
+modules = [
+    "llm_ports.adapters.http",
+    "llm_ports.adapters.langfuse",
+    "llm_ports.adapters.lettucedetect",
+    "llm_ports.adapters.otel",
+    "llm_ports.adapters.pydantic_ai",
+    "llm_ports.adapters.pydantic_evals",
+    "llm_ports.adapters.sqlglot",
+]
+# Two edges predate the layout and are removed by the 1.0 API cleanup (REDESIGN §9 row 5): the
+# reranker's REQUEST_FAULT moves to `ports.outcomes`, and the embedder's transport is the HTTP
+# adapter's index-ordered transport.
+ignore_imports = [
+    "llm_ports.adapters.http.reranker -> llm_ports.adapters.pydantic_ai",
+    "llm_ports.adapters.pydantic_ai._embedder -> llm_ports.adapters.http.index_order",
+]
+
+[[tool.importlinter.contracts]]
+id = "no-vendor-in-core"
+name = "only adapters and testing import a vendor library"
+type = "forbidden"
+source_modules = [
+    "llm_ports.call",
+    "llm_ports.evals",
+    "llm_ports.grounding",
+    "llm_ports.observability",
+    "llm_ports.ports",
+    "llm_ports.prompts",
+    "llm_ports.provenance",
+    "llm_ports.rag",
+]
+forbidden_modules = [
+    "httpx",
+    "langfuse",
+    "lettucedetect",
+    "opentelemetry",
+    "pydantic_ai",
+    "pydantic_evals",
+    "sqlglot",
+]
+# `strict_json_schema` moves to `adapters.pydantic_ai` in the 1.0 API cleanup (REDESIGN §9 row 5).
+ignore_imports = ["llm_ports.call.schema -> pydantic_ai"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["llm_ports"]
+# By import name: a stray `llm_ports/` directory in the checkout can never shadow the package.
+source_pkgs = ["llm_ports"]
 branch = true
 
 [tool.coverage.report]

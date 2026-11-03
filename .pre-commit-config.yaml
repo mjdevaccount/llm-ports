@@ -9,5 +9,5 @@ repos:
         name: no deployment vocabulary in the package
         language: pygrep
         entry: 'EDGE|edge-host|\bbox[_-](?!chat")|Tradier|trade[-_.]data|narrator|\b\d+B\b|20\d\d-\d\d-\d\d'
-        files: ^llm_ports/
+        files: ^src/llm_ports/
         types: [python]

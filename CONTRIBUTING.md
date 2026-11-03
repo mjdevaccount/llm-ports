@@ -29,7 +29,7 @@ auditing why it was written.
 4. **Neutral examples.** Orders, documents, tickets, invoices.
 
 `ruff` enforces the Google layout (`D` rules). A `pre-commit` hook (`.pre-commit-config.yaml`)
-rejects deployment vocabulary in `llm_ports/`.
+rejects deployment vocabulary in `src/llm_ports/`.
 
 ## Where history goes
 
