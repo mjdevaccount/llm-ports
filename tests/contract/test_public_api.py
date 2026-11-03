@@ -49,8 +49,18 @@ def test_every_exported_name_resolves_once(name: str) -> None:
     assert not missing, f"{name}.__all__ names what it does not bind: {missing}"
 
 
+def _is_public(name: str) -> bool:
+    return not any(part.startswith("_") for part in name.split("."))
+
+
 @pytest.mark.parametrize("name", [m for m in MODULES if m.rsplit(".", 1)[-1].startswith("_") and "__" not in m])
 def test_a_private_module_is_reexported_by_its_package(name: str) -> None:
-    package = _import(name.rsplit(".", 1)[0])
-    unexported = [n for n in _import(name).__all__ if n not in package.__all__]
-    assert not unexported, f"{name} defines {unexported}, which its package does not export"
+    """A private module's surface is reached through its package, or a public package beside it.
+
+    Shared adapter internals (`adapters._index_order`) are exported by the adapter packages that
+    use them; a helper with no surface (`_extras`) declares an empty `__all__`.
+    """
+    parent = name.rsplit(".", 1)[0]
+    homes = [_import(m) for m in MODULES if (m == parent or m.startswith(parent + ".")) and _is_public(m)]
+    unexported = [n for n in _import(name).__all__ if not any(n in getattr(h, "__all__", ()) for h in homes)]
+    assert not unexported, f"{name} defines {unexported}, which no public module of {parent} exports"

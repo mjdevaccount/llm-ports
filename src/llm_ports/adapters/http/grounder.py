@@ -22,11 +22,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-import httpx
-
+from llm_ports._extras import extra
 from llm_ports.ports import Chunk, Claim, GroundingVerdict
 
+with extra("http"):
+    import httpx
+
 _REASON_CAP = 300
+_BODY_EXCERPT = 120  # the sidecar's error body quoted in `GrounderUnavailable`
 
 
 class GrounderUnavailable(Exception):
@@ -76,7 +79,7 @@ class HttpGrounder:
         except httpx.HTTPError as exc:
             raise GrounderUnavailable(f"grounder transport: {exc}"[:_REASON_CAP]) from exc
         if r.status_code != 200:
-            raise GrounderUnavailable(f"grounder HTTP {r.status_code}: {r.text[:120]}")
+            raise GrounderUnavailable(f"grounder HTTP {r.status_code}: {r.text[:_BODY_EXCERPT]}")
         try:
             body = r.json()
             supported = body["supported"]

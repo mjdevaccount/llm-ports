@@ -7,7 +7,7 @@
 - `StubReranker` fakes `Reranker` with a predictable word-overlap score, and records every call.
 - `StubCiter` and `StubPromptSource` fake the `Citer` and `PromptSource` seams with no model and
   no store.
-- `StubDetector` fakes the LettuceDetect model under `lettucedetect_grounder.LettuceDetectGrounder`.
+- `StubDetector` fakes the LettuceDetect model under `adapters.lettucedetect.LettuceDetectGrounder`.
 
 Invariants:
     - Every port double passes its port's `isinstance` check.
@@ -277,7 +277,7 @@ class StubPromptSource:
 
 
 class StubDetector:
-    """A `lettucedetect_grounder.Detector` with no model.
+    """An `adapters.lettucedetect.Detector` with no model.
 
     It flags every digit run in the answer that no context string contains, in LettuceDetect's
     span shape with confidence 0.9: a stand-in for the number law.

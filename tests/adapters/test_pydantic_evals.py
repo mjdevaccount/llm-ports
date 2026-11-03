@@ -29,7 +29,7 @@ from llm_ports.adapters.pydantic_evals import (
 )
 from tests.conftest import Role
 
-JUDGE_ROLE = Role("llm.judge", tier="box", temperature=0.0)
+JUDGE_ROLE = Role("llm.judge", tier="local", temperature=0.0)
 
 
 def _judge_model(grading: dict[str, Any], seen: list[str]) -> FunctionModel:

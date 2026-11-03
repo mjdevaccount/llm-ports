@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- CI: `vulture` (dead code) in `lint`; the `core-only` job (the core with no extra, then with
+  `http` only).
+- Releases publish to PyPI through trusted publishing (no stored token), with PEP 740
+  attestations; a tag still attaches the wheel and sdist to a GitHub release, independently of the
+  upload. A manual run of `release.yml` uploads a `.devN` pre-release as the dry run.
+- Package metadata: project URLs, classifiers and keywords.
+- CI: `actionlint` over the workflows; `ci.yml` is callable (`workflow_call`), and a release runs
+  all of it before building.
+
 ### Changed
 
 - **Breaking: the package is layered** (`src/llm_ports/`, PyPA src layout). The 33 flat modules
@@ -22,15 +33,42 @@ All notable changes to this project are documented here. The format is based on
 - import-linter contracts (`pyproject.toml`) hold the layers, keep adapters independent and keep
   vendor imports inside `adapters` and `testing`; `tests/contract/` runs them on every leg.
 - Tests mirror the package; fixtures live in `tests/fixtures/`.
+- **Breaking: every framework is an extra.** `pip install llm-ports` installs pydantic, jinja2 and
+  pyyaml; pydantic-ai and httpx move to the `pydantic-ai` and `http` extras (`all` = every extra
+  but `lettucedetect`). An adapter imported without its extra fails with the install line.
+  `tests/contract/test_core_imports.py` and the `core-only` CI job hold the core vendor-free.
+- **Breaking: the tier key `box` is renamed `self_hosted`** (`Tier.self_hosted`,
+  `GenRequest.self_hosted`), default true. `GenRequest.label` defaults to `"chat"`.
+- **Breaking: names moved to the layer that owns them.** `outcome_for_status` and `REQUEST_FAULT`
+  -> `ports.outcomes`; `strict_json_schema` -> `adapters.pydantic_ai`; `EventHook` (and the new
+  `log_events`) -> `observability`, so `call` no longer exports `EventHook` or `Observation`;
+  `IndexOrderedTransport` / `INDEXED_LISTS` are imported from `adapters.http` (or
+  `adapters.pydantic_ai`), the module `index_order` is private; the Protocols live in
+  `ports._protocols`, still exported from `ports`.
+- **Breaking: helpers that were never the contract are private:** `capture`, `record_response`,
+  `Capture` (`CaptureLike` stays public), `call.trace_output`, the prompt source's
+  `kind` / `wire` / `served`.
+- **Breaking: `evals.judge.rubric` takes no domain vocabulary.** The number law's examples are the
+  consumer's, passed as `examples=numbers.LawExamples(paraphrase=..., fact_names=...)`; with the
+  0.12 examples the text is byte-identical to 0.12 (the golden test).
+- `load_tiers` takes a mapping as well as a path; checks and errors name it `<mapping>`.
+- `__version__` is read from the installed metadata.
+- Logger names follow the modules (`llm_ports.adapters.langfuse.tracer`, `.prompt_source`,
+  `llm_ports.call`).
+- Long functions split on merit (`call.generate`, the pydantic-ai generator); magic numbers named
+  (`CHAIN_LIMIT`, `DEFAULT_TIMEOUT_S`, `SYSTEM_CAP`, `SCHEMA_CAP`).
+- `uv.lock` refreshed to the latest releases (pydantic-ai-slim and pydantic-evals 2.65.0).
 
-### Added
+### Deprecated
 
-- Releases publish to PyPI through trusted publishing (no stored token), with PEP 740
-  attestations; a tag still attaches the wheel and sdist to a GitHub release, independently of the
-  upload. A manual run of `release.yml` uploads a `.devN` pre-release as the dry run.
-- Package metadata: project URLs, classifiers and keywords.
-- CI: `actionlint` over the workflows; `ci.yml` is callable (`workflow_call`), and a release runs
-  all of it before building.
+- The tier key `box`: a table that still sets it loads, with a `DeprecationWarning` pointing at
+  the `load_tiers` caller; a tier setting both `box` and `self_hosted` is refused.
+
+### Fixed
+
+- The `pydantic-ai` extra names httpx: the adapter builds an httpx client, and from pydantic-ai
+  2.6x / openai 3.4x neither depends on httpx (both moved to httpx2). The run's usage is read as
+  the property pydantic-ai made it, so 2.65 no longer warns on `usage()`.
 
 ## [0.12.0] - 2026-11-03
 

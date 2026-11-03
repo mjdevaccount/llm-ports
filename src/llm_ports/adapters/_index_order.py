@@ -14,6 +14,9 @@ sees input order.
 
 Invariants:
     - A body the transport cannot read passes through untouched; the reader's own checks judge it.
+
+Both the `http` and the `pydantic-ai` extras install httpx, so each importer imports this module
+inside its own `extra(...)` block and a missing httpx names the extra the caller asked for.
 """
 
 from __future__ import annotations

@@ -10,15 +10,15 @@ chat = "small-chat"
 web = "small-web"
 cloud = "gpt-5-nano"
 
-[tiers.box]
+[tiers.local]
 model = "chat"
 timeout = "default_s"
 
-[tiers.box-web]
+[tiers.local-web]
 model = "web"
 timeout = "web_timeout_s"
 
 [tiers.cloud]
 model = "cloud"
 timeout = "cloud_s"
-box = false
+self_hosted = false

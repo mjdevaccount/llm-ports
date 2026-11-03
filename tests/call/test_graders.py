@@ -11,7 +11,7 @@ from llm_ports.call import graders as cg
 from tests.conftest import Role
 
 GRADERS = ("schema_complete", "numbers_from_inputs", "echo")
-ROLE = Role("test.graders", tier="box", max_tokens=5, graders=GRADERS)
+ROLE = Role("test.graders", tier="local", max_tokens=5, graders=GRADERS)
 PROMPT = "spot 766.2 at the put_wall 765.0; the market rallied hard into the close on strong breadth today."
 COPIED = "The market rallied hard into the close on strong breadth today."
 

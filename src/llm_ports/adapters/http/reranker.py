@@ -32,12 +32,17 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-import httpx
+from llm_ports._extras import extra
+from llm_ports.ports import Outcome, Reranked
+from llm_ports.ports.outcomes import REASON_MAX, failure_reason, outcome_for_status
 
-from llm_ports.adapters.http.index_order import IndexOrderedTransport
-from llm_ports.adapters.pydantic_ai import REQUEST_FAULT
-from llm_ports.ports import Reranked
-from llm_ports.ports.outcomes import failure_reason
+with extra("http"):
+    import httpx
+
+    from llm_ports.adapters._index_order import IndexOrderedTransport
+
+#: The per-call timeout when the caller names none, in seconds.
+DEFAULT_TIMEOUT_S = 30.0
 
 
 def payload(model: str, query: str, documents: Sequence[str]) -> dict[str, Any]:
@@ -59,7 +64,7 @@ def scores_from(body: Any, n: int) -> tuple[float, ...]:
         indices = [int(r["index"]) for r in results]
         scores = tuple(float(r["relevance_score"]) for r in results)
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"unreadable rerank reply: {type(exc).__name__}: {exc}"[:200]) from exc
+        raise ValueError(f"unreadable rerank reply: {type(exc).__name__}: {exc}"[:REASON_MAX]) from exc
     if len(indices) != n:
         raise ValueError(f"sent {n} documents, got {len(indices)} scores")
     if sorted(indices) != list(range(n)):
@@ -94,7 +99,7 @@ class HttpReranker:
         model: str,
         *,
         api_key: str | None = None,
-        timeout_s: float = 30.0,
+        timeout_s: float = DEFAULT_TIMEOUT_S,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not url or not model:
@@ -105,8 +110,8 @@ class HttpReranker:
         self._timeout_s = timeout_s
         self._transport = transport
 
-    def _failed(self, outcome: str, reason: str) -> Reranked:
-        return Reranked(scores=(), outcome=outcome, model=self.model, reason=reason[:200])  # type: ignore[arg-type]
+    def _failed(self, outcome: Outcome, reason: str) -> Reranked:
+        return Reranked(scores=(), outcome=outcome, model=self.model, reason=reason[:REASON_MAX])
 
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
         """Score `documents` against `query`, in input order.
@@ -127,8 +132,7 @@ class HttpReranker:
         except ValueError as exc:  # a 200 whose body is not JSON
             return self._failed("invalid", f"rerank reply is not JSON: {failure_reason(exc)}")
         if r.status_code != 200:
-            outcome = "request_fault" if r.status_code in REQUEST_FAULT else "unavailable"
-            return self._failed(outcome, f"rerank HTTP {r.status_code}")
+            return self._failed(outcome_for_status(r.status_code), f"rerank HTTP {r.status_code}")
         try:
             scores = scores_from(body, len(documents))
         except ValueError as exc:
@@ -136,4 +140,4 @@ class HttpReranker:
         return Reranked(scores=scores, outcome="ok", model=self.model)
 
 
-__all__ = ["HttpReranker", "payload", "scores_from"]
+__all__ = ["DEFAULT_TIMEOUT_S", "HttpReranker", "payload", "scores_from"]

@@ -35,21 +35,24 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
-from pydantic_ai.messages import BinaryContent
-from pydantic_ai.models import Model
-from pydantic_ai.profiles import ModelProfile
-from pydantic_evals.evaluators import EvaluatorContext, LLMJudge
-from pydantic_evals.evaluators.context import SpanTreeRecordingError
-from pydantic_evals.evaluators.evaluator import EvaluationReason
-
+from llm_ports._extras import extra
 from llm_ports.call.roles import Role
 from llm_ports.ports import JudgeVerdict
+
+with extra("evals"):
+    from pydantic_ai.messages import BinaryContent
+    from pydantic_ai.models import Model
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_evals.evaluators import EvaluatorContext, LLMJudge
+    from pydantic_evals.evaluators.context import SpanTreeRecordingError
+    from pydantic_evals.evaluators.evaluator import EvaluationReason
 
 JudgeModelFor = Callable[[], AbstractAsyncContextManager[Model]]
 
 JUDGE_NAME = "pydantic_evals"
 SCORE_KEY = "score"
 PASS_KEY = "pass"
+_EXCERPT = 120  # the refused reason quoted in the `ValueError`
 #: The judge's grade as a strict json_schema `response_format`, never a tool call.
 JUDGE_PROFILE: ModelProfile = {"supports_json_schema_output": True, "default_structured_output_mode": "native"}
 #: Tool-call markup the model emitted inside the reason: a tag opening a line, or the XML tool-call
@@ -88,7 +91,7 @@ def clean_reason(reason: str, passed: bool) -> str:
             leaked tail states a verdict that contradicts `passed`.
     """
     if _MARKUP.search(reason):
-        raise ValueError(f"judge reason carries tool-call markup: {reason[:120]!r}")
+        raise ValueError(f"judge reason carries tool-call markup: {reason[:_EXCERPT]!r}")
     m = _LEAK.search(reason)
     if m is None:
         return reason

@@ -8,8 +8,7 @@ capture of finish_reason/usage/sources, the status mapping -- with no network.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import httpx
@@ -22,7 +21,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from llm_ports import ports
 from llm_ports.adapters import pydantic_ai as pag
-from llm_ports.adapters.pydantic_ai import PydanticAIGenerator, classify
+from llm_ports.adapters.pydantic_ai import PydanticAIGenerator, _generator, classify
 from llm_ports.ports import GenRequest
 
 
@@ -208,10 +207,8 @@ async def test_status_codes_map_to_outcomes(wire, code: int, want: str) -> None:
 
 
 async def test_a_refusing_transport_is_gated_and_never_raises() -> None:
-    @asynccontextmanager
-    async def refusing(_req: GenRequest) -> AsyncIterator[Model]:
+    def refusing(_req: GenRequest) -> AbstractAsyncContextManager[Model]:
         raise _Refused("category_disabled: x is switched off")
-        yield  # pragma: no cover
 
     res = await PydanticAIGenerator(model_for=refusing, gated=(_Refused,)).generate(REQ, _Note)
     assert res.outcome == "gated" and "switched off" in (res.reason or "") and res.retries is None
@@ -240,4 +237,4 @@ async def test_wrap_decorates_the_wire_model_and_sees_every_attempt(wire) -> Non
 
 
 async def test_record_response_is_a_no_op_with_no_capture_open() -> None:
-    await pag.record_response(httpx.Response(200, json=_completion("x")))
+    await _generator._record_response(httpx.Response(200, json=_completion("x")))

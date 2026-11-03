@@ -27,7 +27,7 @@ Invariants:
       side is reported, the other is booked as 0.
     - Fails open: a client that raises on open yields a `NoopGeneration`.
     - Every failure (open, end, score) emits at most one warning event per `warn_hold_s` through
-      `on_event` (default: the stdlib logger `llm_ports.langfuse_tracer`), and never raises into
+      `on_event` (default: the stdlib logger `llm_ports.adapters.langfuse.tracer`), and never raises into
       the call it describes.
     - The prompt link is best effort and silent.
 
@@ -42,23 +42,19 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from langfuse import propagate_attributes  # type: ignore[import-untyped]
-from opentelemetry import trace as otel_trace
-
-from llm_ports.call import EventHook
-from llm_ports.observability import NoopGeneration
+from llm_ports._extras import extra
+from llm_ports.observability import EventHook, NoopGeneration, log_events
 from llm_ports.ports import Generation
+
+with extra("langfuse"):
+    from langfuse import propagate_attributes  # type: ignore[import-untyped]
+    from opentelemetry import trace as otel_trace
 
 DEFAULT_PROMPT_LABEL = "production"
 DEFAULT_PROMPT_CACHE_TTL_S = 300
 DEFAULT_WARN_HOLD_S = 300
 EVENT = "langfuse_tracer"
 _ERR_CAP = 200
-_log = logging.getLogger("llm_ports.langfuse_tracer")
-
-
-def _log_event(level: int, event: str, fields: Mapping[str, Any]) -> None:
-    _log.log(level, "%s %s", event, dict(fields))
 
 
 def usage_details(prompt: int | None, completion: int | None) -> dict[str, int] | None:
@@ -142,7 +138,7 @@ class LangfuseTracer:
         prompt_cache_ttl_s: The SDK's cache TTL for that prompt fetch.
         warn_hold_s: The minimum seconds between two warning events.
         clock: A monotonic clock, injectable for tests.
-        on_event: The warning sink; defaults to the stdlib logger `llm_ports.langfuse_tracer`.
+        on_event: The warning sink; defaults to the stdlib logger `llm_ports.adapters.langfuse.tracer`.
     """
 
     def __init__(
@@ -160,7 +156,7 @@ class LangfuseTracer:
         self._ttl = prompt_cache_ttl_s
         self._hold = warn_hold_s
         self._clock = clock
-        self._on_event = on_event or _log_event
+        self._on_event = on_event or log_events(__name__)
         self._quiet_until = 0.0
 
     def _warn(self, action: str, exc: Exception) -> None:

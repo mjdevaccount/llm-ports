@@ -1,36 +1,39 @@
 """The ports: Protocols and the frozen value types that cross them. Zero I/O.
 
-`outcomes` holds the named-outcome vocabulary and `GenerationFailed`.
+`outcomes` holds the named-outcome vocabulary: reasons, `GenerationFailed`, and the HTTP-status
+mapping every adapter shares.
 """
 
 from llm_ports.ports import outcomes
+from llm_ports.ports._protocols import (
+    Citer,
+    Embedder,
+    Evaluator,
+    Generation,
+    Generator,
+    Grader,
+    Grounder,
+    Judge,
+    PromptSource,
+    Reranker,
+    Retriever,
+    Tracer,
+)
 from llm_ports.ports._types import (
     Chunk,
     CitedAnswer,
-    Citer,
     Claim,
     Embedded,
-    Embedder,
     EmbedInput,
-    Evaluator,
     Generated,
-    Generation,
-    Generator,
     GenRequest,
-    Grader,
-    Grounder,
     GroundingVerdict,
     JsonOutput,
-    Judge,
     JudgeVerdict,
     Outcome,
     Prompt,
-    PromptSource,
     Reranked,
-    Reranker,
-    Retriever,
     Seed,
-    Tracer,
     json_output,
 )
 

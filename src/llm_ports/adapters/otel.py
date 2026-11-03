@@ -39,8 +39,12 @@ import time
 from collections.abc import Iterator, Mapping
 from typing import Any
 
-from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as ga
-from opentelemetry.trace import Status, StatusCode
+from llm_ports._extras import extra
+
+with extra("otel"):
+    from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as ga
+    from opentelemetry.trace import Status, StatusCode
+
 
 SYSTEM = ga.GEN_AI_SYSTEM
 PROVIDER_NAME = ga.GEN_AI_PROVIDER_NAME

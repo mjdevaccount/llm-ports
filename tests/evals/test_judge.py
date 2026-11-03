@@ -10,11 +10,12 @@ from __future__ import annotations
 import datetime as dt
 
 from llm_ports.evals import judge as js
+from llm_ports.grounding import numbers
 from llm_ports.ports import JudgeVerdict, json_output
 from tests.conftest import Role
 
-ROLE = Role("test.judged", tier="box", graders=("schema_complete", "numbers_from_inputs"))
-PROSE_ROLE = Role("test.prose", tier="box")
+ROLE = Role("test.judged", tier="local", graders=("schema_complete", "numbers_from_inputs"))
+PROSE_ROLE = Role("test.prose", tier="local")
 DAY = dt.date(2026, 10, 31)
 
 
@@ -77,7 +78,17 @@ class TestRubric:
         assert "FIGURES ARE CITED, NEVER WRITTEN" in r and "{id}" in r
         assert "NUMBERS FROM THE INPUT ONLY" not in r
         assert "is the model's ANSWER" in r  # every mode: a grammar value is an answer
-        assert "'Spot', 'put wall', 'stand down'" in r and "cited or not" in r
+        assert "a word naming a fact is never a reason to fail" in r and "cited or not" in r
+        named = js.rubric(
+            ROLE,
+            platform="ACME support platform",
+            mode="slots",
+            today=DAY,
+            tz_label="UTC",
+            examples=numbers.LawExamples(paraphrase=("'pending'",), fact_names=("'Order total'", "'Ship date'")),
+        )
+        assert "paraphrase ('pending') are not figures" in named
+        assert "a word naming a fact ('Order total', 'Ship date') is never" in named
         assert "NUMBERS FROM THE INPUT ONLY" in _rubric(mode="none")
 
     def test_a_slots_citation_is_not_a_placeholder_but_a_written_number_still_fails(self) -> None:

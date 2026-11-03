@@ -15,9 +15,10 @@ The model source is the caller's choice:
 - `openai_compatible(base_url, api_key)` builds a `model_for` for any OpenAI-wire endpoint (a
   LiteLLM gateway, vLLM, llama.cpp's server, OpenAI itself).
 
-`capture=` is a context-manager factory whose value carries the last reply's `finish_reason`,
-`usage` and `sources` as they appeared on the wire (pydantic-ai drops non-standard keys);
-`openai_compatible` installs an httpx response hook that fills `capture()`.
+`capture=` is a context-manager factory whose value (a `CaptureLike`) carries the last reply's
+`finish_reason`, `usage` and `sources` as they appeared on the wire (pydantic-ai drops
+non-standard keys). The default capture is filled by the httpx response hook `openai_compatible`
+installs; a caller on its own transport passes its own factory.
 
 Invariants:
     - A model, wire or gate failure never raises; it returns a `Generated` with a named outcome.
@@ -38,23 +39,23 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-import httpx
-from pydantic_ai import Agent, BinaryContent, ModelRetry, NativeOutput, RunContext, StructuredDict
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
-from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import Model
+from llm_ports._extras import extra
+from llm_ports.adapters.pydantic_ai._schema import framework_output
+from llm_ports.ports import Generated, GenRequest, Outcome
+from llm_ports.ports.outcomes import REASON_MAX, exception_chain, failure_reason, outcome_for_status
 
-from llm_ports.ports import Generated, GenRequest, JsonOutput, Outcome
-from llm_ports.ports.outcomes import exception_chain, failure_reason
-
-#: HTTP statuses that blame the request (the input) rather than the model server.
-REQUEST_FAULT = frozenset({400, 413, 422})
+with extra("pydantic-ai"):
+    import httpx
+    from pydantic_ai import Agent, BinaryContent, ModelRetry, NativeOutput, RunContext
+    from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelResponse
+    from pydantic_ai.models import Model
 
 ModelFor = Callable[[GenRequest], AbstractAsyncContextManager[Model]]
 
 
 class CaptureLike(Protocol):
-    """The fields `PydanticAIGenerator` reads from a capture after a call."""
+    """What `PydanticAIGenerator` reads from a capture after a call; the type of its `capture=`."""
 
     finish_reason: str | None
     usage: Mapping[str, int | None]
@@ -62,7 +63,7 @@ class CaptureLike(Protocol):
 
 
 @dataclass
-class Capture:
+class _Capture:
     """What the wire showed on the last chat-completions reply of one call.
 
     Attributes:
@@ -76,34 +77,31 @@ class Capture:
     sources: tuple[str, ...] | None = None
 
 
-_capture: ContextVar[Capture | None] = ContextVar("llm_ports_capture", default=None)
+_active: ContextVar[_Capture | None] = ContextVar("llm_ports_capture", default=None)
 
 
 @contextmanager
-def capture() -> Iterator[Capture]:
-    """Open a capture for one call; `record_response` fills it from inside the httpx client."""
-    cap = Capture()
-    token = _capture.set(cap)
+def _capture() -> Iterator[_Capture]:
+    """Open a capture for one call; `_record_response` fills it from inside the httpx client."""
+    cap = _Capture()
+    token = _active.set(cap)
     try:
         yield cap
     finally:
         try:
-            _capture.reset(token)
-        except ValueError:
-            _capture.set(None)
+            _active.reset(token)
+        except ValueError:  # reset from another context: clear rather than leak this call's capture
+            _active.set(None)
 
 
-async def record_response(response: httpx.Response) -> None:
-    """Record a chat-completions reply into the active capture.
-
-    Installed as an httpx `event_hooks["response"]` hook. The active capture takes the reply's
-    `finish_reason`, its usage, and a non-standard top-level `sources` list.
+async def _record_response(response: httpx.Response) -> None:
+    """Record a chat-completions reply into the active capture (an httpx `response` event hook).
 
     Invariants:
         - Never raises; an unreadable body is ignored.
         - With no capture open, does nothing.
     """
-    cap = _capture.get()
+    cap = _active.get()
     if cap is None:
         return
     try:
@@ -150,7 +148,7 @@ def openai_compatible(
     @asynccontextmanager
     async def model_for(req: GenRequest) -> AsyncIterator[Model]:
         async with httpx.AsyncClient(
-            timeout=req.timeout_s, transport=transport, event_hooks={"response": [record_response]}
+            timeout=req.timeout_s, transport=transport, event_hooks={"response": [_record_response]}
         ) as client:
             provider = OpenAIProvider(base_url=base_url, api_key=api_key or "no-key", http_client=client)
             provider = OpenAIProvider(openai_client=provider.client.with_options(max_retries=max_retries))
@@ -165,9 +163,9 @@ def classify(
     """Name the outcome a failed run maps to, with a one-line reason.
 
     The checks run in order: an exception of a `gated` type anywhere in the chain is `gated`; a
-    `length` finish is `truncated`, even though it surfaces as a parse error; an HTTP status in
-    `REQUEST_FAULT` is `request_fault` and any other status is `unavailable`; a parse failure is
-    `invalid`. Anything else is `unavailable`. Pure.
+    `length` finish is `truncated`, even though it surfaces as a parse error; an HTTP status maps
+    by `ports.outcomes.outcome_for_status`; a parse failure is `invalid`. Anything else is
+    `unavailable`. Pure.
 
     Args:
         exc: The exception the run raised.
@@ -183,35 +181,17 @@ def classify(
     if gated:
         for e in chain:
             if isinstance(e, gated):
-                return "gated", str(e)[:200]
+                return "gated", str(e)[:REASON_MAX]
     if finish_reason == "length":
         return "truncated", "finish_reason=length: the token ceiling cut the reply"
     for e in chain:
         if isinstance(e, ModelHTTPError):
-            return ("request_fault" if e.status_code in REQUEST_FAULT else "unavailable"), failure_reason(e)
+            return outcome_for_status(e.status_code), failure_reason(e)
         if isinstance(e, httpx.HTTPStatusError):
-            code = e.response.status_code
-            return ("request_fault" if code in REQUEST_FAULT else "unavailable"), failure_reason(e)
+            return outcome_for_status(e.response.status_code), failure_reason(e)
     if isinstance(exc, UnexpectedModelBehavior):
         return "invalid", failure_reason(exc)
     return "unavailable", failure_reason(exc)
-
-
-def structured_dict(schema: Mapping[str, Any], name: str) -> type[dict[str, Any]]:
-    """Wrap a hand-written JSON schema as an output type that returns a plain dict.
-
-    The schema is compiled into the grammar unchanged, so `maxLength`, `enum`, `maxItems` and
-    `required` all survive. `name` is the schema's title and the name a `FunctionModel` stub
-    dispatches on. No shape validation runs beyond what the grammar enforces.
-    """
-    return StructuredDict(dict(schema), name=name)
-
-
-def framework_output(output: Any) -> Any:
-    """Map the port's `JsonOutput` to pydantic-ai's `StructuredDict`; any other type passes unchanged."""
-    if isinstance(output, type) and issubclass(output, JsonOutput):
-        return structured_dict(output.json_schema, output.schema_name)
-    return output
 
 
 def _usage(res: Any, fallback: Mapping[str, int | None]) -> dict[str, int | None] | None:
@@ -223,11 +203,13 @@ def _usage(res: Any, fallback: Mapping[str, int | None]) -> dict[str, int | None
     Rationale: ADR-0007.
     """
     try:
-        u = res.usage()
+        u = res.usage
+        if not hasattr(u, "input_tokens"):  # a method before pydantic-ai made it a property (2.6x)
+            u = u()
         got = {"input": u.input_tokens, "output": u.output_tokens}
         if any(v for v in got.values()):
             return got
-    except Exception:
+    except Exception:  # a run without usage reads as unmeasured, never as a failed call
         pass
     return dict(fallback) or None
 
@@ -239,16 +221,23 @@ def _last_finish(res: Any) -> str | None:
     return None
 
 
+def _prompt(req: GenRequest) -> Any:
+    """Return the user prompt: the text alone, or the text followed by the request's images."""
+    if not req.images:
+        return req.prompt
+    return [req.prompt, *(BinaryContent(data=b, media_type=m) for b, m in req.images)]
+
+
 class PydanticAIGenerator:
     """The `Generator` port on pydantic-ai; the module docstring states the contract.
 
     Args:
         model: A fixed pydantic-ai `Model`.
         model_for: A per-request model factory.
-        capture: The capture factory; the default is filled by `record_response`.
+        capture: The capture factory; the default is filled by `openai_compatible`'s response hook.
         gated: Exception types that classify as `gated`.
         wrap: Applied to each model that `model_for` yields (not to a fixed `model`), e.g. a
-            `pydantic_ai_replay.Recorder`.
+            `replay.Recorder`.
 
     Raises:
         ValueError: When neither or both of `model` and `model_for` are given.
@@ -259,7 +248,7 @@ class PydanticAIGenerator:
         model: Model | None = None,
         *,
         model_for: ModelFor | None = None,
-        capture: Callable[[], AbstractContextManager[CaptureLike]] = capture,
+        capture: Callable[[], AbstractContextManager[CaptureLike]] = _capture,
         gated: tuple[type[BaseException], ...] = (),
         wrap: Callable[[Model], Model] | None = None,
     ) -> None:
@@ -317,32 +306,10 @@ class PydanticAIGenerator:
         A subclass that supplies `model` on its own transport calls this to share the run, the
         validator and the classification.
         """
-        out_spec: Any = str if output is str else NativeOutput(framework_output(output))
-        agent: Agent[None, Any] = Agent(
-            model,
-            output_type=out_spec,
-            system_prompt=req.system or (),
-            retries={"output": req.output_retries},  # type: ignore[arg-type]
-            model_settings=dict(req.settings),
-        )  # type: ignore[arg-type]
-        kept: dict[str, tuple[Any, ...]] = {"problems": ()}
-
-        if validate is not None:
-
-            @agent.output_validator
-            def _check(ctx: RunContext[None], out: Any) -> Any:
-                probs = list(validate(out))
-                if probs and ctx.retry < req.output_retries:
-                    raise ModelRetry(retry_message(probs) if retry_message else "; ".join(map(str, probs)))
-                kept["problems"] = tuple(probs)
-                return out
-
-        prompt: Any = req.prompt
-        if req.images:
-            prompt = [req.prompt, *(BinaryContent(data=b, media_type=m) for b, m in req.images)]
+        agent, kept = self._agent(model, req, output, validate, retry_message)
         with self._capture() as cap:
             try:
-                res = await agent.run(prompt)
+                res = await agent.run(_prompt(req))
             except Exception as exc:
                 outcome, reason = classify(exc, cap.finish_reason, gated=self._gated)
                 return Generated(
@@ -367,17 +334,42 @@ class PydanticAIGenerator:
             finish_reason=cap.finish_reason or _last_finish(res),
         )
 
+    @staticmethod
+    def _agent[T](
+        model: Model,
+        req: GenRequest,
+        output: type[T],
+        validate: Callable[[T], Sequence[Any]] | None,
+        retry_message: Callable[[Sequence[Any]], str] | None,
+    ) -> tuple[Agent[None, Any], dict[str, tuple[Any, ...]]]:
+        """Build the call's agent, and the slot its validator leaves the last problems in."""
+        out_spec: Any = str if output is str else NativeOutput(framework_output(output))
+        agent: Agent[None, Any] = Agent(
+            model,
+            output_type=out_spec,
+            system_prompt=req.system or (),
+            retries={"output": req.output_retries},  # type: ignore[arg-type]
+            model_settings=dict(req.settings),
+        )  # type: ignore[arg-type]
+        kept: dict[str, tuple[Any, ...]] = {"problems": ()}
+        if validate is None:
+            return agent, kept
+
+        @agent.output_validator
+        def _check(ctx: RunContext[None], out: Any) -> Any:
+            probs = list(validate(out))
+            if probs and ctx.retry < req.output_retries:
+                raise ModelRetry(retry_message(probs) if retry_message else "; ".join(map(str, probs)))
+            kept["problems"] = tuple(probs)
+            return out
+
+        return agent, kept
+
 
 __all__ = [
-    "REQUEST_FAULT",
-    "Capture",
     "CaptureLike",
     "ModelFor",
     "PydanticAIGenerator",
-    "capture",
     "classify",
-    "framework_output",
     "openai_compatible",
-    "record_response",
-    "structured_dict",
 ]
