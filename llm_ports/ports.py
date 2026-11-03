@@ -3,7 +3,7 @@
 Zero-I/O: Protocols and frozen value types only. One adapter module per framework implements a
 port; contract tests exercise the SEAM, so any adapter that passes them can replace any other.
 
-Eight ports, named by the industry pattern they stand for:
+Nine ports, named by the industry pattern they stand for:
 
 - `Retriever`    -- RAG retrieval: query -> ranked chunks with provenance (hybrid + rerank is the
                     adapter's business; the port only promises order and provenance).
@@ -20,6 +20,9 @@ Eight ports, named by the industry pattern they stand for:
 - `Generator`    -- typed structured generation: one prompt + an output type -> a validated value
                     or a named outcome. NEVER RAISES for a model, wire or gate failure. The call
                     path around it (role, pack, gate, trace, graders) is `llm_ports.call`.
+- `Embedder`     -- text embeddings: texts -> one vector per text, all in ONE named space (the
+                    `stamp`: model + dims). NEVER RAISES for a model, wire or gate failure; a
+                    wrong count or a wrong dimension is `invalid`, never a partial result.
 - `Judge`        -- LLM-as-a-judge: one prompt + the reply it drew + a rubric -> a graded verdict.
                     RAISES on a model/wire failure: an unjudged sample must never read as a pass,
                     so the caller owns the catch, never the port.
@@ -167,6 +170,28 @@ class Generated[T]:
     stamp: Mapping[str, Any] = field(default_factory=dict)
 
 
+EmbedInput = Literal["document", "query"]
+
+
+@dataclass(frozen=True)
+class Embedded:
+    """What an Embedder returns: one vector per input, IN INPUT ORDER, all in ONE space. `stamp`
+    names that space (model + dims) and belongs on every stored vector: two stamps never compare,
+    so a store holding two is a reindex in progress, not an index. `vectors` is () exactly when
+    `outcome != "ok"` (a batch that half-landed is a failed batch). `input_tokens` is None when the
+    wire reported no usage -- unknown, never 0."""
+
+    vectors: tuple[tuple[float, ...], ...]
+    outcome: Outcome
+    stamp: str = ""
+    reason: str | None = None
+    input_tokens: int | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome == "ok"
+
+
 @dataclass(frozen=True)
 class JudgeVerdict:
     """What a Judge returns. `passed` is the gate; `score` is the judge's own 0..1 reading and
@@ -275,6 +300,21 @@ class Generator(Protocol):
 
 
 @runtime_checkable
+class Embedder(Protocol):
+    @property
+    def stamp(self) -> str:
+        """The vector space this embedder writes: model identity + dims (e.g.
+        `Qwen3-Embedding-0.6B-Q8_0@1024`). Constant for the embedder's life."""
+        ...
+
+    async def embed(self, texts: Sequence[str], *, input_type: EmbedInput = "document") -> Embedded:
+        """One vector per text, same order. `input_type="query"` lets an asymmetric model treat a
+        search query differently from a stored document (the adapter owns any instruct prefix).
+        Never raises for a model, wire or gate failure: those are the `outcome`."""
+        ...
+
+
+@runtime_checkable
 class Judge(Protocol):
     async def judge(self, *, prompt: str, output: Any, rubric: str) -> JudgeVerdict:
         """Grade `output` (the reply to `prompt`) against `rubric`. Raises when the judging model
@@ -287,6 +327,9 @@ __all__ = [
     "CitedAnswer",
     "Citer",
     "Claim",
+    "EmbedInput",
+    "Embedded",
+    "Embedder",
     "Evaluator",
     "GenRequest",
     "Generated",

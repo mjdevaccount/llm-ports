@@ -12,7 +12,7 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 
 | module | what |
 |---|---|
-| `ports` | zero-I/O Protocols: `Generator`, `Tracer`/`Generation`, `PromptSource`, `Judge`, `Retriever`, `Citer`, `Grounder`, `Evaluator`; value types `GenRequest`, `Generated[T]`, `Prompt`, `Chunk`, `Claim`, `CitedAnswer` |
+| `ports` | zero-I/O Protocols: `Generator`, `Embedder`, `Tracer`/`Generation`, `PromptSource`, `Judge`, `Retriever`, `Citer`, `Grounder`, `Evaluator`; value types `GenRequest`, `Generated[T]`, `Embedded`, `Prompt`, `Chunk`, `Claim`, `CitedAnswer` |
 | `roles` | `Role` (one generation surface, `feature.action`) resolved against a **consumer-owned TOML tier table** (`load_tiers`) |
 | `packs` | prompt packs: `<root>/<id>/pack.yaml` + jinja templates, with a frozen **content sha** (sha256[:16] of the sources) |
 | `call` | `generate(role, prompt=, output=, generator=, hooks=)` -- the one call path; outcome is always NAMED: `ok \| gated \| unavailable \| request_fault \| truncated \| invalid` |
@@ -20,7 +20,8 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `pydantic_ai_generator` | the first `Generator` adapter (`PydanticAIGenerator`, `openai_compatible(base_url, key)` for any OpenAI-wire endpoint, e.g. a LiteLLM gateway) |
 | `grounding` | the shapes a grounded generator shares: `Problem(path, reason, detail)`, `retry_message` (the ONE retry text), `loose` (the figures no input rendered, NAMED, so a verifier can refuse one by name), `belt` (`loose` counted; 0 by construction) and `allowed_numbers` |
 | `slots` | grounded prose BY CONSTRUCTION: code renders each value under a digit-free id, the model writes `{id}` under a grammar with no digit token (`slot_pattern` / `prose_pattern`), code `fill`s it, and `belt` over the filled text is 0. Use it for any prose a reader takes numbers from |
-| `testing` | `StubGenerator`, `RecordingTracer` for consumers' tests |
+| `pydantic_ai_embedder` | the first `Embedder` adapter (`PydanticAIEmbedder` on pydantic-ai's `embeddings`, `openai_compatible_embeddings(base_url, model)`): a `stamp` per space, count + dims laws, batching, the asymmetric query prefix, named outcomes |
+| `testing` | `StubGenerator`, `StubEmbedder`, `RecordingTracer` for consumers' tests |
 | `numbers` | THE number law: `loose(text, allowed, words_ok)` names every digit run (by value) and spelled number no input licensed; every belt, grader and validator in the package reads a number through it |
 | `failure`, `context`, `json_schema`, `claim_refute` | small EDGE-free helpers the call path and graders use |
 
@@ -63,6 +64,21 @@ if res.outcome != "ok":
 `Generator.generate` never raises for a model, wire or gate failure; it returns a named outcome
 with a short reason (exception class, status code or the first message line cut before any `body:`
 payload, capped at 200 chars -- never a traceback). A consumer that wants the class name alone splits on `:`.
+
+Embeddings ride the same shape:
+
+```python
+from llm_ports.pydantic_ai_embedder import PydanticAIEmbedder, openai_compatible_embeddings
+
+emb = PydanticAIEmbedder(model_for=openai_compatible_embeddings("http://litellm:4000/v1", "embeddings", api_key),
+                         stamp="Qwen3-Embedding-0.6B-Q8_0@1024", dims=1024,
+                         query_instruct="Given a question, retrieve relevant passages")
+res = await emb.embed(chunks)                     # Embedded(vectors, outcome, stamp, reason, input_tokens)
+q = await emb.embed([question], input_type="query")
+```
+
+Store `res.stamp` with every vector: two stamps are two spaces and never compare. A wrong count or
+dimension is `invalid` (nothing to store), never a partial batch.
 
 ## Hooks (the consumer's platform, plugged in)
 

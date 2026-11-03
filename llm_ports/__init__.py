@@ -7,7 +7,8 @@ that is always NAMED (`ok | gated | unavailable | request_fault | truncated | in
 Generator never raises for a model, wire or gate failure.
 
 Frameworks live behind the ports. `pydantic_ai_generator.PydanticAIGenerator` is the first
-`Generator` adapter (import it explicitly: this package root imports no framework).
+`Generator` adapter and `pydantic_ai_embedder.PydanticAIEmbedder` the first `Embedder` adapter
+(import them explicitly: this package root imports no framework).
 """
 
 from llm_ports.call import Hooks, generate, json_output, request_for, require_ok, tracer_trace
@@ -16,6 +17,9 @@ from llm_ports.ports import (
     Chunk,
     CitedAnswer,
     Claim,
+    Embedded,
+    Embedder,
+    EmbedInput,
     Generated,
     Generation,
     Generator,
@@ -29,12 +33,15 @@ from llm_ports.ports import (
 )
 from llm_ports.roles import Role, Tier, TierTable, load_tiers
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "Chunk",
     "CitedAnswer",
     "Claim",
+    "EmbedInput",
+    "Embedded",
+    "Embedder",
     "GenRequest",
     "Generated",
     "Generation",
