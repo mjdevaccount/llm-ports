@@ -30,12 +30,14 @@ from llm_ports.ports import (
     Outcome,
     Prompt,
     PromptSource,
+    Reranked,
+    Reranker,
     Seed,
     Tracer,
 )
 from llm_ports.roles import Role, Tier, TierTable, load_tiers
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 __all__ = [
     "Activity",
@@ -59,6 +61,8 @@ __all__ = [
     "Outcome",
     "Prompt",
     "PromptSource",
+    "Reranked",
+    "Reranker",
     "Role",
     "Seed",
     "Tier",

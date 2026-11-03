@@ -12,6 +12,7 @@ VALUE (wrapped `ok`), a `Generated` (returned as-is, any outcome), or raises (re
 `unavailable` -- the port never raises). `RecordingTracer` satisfies `Tracer` and keeps every
 generation, its end and its scores. `StubEmbedder` satisfies `Embedder` with deterministic
 unit vectors hashed from each text (same text -> same vector), and records every call.
+`StubReranker` satisfies `Reranker` with a predictable word-overlap score.
 `StubCiter` and `StubPromptSource` prove the `Citer` / `PromptSource` seams' shape with no model
 and no store. All pass the ports' `isinstance` checks. `StubDetector` stands in for the
 LettuceDetect model under `lettucedetect_grounder.LettuceDetectGrounder`.
@@ -27,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from llm_ports.failure import failure_reason
-from llm_ports.ports import Chunk, CitedAnswer, Embedded, EmbedInput, Generated, GenRequest, Prompt
+from llm_ports.ports import Chunk, CitedAnswer, Embedded, EmbedInput, Generated, GenRequest, Prompt, Reranked
 
 Reply = Callable[[GenRequest, type[Any]], Any]
 
@@ -120,6 +121,26 @@ class StubEmbedder:
                         input_tokens=None)
 
 
+class StubReranker:
+    """The `Reranker` port with no model: a document scores the count of query words it holds
+    (case-folded), so a test can predict the order. `fail` (an Outcome other than ok) makes every
+    call fail that way. `calls` keeps (query, documents) per call."""
+
+    def __init__(self, *, model: str = "stub-reranker", fail: str | None = None) -> None:
+        self.model = model
+        self._fail = fail
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
+        self.calls.append((query, tuple(documents)))
+        if self._fail:
+            return Reranked(scores=(), outcome=self._fail, model=self.model,  # type: ignore[arg-type]
+                            reason=f"stub {self._fail}")
+        words = set(query.lower().split())
+        return Reranked(scores=tuple(float(sum(w in words for w in d.lower().split())) for d in documents),
+                        outcome="ok", model=self.model)
+
+
 class StubCiter:
     """`Citer` that asserts nothing: every chunk id known, no claims (no chunks -> no claims).
     `model` is '' by contract -- a stub has none."""
@@ -160,4 +181,4 @@ _DIGITS = re.compile(r"\d+(?:\.\d+)?")
 
 
 __all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubCiter", "StubDetector", "StubEmbedder",
-           "StubGenerator", "StubPromptSource"]
+           "StubGenerator", "StubPromptSource", "StubReranker"]

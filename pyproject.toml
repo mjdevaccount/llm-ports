@@ -1,7 +1,7 @@
 [project]
 name = "llm-ports"
-version = "0.10.0"
-description = "Thin Protocols for LLM work (Generator, Embedder, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
+version = "0.11.0"
+description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -20,6 +20,13 @@ evals = ["pydantic-evals>=2.57,<3"]
 # `lettucedetect_grounder` with the REAL model (torch + transformers, hundreds of MB). The module
 # imports it lazily; without the extra it runs over an injected detector (`testing.StubDetector`).
 lettucedetect = ["lettucedetect>=0.1.6"]
+# `langfuse_tracer` (the Tracer on the Langfuse SDK 5, OpenTelemetry underneath) and the
+# `testing_langfuse` rig. `langfuse_prompt_source` duck-types the client and needs no SDK.
+langfuse = ["langfuse>=5.0.2,<6"]
+# `otel_gen_ai` (GenAI spans; the attribute names are the semantic-conventions package's constants).
+otel = ["opentelemetry-api>=1.30", "opentelemetry-semantic-conventions>=0.58b0"]
+# `sql_guard` (the read-only AST guard for agent-written SQL).
+sql = ["sqlglot>=30.13"]
 
 [build-system]
 requires = ["hatchling"]
@@ -31,7 +38,10 @@ packages = ["llm_ports"]
 [dependency-groups]
 # pydantic-evals: the judge adapter's tests run in CI (the `evals` extra's one package). lettucedetect
 # is NOT here: its tests run over `testing.StubDetector`, the real model is the consumer's lane.
-dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.15", "pydantic-evals>=2.57,<3"]
+# langfuse / otel / sql: those adapters' tests run in CI (each extra's packages, all pure Python).
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.15", "pydantic-evals>=2.57,<3",
+       "langfuse>=5.0.2,<6", "opentelemetry-sdk>=1.30", "opentelemetry-semantic-conventions>=0.58b0",
+       "sqlglot>=30.13"]
 
 [tool.ruff]
 line-length = 120

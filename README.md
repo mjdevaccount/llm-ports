@@ -5,14 +5,14 @@ ports are ours and tiny; structured output, output retries and validation come f
 [pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
 
 ```
-pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.9.0/llm_ports-0.9.0-py3-none-any.whl"
+pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.11.0/llm_ports-0.11.0-py3-none-any.whl"
 ```
 
 ## What is in it
 
 | module | what |
 |---|---|
-| `ports` | zero-I/O Protocols: `Generator`, `Embedder`, `Tracer`/`Generation`, `PromptSource`, `Judge`, `Retriever`, `Citer`, `Grounder`, `Evaluator`; value types `GenRequest`, `Generated[T]`, `Embedded`, `Prompt`, `Chunk`, `Claim`, `CitedAnswer` |
+| `ports` | zero-I/O Protocols: `Generator`, `Embedder`, `Reranker`, `Tracer`/`Generation`, `PromptSource`, `Judge`, `Retriever`, `Citer`, `Grounder`, `Evaluator`; value types `GenRequest`, `Generated[T]`, `Embedded`, `Reranked`, `Prompt`, `Chunk`, `Claim`, `CitedAnswer` |
 | `roles` | `Role` (one generation surface, `feature.action`) resolved against a **consumer-owned TOML tier table** (`load_tiers`) |
 | `packs` | prompt packs: `<root>/<id>/pack.yaml` + jinja templates, with a frozen **content sha** (sha256[:16] of the sources) |
 | `call` | `generate(role, prompt=, output=, generator=, hooks=)` -- the one call path; outcome is always NAMED: `ok \| gated \| unavailable \| request_fault \| truncated \| invalid` |
@@ -22,7 +22,13 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `slots` | grounded prose BY CONSTRUCTION: code renders each value under a digit-free id, the model writes `{id}` under a grammar with no digit token (`slot_pattern` / `prose_pattern`), code `fill`s it, and `belt` over the filled text is 0. Use it for any prose a reader takes numbers from |
 | `content` | the OUTPUT shape in W3C PROV-O words: `ContentItem` (prov:Entity), `Activity` (prov:Activity), `uses` (prov:used); `DataClass{rights, private, link_required}` with `join` (most restrictive wins) and an audience `CEILING`; `print_gate(item, audience)` -> ok or ONE named refusal (`rights \| unclaimed \| uncited \| unsourced \| link`) |
 | `pydantic_ai_embedder` | the first `Embedder` adapter (`PydanticAIEmbedder` on pydantic-ai's `embeddings`, `openai_compatible_embeddings(base_url, model)`): a `stamp` per space, count + dims laws, index order (`IndexOrderedTransport`), batching, the asymmetric query prefix, named outcomes |
-| `testing` | `StubGenerator`, `StubEmbedder`, `RecordingTracer`, `StubCiter`, `StubPromptSource`, `StubDetector` for consumers' tests |
+| `testing` | `StubGenerator`, `StubEmbedder`, `StubReranker`, `RecordingTracer`, `StubCiter`, `StubPromptSource`, `StubDetector` for consumers' tests; `testing_langfuse` (extra `[langfuse]`): `LangfuseRig` (a real SDK 5 client exporting to memory), `FakeLangfusePrompts`, `RefusingLangfuse` |
+| `reranker_http` | the first `Reranker` adapter (`HttpReranker` over the Cohere/Jina `/rerank` wire): scores in input order via `index_order.IndexOrderedTransport` (shared with the embeddings wire), every document scored exactly once and finite or `invalid`, named outcomes |
+| `observation` | `observe(tracer, ...)`: one generation around a block, ended once (ERROR + latency on an exception); `PortObservation` (`usage_counts()`); `opt_int`; unmeasured usage is flagged `tokens_unmeasured`, never zero tokens |
+| `langfuse_tracer` | the `Tracer` on the Langfuse SDK 5 (extra `[langfuse]`): a root generation in the current OTel trace, usage honesty, NUMERIC scores, the labelled prompt link; fails open with one held warning |
+| `langfuse_prompt_source` | the `PromptSource` on Langfuse prompt management: the repo seed leads, the label mirrors (pushed when absent/stale, served when the store is down or disagrees); text and chat prompts |
+| `otel_gen_ai` | OpenTelemetry GenAI spans (extra `[otel]`): `gen_ai_span` (a child of the ambient span), `record_gen_ai` (back-dated by the measured latency), none-is-not-zero usage; no prompt bodies, ever |
+| `sql_guard` | a read-only AST guard for agent-written SQL (extra `[sql]`, sqlglot): one SELECT, no write/utility node, schema allowlist, function denylist, LIMIT enforced, SQL regenerated from the tree; a policy may tighten, never loosen |
 | `pydantic_evals_judge` | the first `Judge` adapter (`PydanticEvalsJudge(role, model_for=...)` on pydantic-evals' `LLMJudge`, extra `[evals]`): the grade on the NATIVE grammar (`JUDGE_PROFILE`), `clean_reason` refuses leaked tool-call markup or a contradicting leaked verdict, multimodal `images=`; raises, never a default verdict |
 | `judge_sampling` | a sampled judge's pure half: `Seen` (what the judged call saw beside the prompt) + `judge_input`, a deterministic `sample_key` + `selected` (1-in-N), the four-law `rubric` (platform, grounding mode, calendar injected), `verdict_label` (`pass \| fail \| could_not_run`) |
 | `lettucedetect_grounder` | `LettuceDetectGrounder` (token-span hallucination detector behind `Grounder`, extra `[lettucedetect]`, lazy import, injectable detector); a context past the model's window is judged and NAMED `context_over_window` |

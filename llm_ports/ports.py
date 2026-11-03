@@ -3,7 +3,7 @@
 Zero-I/O: Protocols and frozen value types only. One adapter module per framework implements a
 port; contract tests exercise the SEAM, so any adapter that passes them can replace any other.
 
-Nine ports, named by the industry pattern they stand for:
+Ten ports, named by the industry pattern they stand for:
 
 - `Retriever`    -- RAG retrieval: query -> ranked chunks with provenance (hybrid + rerank is the
                     adapter's business; the port only promises order and provenance).
@@ -23,6 +23,10 @@ Nine ports, named by the industry pattern they stand for:
 - `Embedder`     -- text embeddings: texts -> one vector per text, all in ONE named space (the
                     `stamp`: model + dims). NEVER RAISES for a model, wire or gate failure; a
                     wrong count or a wrong dimension is `invalid`, never a partial result.
+- `Reranker`     -- cross-encoder reranking: one query + documents -> one ORDER-ONLY score per
+                    document, in input order. NEVER RAISES for a model, wire or gate failure (the
+                    caller's fallback is the order it already had); a reply that does not score
+                    every document exactly once is `invalid`, never a partial ranking.
 - `Judge`        -- LLM-as-a-judge: one prompt + the reply it drew + a rubric -> a graded verdict.
                     RAISES on a model/wire failure: an unjudged sample must never read as a pass,
                     so the caller owns the catch, never the port.
@@ -208,6 +212,22 @@ class Embedded:
 
 
 @dataclass(frozen=True)
+class Reranked:
+    """What a Reranker returns: one score per document, IN INPUT ORDER. Scores are model-relative
+    and ORDER-ONLY (one model emits raw logits, another 0..1): rank by them, never threshold or
+    compare them across models. `scores` is () exactly when `outcome != "ok"`."""
+
+    scores: tuple[float, ...]
+    outcome: Outcome
+    model: str = ""
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome == "ok"
+
+
+@dataclass(frozen=True)
 class JudgeVerdict:
     """What a Judge returns. `passed` is the gate; `score` is the judge's own 0..1 reading and
     `reason` its one- or two-sentence justification (the Langfuse score comment)."""
@@ -330,6 +350,14 @@ class Embedder(Protocol):
 
 
 @runtime_checkable
+class Reranker(Protocol):
+    async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
+        """One score per document, same order. No documents -> an `ok` with no scores. Never
+        raises for a model, wire or gate failure: those are the `outcome`."""
+        ...
+
+
+@runtime_checkable
 class Judge(Protocol):
     async def judge(self, *, prompt: str, output: Any, rubric: str) -> JudgeVerdict:
         """Grade `output` (the reply to `prompt`) against `rubric`. Raises when the judging model
@@ -359,6 +387,8 @@ __all__ = [
     "Outcome",
     "Prompt",
     "PromptSource",
+    "Reranked",
+    "Reranker",
     "Seed",
     "Retriever",
     "Tracer",
