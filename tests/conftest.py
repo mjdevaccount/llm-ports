@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from llm_ports import roles
+from llm_ports.call import roles
 
-HERE = Path(__file__).resolve().parent
-PACKS = HERE / "packs"
-TABLE = roles.load_tiers(HERE / "llm_tiers.toml")
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+PACKS = FIXTURES / "packs"
+TABLE = roles.load_tiers(FIXTURES / "llm_tiers.toml")
 
 
 class Role(roles.Role):

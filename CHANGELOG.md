@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: the package is layered** (`src/llm_ports/`, PyPA src layout). The 33 flat modules
+  move into subpackages, bottom-up: `ports` (with `ports.outcomes`, was `failure`) <
+  `observability` (`context`, `observation`, `NoopTracer`) | `grounding` (`numbers`, `slots`, the
+  belt, `NumberLawGrounder`) | `prompts` (`packs`, `manifest`, `RepoPromptSource`) < `call`
+  (`generate`, `call.roles`, `call.graders`, `call.schema`) < `evals` (`GauntletEvaluator`,
+  `evals.judge`, `evals.refute`) | `rag` (`rag.chunking`, `rag.metrics`) | `provenance` (was
+  `content`) < `adapters` (`pydantic_ai`, `pydantic_evals`, `langfuse`, `otel`, `http`,
+  `lettucedetect`, `sqlglot`) | `testing` (`testing.langfuse`). `reference` is dissolved into
+  the packages above. The root keeps its names. The map is `docs/REDESIGN.md` §1.
+- Every module declares `__all__`, sorted (ruff `RUF022`); a test asserts each name resolves.
+- import-linter contracts (`pyproject.toml`) hold the layers, keep adapters independent and keep
+  vendor imports inside `adapters` and `testing`; `tests/contract/` runs them on every leg.
+- Tests mirror the package; fixtures live in `tests/fixtures/`.
+
 ### Added
 
 - Releases publish to PyPI through trusted publishing (no stored token), with PEP 740
