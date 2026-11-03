@@ -240,18 +240,23 @@ Nav: Home (README) · Concepts · Guides (one per example) · API reference (one
 
 ## 6. PyPI: trusted publishing
 
-GitHub Actions OIDC, no stored token. One-time operator setup on PyPI and TestPyPI: a pending
-publisher (owner `mjdevaccount`, repo, workflow `release.yml`, environment `pypi` / `testpypi`).
-A pending publisher does **not** reserve the name — publish promptly once it exists.
+GitHub Actions OIDC, no stored token. One index: PyPI. The operator registered the pending
+publisher on 2026-11-03 (owner `mjdevaccount`, repo `llm-ports`, workflow `release.yml`,
+environment `pypi`). A pending publisher does **not** reserve the name; the first upload does.
 
-`release.yml` on a `v*` tag: reuse `ci.yml` via `workflow_call` → `build` (tag == version check,
-`uv build`, `twine check --strict`) → `publish` (`environment: pypi`, `id-token: write`,
-`pypa/gh-action-pypi-publish` pinned by SHA; PEP 740 attestations default) → `github-release`
-(`dist/*` attached; existing release assets untouched). `workflow_dispatch` publishes a `.devN`
-to TestPyPI as the dry run.
+`release.yml` (both triggers reuse `ci.yml` via `workflow_call`, then `build`: `uv build`,
+`twine check --strict`; `publish`: `environment: pypi`, `id-token: write`,
+`pypa/gh-action-pypi-publish` pinned by SHA, PEP 740 attestations by default):
 
-`llm-ports` was unclaimed on PyPI on 2026-11-03 (`https://pypi.org/pypi/llm-ports/json` → 404;
-unclaimed is not guaranteed registrable — the TestPyPI dry run proves it).
+- **`v*` tag**: the tag must equal pyproject's version; `publish` uploads it, and
+  `github-release` attaches `dist/*` to a GitHub release. `github-release` needs only `build`,
+  never `publish`: consumers pin the wheel URL, so the asset exists whatever the index did.
+- **`workflow_dispatch`**: builds a PEP 440 dev release (`X.Y.Z.devN`, N = the run number;
+  the next patch when pyproject holds a final version) and uploads it to PyPI. Installers skip
+  pre-releases unless asked (`--pre`), so this is the end-to-end dry run, and the first one claims
+  the name. No TestPyPI: it needs a second account and proves less than a real pre-release.
+
+The `pypi` environment admits `v*` tags and `main` only.
 
 ## 7. Name decision
 
@@ -288,7 +293,7 @@ version classifiers, `Production/Stable` at 1.0, `project.urls`; add `SECURITY.m
 | 0 | this document | operator approves; name decision recorded in §7 |
 | 1 | CI hardening, no API change: matrix, `test-lowest`, coverage + Codecov, `ruff format`, `twine check`, `zizmor` | every leg green on `main`; coverage badge renders; floor recorded |
 | 2 | Voice and history → **0.12.0**: contract-only docstrings, ADR 0001–0008, Keep-a-Changelog backfill, `pygrep` hook + ruff `D`, `numbers.law_text` single source | hook passes; `rubric()` golden byte-identical to 0.11 for all `(mode, web)`; tests green; tag `v0.12.0`, cut `release/0.x` |
-| 3 | Publishing plumbing (operator first: PyPI/TestPyPI pending publishers; `pypi`/`testpypi` environments): pyproject urls/classifiers, new `release.yml` (trusted publishing; GitHub release assets kept for wheel-URL consumers) | `workflow_dispatch` publishes a `.devN` to TestPyPI with no secret; installing it from TestPyPI works; the next tag lands on PyPI with attestations |
+| 3 | Publishing plumbing (operator first: the PyPI pending publisher): `pypi` environment; pyproject urls/classifiers; new `release.yml` (trusted publishing; GitHub release assets kept for wheel-URL consumers, independent of the upload); actionlint in `lint` | `actionlint` and `zizmor` green; `workflow_dispatch` from `main` publishes a `.devN` to PyPI with attestations and no secret; `pip install --pre` of it imports |
 | 4 | Layout (breaking; `main` = `1.0.0.dev0`, unreleased): `src/llm_ports/` via `git mv` + import rewrites only; tests mirrored; `__all__` everywhere; import-linter contracts | every moved file a ≥90% rename in `git diff -M --summary`; test count unchanged and green; `lint-imports` green; a test asserts every public module defines `__all__` and every name resolves |
 | 5 | 1.0 API cleanup (breaking): extras split (core = pydantic, jinja2, pyyaml); `outcome_for_status`/`REQUEST_FAULT` → `ports.outcomes`; `strict_json_schema` → adapter; `EventHook` → `observability`; `box` → `self_hosted` (TOML alias + warning), label default `"chat"`; `rubric(examples=)`; `load_tiers` accepts a mapping; underscore private helpers | `core-only` green; rubric golden with trade-data's examples; a `box` tier table loads with `DeprecationWarning`; `HttpReranker` imports with only `http` installed |
 | 6 | Strict typing | `mypy --strict` green; `pyright --verifytypes` at the gate |

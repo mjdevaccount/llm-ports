@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Releases publish to PyPI through trusted publishing (no stored token), with PEP 740
+  attestations; a tag still attaches the wheel and sdist to a GitHub release, independently of the
+  upload. A manual run of `release.yml` uploads a `.devN` pre-release as the dry run.
+- Package metadata: project URLs, classifiers and keywords.
+- CI: `actionlint` over the workflows; `ci.yml` is callable (`workflow_call`), and a release runs
+  all of it before building.
+
 ## [0.12.0] - 2026-11-03
 
 No behaviour change and no public name change; the release carries documentation, tooling and

@@ -41,6 +41,12 @@ rejects deployment vocabulary in `llm_ports/`.
 ## Releasing
 
 Bump `version` in `pyproject.toml`, move `Unreleased` in `CHANGELOG.md` under the new version, and
-merge. Then push a `vX.Y.Z` tag on `main`: `release.yml` checks the tag against the version, runs
-the suite, builds, runs `twine check --strict`, and attaches the wheel and sdist to a GitHub
-release. A published wheel is never replaced.
+merge. Then push a `vX.Y.Z` tag on `main`. `release.yml` runs the whole of `ci.yml`, checks the tag
+against the version, builds, runs `twine check --strict`, then, independently of each other,
+uploads to PyPI (trusted publishing through the `pypi` environment, with PEP 740 attestations) and
+attaches the wheel and sdist to a GitHub release. The release assets never wait on the upload:
+consumers that pin the wheel URL get it whatever PyPI did. A published file is never replaced.
+
+To dry-run the pipeline, run `release.yml` from `main` by hand (`gh workflow run release.yml`). It
+uploads a dev release, `X.Y.Z.devN` with N the run number, which installers take only when asked
+(`pip install --pre`).
