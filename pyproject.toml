@@ -83,6 +83,11 @@ dev = [
     "pytest-cov>=7.1.0",
     "pre-commit>=4.7",
     "import-linter>=2.15",
+    "pytest-examples>=0.0.18",
+]
+docs = [
+    "mkdocs-material>=9.8.0",
+    "mkdocstrings[python]>=1.0.8",
 ]
 lint = [
     "actionlint-py==1.7.12.25",
@@ -110,9 +115,10 @@ ignore = ["E501", "RUF002", "D105", "D107"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-# Docstring rules are for the package; tests and markdown examples are read as code.
+# Docstring rules are for the package; tests, examples and markdown snippets are read as code.
 "tests/**" = ["D"]
 "*.md" = ["D"]
+"examples/**" = ["D"]
 
 # The layers, bottom-up (docs/REDESIGN.md §1). `|` separates siblings that may not import each
 # other. tests/contract/test_layers.py runs these contracts, so every pytest leg enforces them.

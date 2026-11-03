@@ -1,0 +1,5 @@
+id: orders.summarize
+version: 1.0.0
+role: orders.summarize
+templates:
+  prompt: prompt.j2

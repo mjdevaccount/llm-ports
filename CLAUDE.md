@@ -21,6 +21,7 @@ uv run pre-commit run --all-files         # docstring-vocabulary hook
 uv run vulture                            # dead code (whitelist: [tool.vulture] in pyproject.toml)
 uv run --group types mypy                 # --strict over src/ ([tool.mypy] in pyproject.toml)
 uv run --group types pyright --verifytypes llm_ports --ignoreexternal   # public surface 100% typed
+uv run --group docs mkdocs build --strict # the docs site (mkdocs.yml); any warning fails
 ```
 
 The import-linter contracts run inside pytest (`tests/contract/test_layers.py`), so a green suite
@@ -60,6 +61,13 @@ core and no vendor module.
   annotate every public attribute and class variable, never leave an inferred type on the public
   surface. A `# type: ignore[code]` names its code and says why on the same line; a vendor with no
   type information goes in `[[tool.mypy.overrides]]`, not in an ignore.
+- **Docs and examples execute.** Each `examples/` script asserts its own claims and runs in
+  `tests/examples/` on every `pytest` leg (one needing a live endpoint runs only when its env vars
+  are set); every ```` ```python ```` block in `README.md` and `docs/` runs under
+  `pytest-examples`. A fragment that cannot run is fenced ```` ```{.python test="skip"} ````. A
+  guide (`docs/guides/`) includes its example with `--8<--`, never a pasted copy, and the API
+  reference is generated from docstrings (`docs/api/`, mkdocstrings). A new public subpackage gets
+  an API page and a `nav` entry in `mkdocs.yml`.
 - Tests mirror `src/` layout. Use the doubles in `llm_ports.testing` rather than ad-hoc mocks of
   vendor clients.
 - A vendor import sits inside its adapter, in a `with extra("<extra>"):` block (`llm_ports._extras`),
@@ -77,5 +85,6 @@ core and no vendor module.
 - Branch + PR, never push `main`. Conventional Commits. `main` is the 1.0 line; `release/0.x`
   takes fixes for 0.x consumers only.
 - Release = bump `version`, move `Unreleased` in `CHANGELOG.md`, merge, tag `vX.Y.Z` on `main`.
-  `release.yml` publishes to PyPI (trusted publishing) and a GitHub release. A published version
+  `release.yml` publishes to PyPI (trusted publishing), a GitHub release and the docs site
+  (GitHub Pages, from `ci`'s strict build). A published version
   is never replaced; a fix is a new version.

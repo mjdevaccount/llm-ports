@@ -1,0 +1,57 @@
+# `llm_ports.adapters`
+
+::: llm_ports.adapters
+
+## `llm_ports.adapters.pydantic_ai`
+
+::: llm_ports.adapters.pydantic_ai
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.pydantic_ai.replay`
+
+::: llm_ports.adapters.pydantic_ai.replay
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.http`
+
+::: llm_ports.adapters.http
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.langfuse.tracer`
+
+::: llm_ports.adapters.langfuse.tracer
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.langfuse.prompt_source`
+
+::: llm_ports.adapters.langfuse.prompt_source
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.otel`
+
+::: llm_ports.adapters.otel
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.pydantic_evals`
+
+::: llm_ports.adapters.pydantic_evals
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.sqlglot`
+
+::: llm_ports.adapters.sqlglot
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.lettucedetect`
+
+::: llm_ports.adapters.lettucedetect
+    options:
+      show_root_heading: false
