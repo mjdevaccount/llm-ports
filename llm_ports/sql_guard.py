@@ -35,21 +35,53 @@ from sqlglot import expressions as exp
 #: Node types that never appear anywhere in an admitted tree. `exp.Command` is sqlglot's catch-all
 #: for a raw or unmodelled statement -- fail-closed includes it.
 FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
-    exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop,
-    exp.Alter, exp.Grant, exp.TruncateTable, exp.Set, exp.Command,
-    exp.Transaction, exp.Commit, exp.Rollback, exp.Use, exp.Copy, exp.Lock,
+    exp.Insert,
+    exp.Update,
+    exp.Delete,
+    exp.Merge,
+    exp.Create,
+    exp.Drop,
+    exp.Alter,
+    exp.Grant,
+    exp.TruncateTable,
+    exp.Set,
+    exp.Command,
+    exp.Transaction,
+    exp.Commit,
+    exp.Rollback,
+    exp.Use,
+    exp.Copy,
+    exp.Lock,
 )
 
 #: PostgreSQL functions an agent's read has no business calling (lower-case, as policies hold them).
-POSTGRES_DENY_FUNCTIONS: frozenset[str] = frozenset({
-    "pg_sleep", "pg_sleep_for", "pg_sleep_until",
-    "pg_read_file", "pg_read_binary_file", "pg_ls_dir", "pg_stat_file",
-    "pg_terminate_backend", "pg_cancel_backend", "pg_reload_conf",
-    "pg_rotate_logfile", "lo_import", "lo_export", "set_config",
-    "dblink", "dblink_connect", "dblink_exec",
-    "pg_advisory_lock", "pg_advisory_xact_lock", "pg_try_advisory_lock",
-    "query_to_xml", "database_to_xml", "table_to_xml",
-})
+POSTGRES_DENY_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        "pg_sleep",
+        "pg_sleep_for",
+        "pg_sleep_until",
+        "pg_read_file",
+        "pg_read_binary_file",
+        "pg_ls_dir",
+        "pg_stat_file",
+        "pg_terminate_backend",
+        "pg_cancel_backend",
+        "pg_reload_conf",
+        "pg_rotate_logfile",
+        "lo_import",
+        "lo_export",
+        "set_config",
+        "dblink",
+        "dblink_connect",
+        "dblink_exec",
+        "pg_advisory_lock",
+        "pg_advisory_xact_lock",
+        "pg_try_advisory_lock",
+        "query_to_xml",
+        "database_to_xml",
+        "table_to_xml",
+    }
+)
 
 
 class SqlGuardError(ValueError):

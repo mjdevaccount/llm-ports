@@ -1,5 +1,8 @@
 # llm-ports
 
+[![ci](https://github.com/mjdevaccount/llm-ports/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mjdevaccount/llm-ports/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/mjdevaccount/llm-ports/graph/badge.svg)](https://codecov.io/gh/mjdevaccount/llm-ports)
+
 Thin Protocols for LLM work, and the one call path around them. **Our seam, their impl:** the
 ports are ours and tiny; structured output, output retries and validation come from
 [pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
@@ -67,8 +70,10 @@ from llm_ports.pydantic_ai_generator import PydanticAIGenerator, openai_compatib
 
 TABLE = load_tiers(Path(__file__).with_name("llm_tiers.toml"))
 
+
 class Role(roles.Role):
     TIERS = TABLE.tiers
+
 
 CATEGORIZE = Role("categorize.batch", tier="gateway", temperature=0.0, graders=("schema_complete",))
 gen = PydanticAIGenerator(model_for=openai_compatible("http://litellm:4000/v1", api_key))
@@ -87,10 +92,13 @@ Embeddings ride the same shape:
 ```python
 from llm_ports.pydantic_ai_embedder import PydanticAIEmbedder, openai_compatible_embeddings
 
-emb = PydanticAIEmbedder(model_for=openai_compatible_embeddings("http://litellm:4000/v1", "embeddings", api_key),
-                         stamp="Qwen3-Embedding-0.6B-Q8_0@1024", dims=1024,
-                         query_instruct="Given a question, retrieve relevant passages")
-res = await emb.embed(chunks)                     # Embedded(vectors, outcome, stamp, reason, input_tokens)
+emb = PydanticAIEmbedder(
+    model_for=openai_compatible_embeddings("http://litellm:4000/v1", "embeddings", api_key),
+    stamp="Qwen3-Embedding-0.6B-Q8_0@1024",
+    dims=1024,
+    query_instruct="Given a question, retrieve relevant passages",
+)
+res = await emb.embed(chunks)  # Embedded(vectors, outcome, stamp, reason, input_tokens)
 q = await emb.embed([question], input_type="query")
 ```
 

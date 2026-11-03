@@ -50,8 +50,7 @@ def test_neither_count_reported_omits_usage_and_flags_tokens_unmeasured() -> Non
     o = PortObservation(s)
     o.update(output="o", usage_details={"input": None, "output": None}, metadata={"latency_ms": 12})
     o.flush()
-    assert s.ends == [{"output": "o", "usage": None,
-                       "metadata": {"latency_ms": 12, "tokens_unmeasured": True}}]
+    assert s.ends == [{"output": "o", "usage": None, "metadata": {"latency_ms": 12, "tokens_unmeasured": True}}]
     assert o.usage_counts() == (None, None)
 
 
@@ -77,22 +76,36 @@ def test_score_is_a_float_on_the_generation() -> None:
 
 async def test_observe_opens_one_generation_and_ends_it_once() -> None:
     t = RecordingTracer()
-    async with observe(t, name="cat", model="m", provider="p", input="hi", metadata={"a": 1},
-                       session_id="s", prompt_name="pk") as obs:
+    async with observe(
+        t, name="cat", model="m", provider="p", input="hi", metadata={"a": 1}, session_id="s", prompt_name="pk"
+    ) as obs:
         obs.update(output="ok", usage_details={"input": 1, "output": 2})
     (g,) = t.generations
-    assert g.opened == {"name": "cat", "model": "m", "provider": "p", "input": "hi", "metadata": {"a": 1},
-                        "session_id": "s", "prompt_name": "pk"}
-    assert g.ended == {"output": "ok", "usage": {"input": 1, "output": 2}, "level": "DEFAULT",
-                       "status_message": None, "metadata": None}
+    assert g.opened == {
+        "name": "cat",
+        "model": "m",
+        "provider": "p",
+        "input": "hi",
+        "metadata": {"a": 1},
+        "session_id": "s",
+        "prompt_name": "pk",
+    }
+    assert g.ended == {
+        "output": "ok",
+        "usage": {"input": 1, "output": 2},
+        "level": "DEFAULT",
+        "status_message": None,
+        "metadata": None,
+    }
 
 
 async def test_observe_ends_an_exception_at_error_with_the_latency_and_lets_it_propagate() -> None:
     t = RecordingTracer()
     now = iter([10.0, 10.25])
     with pytest.raises(RuntimeError, match="upstream 500"):
-        async with observe(t, name="c", model="m", provider="p", input="", metadata={"a": 1},
-                           clock=lambda: next(now)) as obs:
+        async with observe(
+            t, name="c", model="m", provider="p", input="", metadata={"a": 1}, clock=lambda: next(now)
+        ) as obs:
             obs.update(metadata={"outcome": "unavailable"})
             raise RuntimeError("upstream 500")
     (g,) = t.generations

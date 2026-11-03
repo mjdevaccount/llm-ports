@@ -34,7 +34,7 @@ class TestDraw:
 
     def test_the_key_is_frozen_on_fixed_inputs(self) -> None:
         """A recorded key must stay answerable: same algorithm forever (packs.sha over name/prompt/reply)."""
-        assert js.sample_key(ROLE, "p", "r") == "a046cc4f510f8bac"   # sha256("test.judged\np\nr")[:16]
+        assert js.sample_key(ROLE, "p", "r") == "a046cc4f510f8bac"  # sha256("test.judged\np\nr")[:16]
 
     def test_selected_is_about_one_in_mod_and_stable(self) -> None:
         keys = [js.sample_key(ROLE, f"prompt {i}", f"reply {i}") for i in range(4000)]
@@ -43,7 +43,7 @@ class TestDraw:
         assert [js.selected(k, 20) for k in keys[:50]] == [js.selected(k, 20) for k in keys[:50]]
 
     def test_selection_reads_the_keys_first_32_bits(self) -> None:
-        assert js.selected("00000014" + "f" * 8, 20) is True        # 0x14 = 20
+        assert js.selected("00000014" + "f" * 8, 20) is True  # 0x14 = 20
         assert js.selected("00000015" + "0" * 8, 20) is False
 
     def test_mod_zero_selects_nothing_and_mod_one_everything(self) -> None:
@@ -76,7 +76,7 @@ class TestRubric:
         r = _rubric(mode="slots")
         assert "FIGURES ARE CITED, NEVER WRITTEN" in r and "{id}" in r
         assert "NUMBERS FROM THE INPUT ONLY" not in r
-        assert "is the model's ANSWER" in r            # every mode: a grammar value is an answer
+        assert "is the model's ANSWER" in r  # every mode: a grammar value is an answer
         assert "'Spot', 'put wall', 'stand down'" in r and "cited or not" in r
         assert "NUMBERS FROM THE INPUT ONLY" in _rubric(mode="none")
 
@@ -105,9 +105,11 @@ class TestJudgeInput:
         assert js.judge_input("the prompt", js.Seen()) == "the prompt"
 
     def test_system_grammar_and_images_precede_the_prompt(self) -> None:
-        seen = js.Seen(system="EVENT TYPES: geo_deescalation, geo_threat",
-                       schema={"properties": {"event_type": {"enum": ["geo_deescalation"]}}},
-                       images=((b"png", "image/png"),))
+        seen = js.Seen(
+            system="EVENT TYPES: geo_deescalation, geo_threat",
+            schema={"properties": {"event_type": {"enum": ["geo_deescalation"]}}},
+            images=((b"png", "image/png"),),
+        )
         got = js.judge_input("Iran reopens talks", seen)
         assert got.index("SYSTEM INSTRUCTIONS") < got.index("OUTPUT GRAMMAR") < got.index("IMAGES: 1 image")
         assert got.index("IMAGES: 1 image") < got.index("## PROMPT")
@@ -123,6 +125,7 @@ class TestJudgeInput:
 
         class M(BaseModel):
             conviction: int
+
         assert js.schema_of(json_output({"type": "object", "title": "t"}, "t")) == {"type": "object", "title": "t"}
         got = js.schema_of(M)
         assert got is not None and "conviction" in got["properties"]
@@ -137,6 +140,7 @@ class TestJudgeInput:
 
         class M(BaseModel):
             a: int
+
         assert js.reply_text(M(a=1)) == '{"a":1}'
         assert js.reply_text({"a": 1}) == '{"a": 1}'
         assert js.reply_text("prose") == "prose" and js.reply_text(None) == ""

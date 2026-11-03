@@ -79,16 +79,14 @@ def match_verdicts(claims: list[str], raw_verdicts: Any) -> list[dict[str, Any] 
     by_idx: dict[int, dict[str, Any]] = {}
     for v in verdicts:
         ix = v.get("idx")
-        if (isinstance(ix, int) and not isinstance(ix, bool)
-                and 1 <= ix <= len(claims) and ix not in by_idx):
+        if isinstance(ix, int) and not isinstance(ix, bool) and 1 <= ix <= len(claims) and ix not in by_idx:
             by_idx[ix] = v
     taken = {id(v) for v in by_idx.values()}
     by_claim = {str(v.get("claim") or "").strip(): v for v in verdicts if id(v) not in taken}
     return [by_idx.get(i) or by_claim.get(c) for i, c in enumerate(claims, start=1)]
 
 
-def refutation(claim: str, reason: Any, cap: int = REASON_MAX_CHARS,
-               **extra: Any) -> dict[str, Any]:
+def refutation(claim: str, reason: Any, cap: int = REASON_MAX_CHARS, **extra: Any) -> dict[str, Any]:
     """One adversary refutation as stored. A reason AT `cap` was closed by the grammar, not
     finished by the model, and says so; the key is present only when true, so every existing
     reader of the entry sees the shape it always has."""
@@ -99,34 +97,91 @@ def refutation(claim: str, reason: Any, cap: int = REASON_MAX_CHARS,
     return out
 
 
-def refute_slots(*, claims: Sequence[RefuteClaim], evidence: str, noun: str, subject: str,
-                 evidence_label: str, reason_cap: int = REASON_MAX_CHARS) -> dict[str, Any]:
+def refute_slots(
+    *,
+    claims: Sequence[RefuteClaim],
+    evidence: str,
+    noun: str,
+    subject: str,
+    evidence_label: str,
+    reason_cap: int = REASON_MAX_CHARS,
+) -> dict[str, Any]:
     """The refute pack's slots. Pure. Each claim gets a 1-based `idx` the verdicts must return -- a
     string becomes `{idx, claim}`, a mapping keeps its extra keys; `claims` is that list as JSON
     and `evidence` is the caller's JSON text, verbatim."""
     slim = [{"idx": i, **({"claim": c} if isinstance(c, str) else dict(c))} for i, c in enumerate(claims, start=1)]
-    return {"noun": noun, "subject": subject, "evidence_label": evidence_label, "reason_cap": reason_cap,
-            "claims": json.dumps(slim, default=str), "evidence": evidence}
+    return {
+        "noun": noun,
+        "subject": subject,
+        "evidence_label": evidence_label,
+        "reason_cap": reason_cap,
+        "claims": json.dumps(slim, default=str),
+        "evidence": evidence,
+    }
 
 
-def refute_prompt(pack: Pack, *, claims: Sequence[RefuteClaim], evidence: str, noun: str, subject: str,
-                  evidence_label: str, reason_cap: int = REASON_MAX_CHARS) -> str:
+def refute_prompt(
+    pack: Pack,
+    *,
+    claims: Sequence[RefuteClaim],
+    evidence: str,
+    noun: str,
+    subject: str,
+    evidence_label: str,
+    reason_cap: int = REASON_MAX_CHARS,
+) -> str:
     """The adversary's prompt: `pack`'s primary template rendered with `refute_slots`. Pure."""
-    return pack.render(**refute_slots(claims=claims, evidence=evidence, noun=noun, subject=subject,
-                                      evidence_label=evidence_label, reason_cap=reason_cap))
+    return pack.render(
+        **refute_slots(
+            claims=claims,
+            evidence=evidence,
+            noun=noun,
+            subject=subject,
+            evidence_label=evidence_label,
+            reason_cap=reason_cap,
+        )
+    )
 
 
-async def refute(generate: GenerateFn, role: Role, *, pack: Pack, claims: Sequence[RefuteClaim], evidence: str,
-                 max_items: int, claim_cap: int, noun: str, subject: str, evidence_label: str, name: str,
-                 reason_cap: int = REASON_MAX_CHARS) -> Generated[Any]:
+async def refute(
+    generate: GenerateFn,
+    role: Role,
+    *,
+    pack: Pack,
+    claims: Sequence[RefuteClaim],
+    evidence: str,
+    max_items: int,
+    claim_cap: int,
+    noun: str,
+    subject: str,
+    evidence_label: str,
+    name: str,
+    reason_cap: int = REASON_MAX_CHARS,
+) -> Generated[Any]:
     """THE ADVERSARIAL PASS: `refute_prompt` under `verdicts_schema`, through the consumer's
     `generate`. `name` is the output-schema name (`json_output`) a test stub dispatches on. The
     outcome is the caller's to read; nothing here catches."""
-    prompt = refute_prompt(pack, claims=claims, evidence=evidence, noun=noun, subject=subject,
-                           evidence_label=evidence_label, reason_cap=reason_cap)
+    prompt = refute_prompt(
+        pack,
+        claims=claims,
+        evidence=evidence,
+        noun=noun,
+        subject=subject,
+        evidence_label=evidence_label,
+        reason_cap=reason_cap,
+    )
     schema = verdicts_schema(max_items=max_items, claim_cap=claim_cap, reason_cap=reason_cap)
     return await generate(role, prompt=prompt, output=json_output(schema, name))
 
 
-__all__ = ["REASON_MAX_CHARS", "GenerateFn", "RefuteClaim", "match_verdicts", "refutation", "refute",
-           "refute_prompt", "refute_slots", "verdicts_schema"]
+__all__ = [
+    "REASON_MAX_CHARS",
+    "GenerateFn",
+    "RefuteClaim",
+    "match_verdicts",
+    "refutation",
+    "refute",
+    "refute_prompt",
+    "refute_slots",
+    "verdicts_schema",
+]

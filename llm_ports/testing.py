@@ -41,16 +41,22 @@ class StubGenerator:
         self._reply: Reply = reply if callable(reply) else (lambda _req, _out: reply)
         self.requests: list[GenRequest] = []
 
-    async def generate[T](self, req: GenRequest, output: type[T], *,
-                          validate: Callable[[T], Sequence[Any]] | None = None,
-                          retry_message: Callable[[Sequence[Any]], str] | None = None) -> Generated[T]:
+    async def generate[T](
+        self,
+        req: GenRequest,
+        output: type[T],
+        *,
+        validate: Callable[[T], Sequence[Any]] | None = None,
+        retry_message: Callable[[Sequence[Any]], str] | None = None,
+    ) -> Generated[T]:
         del retry_message
         self.requests.append(req)
         try:
             got = self._reply(req, output)
         except Exception as exc:
-            return Generated(value=None, outcome="unavailable", model=req.model,
-                             reason=failure_reason(exc), retries=None)
+            return Generated(
+                value=None, outcome="unavailable", model=req.model, reason=failure_reason(exc), retries=None
+            )
         if isinstance(got, Generated):
             return got
         problems = tuple(validate(got)) if validate is not None else ()
@@ -65,11 +71,22 @@ class RecordedGeneration:
     ended: dict[str, Any] | None = None
     scores: list[tuple[str, float, str | None]] = field(default_factory=list)
 
-    def end(self, *, output: Any = None, usage: Mapping[str, int | None] | None = None,
-            level: str = "DEFAULT", status_message: str | None = None,
-            metadata: Mapping[str, Any] | None = None) -> None:
-        self.ended = {"output": output, "usage": usage, "level": level,
-                      "status_message": status_message, "metadata": metadata}
+    def end(
+        self,
+        *,
+        output: Any = None,
+        usage: Mapping[str, int | None] | None = None,
+        level: str = "DEFAULT",
+        status_message: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.ended = {
+            "output": output,
+            "usage": usage,
+            "level": level,
+            "status_message": status_message,
+            "metadata": metadata,
+        }
 
     def score(self, name: str, value: float, comment: str | None = None) -> None:
         self.scores.append((name, value, comment))
@@ -81,12 +98,28 @@ class RecordingTracer:
     def __init__(self) -> None:
         self.generations: list[RecordedGeneration] = []
 
-    def start_generation(self, *, name: str, model: str, provider: str, input: Any,
-                         metadata: Mapping[str, Any], session_id: str | None,
-                         prompt_name: str | None) -> RecordedGeneration:
-        g = RecordedGeneration(opened={"name": name, "model": model, "provider": provider, "input": input,
-                                       "metadata": dict(metadata), "session_id": session_id,
-                                       "prompt_name": prompt_name})
+    def start_generation(
+        self,
+        *,
+        name: str,
+        model: str,
+        provider: str,
+        input: Any,
+        metadata: Mapping[str, Any],
+        session_id: str | None,
+        prompt_name: str | None,
+    ) -> RecordedGeneration:
+        g = RecordedGeneration(
+            opened={
+                "name": name,
+                "model": model,
+                "provider": provider,
+                "input": input,
+                "metadata": dict(metadata),
+                "session_id": session_id,
+                "prompt_name": prompt_name,
+            }
+        )
         self.generations.append(g)
         return g
 
@@ -115,10 +148,15 @@ class StubEmbedder:
     async def embed(self, texts: Sequence[str], *, input_type: EmbedInput = "document") -> Embedded:
         self.calls.append((tuple(texts), input_type))
         if self._fail:
-            return Embedded(vectors=(), outcome=self._fail, stamp=self._stamp,  # type: ignore[arg-type]
-                            reason=f"stub {self._fail}")
-        return Embedded(vectors=tuple(self.vector(t) for t in texts), outcome="ok", stamp=self._stamp,
-                        input_tokens=None)
+            return Embedded(
+                vectors=(),
+                outcome=self._fail,
+                stamp=self._stamp,  # type: ignore[arg-type]
+                reason=f"stub {self._fail}",
+            )
+        return Embedded(
+            vectors=tuple(self.vector(t) for t in texts), outcome="ok", stamp=self._stamp, input_tokens=None
+        )
 
 
 class StubReranker:
@@ -134,11 +172,18 @@ class StubReranker:
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
         self.calls.append((query, tuple(documents)))
         if self._fail:
-            return Reranked(scores=(), outcome=self._fail, model=self.model,  # type: ignore[arg-type]
-                            reason=f"stub {self._fail}")
+            return Reranked(
+                scores=(),
+                outcome=self._fail,
+                model=self.model,  # type: ignore[arg-type]
+                reason=f"stub {self._fail}",
+            )
         words = set(query.lower().split())
-        return Reranked(scores=tuple(float(sum(w in words for w in d.lower().split())) for d in documents),
-                        outcome="ok", model=self.model)
+        return Reranked(
+            scores=tuple(float(sum(w in words for w in d.lower().split())) for d in documents),
+            outcome="ok",
+            model=self.model,
+        )
 
 
 class StubCiter:
@@ -173,12 +218,24 @@ class StubDetector:
     def predict(self, *, context: list[str], answer: str, output_format: str) -> list[dict[str, Any]]:
         self.calls.append({"context": context, "answer": answer, "output_format": output_format})
         joined = " ".join(context)
-        return [{"start": m.start(), "end": m.end(), "text": m.group(0), "confidence": 0.9}
-                for m in _DIGITS.finditer(answer) if m.group(0) not in joined]
+        return [
+            {"start": m.start(), "end": m.end(), "text": m.group(0), "confidence": 0.9}
+            for m in _DIGITS.finditer(answer)
+            if m.group(0) not in joined
+        ]
 
 
 _DIGITS = re.compile(r"\d+(?:\.\d+)?")
 
 
-__all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubCiter", "StubDetector", "StubEmbedder",
-           "StubGenerator", "StubPromptSource", "StubReranker"]
+__all__ = [
+    "RecordedGeneration",
+    "RecordingTracer",
+    "Reply",
+    "StubCiter",
+    "StubDetector",
+    "StubEmbedder",
+    "StubGenerator",
+    "StubPromptSource",
+    "StubReranker",
+]

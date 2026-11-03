@@ -46,12 +46,12 @@ from pydantic import BaseModel
 from llm_ports.numbers import digits, loose
 from llm_ports.roles import Role
 
-ECHO_MAX_SHARE = 0.5          # bar for `echo`: half the sentences copied is a reply, not an analysis
-ECHO_MIN_CHARS = 40           # a sentence shorter than this is a label ("unclear", a key), not prose
-CRASHED = -1.0                # the value of a grader that raised; every honest value is >= 0
+ECHO_MAX_SHARE = 0.5  # bar for `echo`: half the sentences copied is a reply, not an analysis
+ECHO_MIN_CHARS = 40  # a sentence shorter than this is a label ("unclear", a key), not prose
+CRASHED = -1.0  # the value of a grader that raised; every honest value is >= 0
 _SENTENCE = re.compile(r"[.!?\n]+")
 _WS = re.compile(r"\s+")
-_INDEX = re.compile(r"\[\d+\]")   # `tickers[3].entry_low` -> `tickers[].entry_low`: the field, not the row
+_INDEX = re.compile(r"\[\d+\]")  # `tickers[3].entry_low` -> `tickers[].entry_low`: the field, not the row
 
 
 @dataclass(frozen=True)
@@ -59,7 +59,7 @@ class CallScore:
     name: str
     value: float
     passed: bool
-    reason: str = ""          # empty on pass; names the violated property on failure
+    reason: str = ""  # empty on pass; names the violated property on failure
 
 
 CallGrader = Callable[[str, Any, Role], CallScore]
@@ -75,7 +75,7 @@ def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
             yield from leaves(v, f"{path}.{k}" if path else str(k))
     elif isinstance(value, (list, tuple)):
         if not value:
-            yield path, value          # an empty list IS a leaf: the field answered nothing
+            yield path, value  # an empty list IS a leaf: the field answered nothing
         for i, v in enumerate(value):
             yield from leaves(v, f"{path}[{i}]")
     else:
@@ -148,8 +148,9 @@ def numbers_from_inputs(prompt: str, value: Any, _role: Role) -> CallScore:
     did not render; the prompt's own text licenses a spelled word and '%' licenses 'percent'."""
     have = digits(prompt)
     hits = sorted({n for s in prose(value) for n in loose(s, have, prompt)})
-    return CallScore("numbers_from_inputs", float(len(hits)), not hits,
-                     f"numbers no input rendered: {hits[:3]}" if hits else "")
+    return CallScore(
+        "numbers_from_inputs", float(len(hits)), not hits, f"numbers no input rendered: {hits[:3]}" if hits else ""
+    )
 
 
 def _sentences(text: str) -> list[str]:
@@ -163,9 +164,14 @@ def echo(prompt: str, value: Any, _role: Role) -> CallScore:
         return CallScore("echo", 0.0, True)
     copied = [s for s in sents if s in hay]
     share = round(len(copied) / len(sents), 4)
-    return CallScore("echo", share, share < ECHO_MAX_SHARE,
-                     f"{len(copied)}/{len(sents)} sentences copied from the prompt: {copied[0][:60]!r}"
-                     if share >= ECHO_MAX_SHARE else "")
+    return CallScore(
+        "echo",
+        share,
+        share < ECHO_MAX_SHARE,
+        f"{len(copied)}/{len(sents)} sentences copied from the prompt: {copied[0][:60]!r}"
+        if share >= ECHO_MAX_SHARE
+        else "",
+    )
 
 
 #: By name, because a Role names its graders as strings (data, comparable, printable).
@@ -186,8 +192,7 @@ GRADERS: dict[str, CallGrader] = {
 TEXT_ONLY_GRADERS: frozenset[str] = frozenset({"numbers_from_inputs"})
 
 
-def graders_for_inputs(graders: tuple[str, ...], *, has_images: bool,
-                       has_web: bool = False) -> tuple[str, ...]:
+def graders_for_inputs(graders: tuple[str, ...], *, has_images: bool, has_web: bool = False) -> tuple[str, ...]:
     """Pure. The graders that can see this call's inputs: all of them for text, minus
     TEXT_ONLY_GRADERS when an image rides beside the prompt or the tier fetches the web. Order kept."""
     if has_images or has_web:
@@ -195,8 +200,9 @@ def graders_for_inputs(graders: tuple[str, ...], *, has_images: bool,
     return graders
 
 
-def score_one(name: str, prompt: str, value: Any, role: Role,
-              table: Mapping[str, CallGrader] | None = None) -> CallScore:
+def score_one(
+    name: str, prompt: str, value: Any, role: Role, table: Mapping[str, CallGrader] | None = None
+) -> CallScore:
     """One grader by name (from `table`, default `GRADERS`); an unknown name or a raise is a
     FAILED score, never an exception."""
     fn = (GRADERS if table is None else table).get(name)
@@ -204,31 +210,53 @@ def score_one(name: str, prompt: str, value: Any, role: Role,
         return CallScore(name, CRASHED, False, f"no grader named {name!r}")
     try:
         return fn(prompt, value, role)
-    except Exception as exc:     # a crashed detector must not exit 0
+    except Exception as exc:  # a crashed detector must not exit 0
         return CallScore(name, CRASHED, False, f"grader raised {type(exc).__name__}: {exc}"[:200])
 
 
-def score_all(role: Role, prompt: str, value: Any,
-              table: Mapping[str, CallGrader] | None = None) -> tuple[CallScore, ...]:
+def score_all(
+    role: Role, prompt: str, value: Any, table: Mapping[str, CallGrader] | None = None
+) -> tuple[CallScore, ...]:
     """Every grader the role names, in the role's order. Never raises."""
     return tuple(score_one(n, prompt, value, role, table) for n in role.graders)
 
 
-def board_graders(role: Role, table: Mapping[str, CallGrader] | None = None,
-                  ) -> dict[str, Callable[[dict[str, Any]], tuple[bool, str]]]:
+def board_graders(
+    role: Role,
+    table: Mapping[str, CallGrader] | None = None,
+) -> dict[str, Callable[[dict[str, Any]], tuple[bool, str]]]:
     """The same graders in the `Evaluator` row shape (`ports.Grader`): a golden row carries
     `prompt` and `value`; a row whose model never answered (`value is None`) fails every grader
     with its `reason`, so the board names the outage rather than grading an absence."""
+
     def bind(name: str) -> Callable[[dict[str, Any]], tuple[bool, str]]:
         def grader(row: dict[str, Any]) -> tuple[bool, str]:
             if row.get("value") is None:
                 return False, f"no reply: {row.get('reason') or row.get('outcome')}"
             s = score_one(name, str(row.get("prompt") or ""), row["value"], role, table)
             return s.passed, s.reason
+
         return grader
+
     return {n: bind(n) for n in role.graders}
 
 
-__all__ = ["CRASHED", "ECHO_MAX_SHARE", "ECHO_MIN_CHARS", "GRADERS", "TEXT_ONLY_GRADERS", "CallGrader",
-           "CallScore", "board_graders", "echo", "graders_for_inputs", "leaves", "nullable_paths",
-           "numbers_from_inputs", "prose", "schema_complete", "score_all", "score_one"]
+__all__ = [
+    "CRASHED",
+    "ECHO_MAX_SHARE",
+    "ECHO_MIN_CHARS",
+    "GRADERS",
+    "TEXT_ONLY_GRADERS",
+    "CallGrader",
+    "CallScore",
+    "board_graders",
+    "echo",
+    "graders_for_inputs",
+    "leaves",
+    "nullable_paths",
+    "numbers_from_inputs",
+    "prose",
+    "schema_complete",
+    "score_all",
+    "score_one",
+]

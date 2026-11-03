@@ -57,14 +57,18 @@ def test_stamp_names_pack_version_and_sha() -> None:
     assert one.stamp_str() == "demo.one@1.2.3+1b952fc947eb43f2"
 
 
-@pytest.mark.parametrize(("manifest", "msg"), [
-    (MANIFEST + "invented: 1\n", "Extra inputs"),
-    (MANIFEST.replace("demo.note", "Demo"), "feature.action"),
-    (MANIFEST.replace("1.0.0", "1.0.x"), "MAJOR.MINOR.PATCH"),
-    (MANIFEST.replace("prompt: prompt.j2", "other: prompt.j2"), "primary template"),
-    (MANIFEST.replace("prompt.j2", "../x.j2"), "INSIDE the pack"),
-    (MANIFEST + "graders: [pkg.mod:G]\n", "golden"),
-], ids=["extra", "id", "semver", "primary", "path", "golden"])
+@pytest.mark.parametrize(
+    ("manifest", "msg"),
+    [
+        (MANIFEST + "invented: 1\n", "Extra inputs"),
+        (MANIFEST.replace("demo.note", "Demo"), "feature.action"),
+        (MANIFEST.replace("1.0.0", "1.0.x"), "MAJOR.MINOR.PATCH"),
+        (MANIFEST.replace("prompt: prompt.j2", "other: prompt.j2"), "primary template"),
+        (MANIFEST.replace("prompt.j2", "../x.j2"), "INSIDE the pack"),
+        (MANIFEST + "graders: [pkg.mod:G]\n", "golden"),
+    ],
+    ids=["extra", "id", "semver", "primary", "path", "golden"],
+)
 def test_the_manifest_is_strict(manifest: str, msg: str) -> None:
     with pytest.raises(ValidationError, match=msg):
         PackManifest.model_validate(yaml.safe_load(manifest))
@@ -75,13 +79,17 @@ def test_an_evaluable_pack_names_graders_and_golden() -> None:
     assert m.evaluable and m.feature == "demo"
 
 
-@pytest.mark.parametrize(("manifest", "files", "msg"), [
-    (MANIFEST, {}, "not in the pack"),
-    (MANIFEST, {"prompt.j2": "{% if %}"}, "line 1"),
-    (MANIFEST.replace("demo.note", "demo.other"), {"prompt.j2": "x"}, "must equal the directory"),
-    ("- a list\n", {}, "not a mapping"),
-    ("id: [unclosed\n", {}, "unreadable"),
-], ids=["missing-file", "syntax", "id-mismatch", "not-mapping", "bad-yaml"])
+@pytest.mark.parametrize(
+    ("manifest", "files", "msg"),
+    [
+        (MANIFEST, {}, "not in the pack"),
+        (MANIFEST, {"prompt.j2": "{% if %}"}, "line 1"),
+        (MANIFEST.replace("demo.note", "demo.other"), {"prompt.j2": "x"}, "must equal the directory"),
+        ("- a list\n", {}, "not a mapping"),
+        ("id: [unclosed\n", {}, "unreadable"),
+    ],
+    ids=["missing-file", "syntax", "id-mismatch", "not-mapping", "bad-yaml"],
+)
 def test_an_invalid_pack_fails_closed(tmp_path: Path, manifest: str, files: dict[str, str], msg: str) -> None:
     _pack(tmp_path, "demo.note", manifest, files)
     with pytest.raises(packs.PromptPackInvalid, match=msg):

@@ -45,8 +45,7 @@ class _Tracer:
     def start_as_current_span(self, name: str, attributes: dict[str, Any] | None = None) -> _Span:
         return self._make(name, attributes, None)
 
-    def start_span(self, name: str, start_time: int | None = None,
-                   attributes: dict[str, Any] | None = None) -> _Span:
+    def start_span(self, name: str, start_time: int | None = None, attributes: dict[str, Any] | None = None) -> _Span:
         return self._make(name, attributes, start_time)
 
     def _make(self, name: str, attributes: dict[str, Any] | None, start: int | None) -> _Span:
@@ -65,24 +64,39 @@ def tracer() -> _Tracer:
 
 def test_the_attribute_names_are_the_conventions() -> None:
     assert (ga.SYSTEM, ga.PROVIDER_NAME, ga.OPERATION, ga.REQUEST_MODEL, ga.INPUT_TOKENS, ga.OUTPUT_TOKENS) == (
-        "gen_ai.system", "gen_ai.provider.name", "gen_ai.operation.name", "gen_ai.request.model",
-        "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens")
+        "gen_ai.system",
+        "gen_ai.provider.name",
+        "gen_ai.operation.name",
+        "gen_ai.request.model",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+    )
 
 
 def test_a_live_span_is_named_operation_model_and_carries_the_consumer_dimensions(tracer) -> None:
-    with ga.gen_ai_span(tracer, operation="chat", model="m", provider="p",
-                        attributes={"app.feature": "f", "app.none": None}) as rec:
+    with ga.gen_ai_span(
+        tracer, operation="chat", model="m", provider="p", attributes={"app.feature": "f", "app.none": None}
+    ) as rec:
         rec.set_usage(11, 7)
     (sp,) = tracer.spans
     assert tracer.names == ["chat m"]
-    assert sp.attrs == {ga.SYSTEM: "p", ga.PROVIDER_NAME: "p", ga.OPERATION: "chat", ga.REQUEST_MODEL: "m",
-                        "app.feature": "f", ga.INPUT_TOKENS: 11, ga.OUTPUT_TOKENS: 7}
+    assert sp.attrs == {
+        ga.SYSTEM: "p",
+        ga.PROVIDER_NAME: "p",
+        ga.OPERATION: "chat",
+        ga.REQUEST_MODEL: "m",
+        "app.feature": "f",
+        ga.INPUT_TOKENS: 11,
+        ga.OUTPUT_TOKENS: 7,
+    }
 
 
 def test_a_caller_exception_propagates_out_of_the_span(tracer) -> None:
     # MUST FIRE: a try/except around the `yield` swallows this behind "generator didn't stop after throw()".
-    with pytest.raises(RuntimeError, match="upstream 500"), ga.gen_ai_span(
-            tracer, operation="chat", model="m", provider="p"):
+    with (
+        pytest.raises(RuntimeError, match="upstream 500"),
+        ga.gen_ai_span(tracer, operation="chat", model="m", provider="p"),
+    ):
         raise RuntimeError("upstream 500")
 
 

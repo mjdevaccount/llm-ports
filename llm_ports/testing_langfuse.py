@@ -41,13 +41,17 @@ def observed(span: Any) -> dict[str, Any]:
     appear -- an absent field is absent, never None."""
     a = dict(span.attributes)
     out: dict[str, Any] = {"name": span.name}
-    for key, name in (("model.name", "model"), ("input", "input"), ("output", "output"),
-                      ("level", "level"), ("status_message", "status_message"),
-                      ("prompt.name", "prompt")):
+    for key, name in (
+        ("model.name", "model"),
+        ("input", "input"),
+        ("output", "output"),
+        ("level", "level"),
+        ("status_message", "status_message"),
+        ("prompt.name", "prompt"),
+    ):
         if OBS + key in a:
             out[name] = a[OBS + key]
-    meta = {k[len(OBS + "metadata."):]: json.loads(v) for k, v in a.items()
-            if k.startswith(OBS + "metadata.")}
+    meta = {k[len(OBS + "metadata.") :]: json.loads(v) for k, v in a.items() if k.startswith(OBS + "metadata.")}
     if meta:
         out["metadata"] = meta
     if OBS + "usage_details" in a:
@@ -68,10 +72,15 @@ class LangfuseRig:
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
         self.exporter = InMemorySpanExporter()
-        self.client = Langfuse(public_key=f"pk-test-{uuid.uuid4().hex}", secret_key="sk-test",
-                               base_url="http://127.0.0.1:9", tracer_provider=TracerProvider(),
-                               should_export_span=is_langfuse_span, span_exporter=self.exporter,
-                               httpx_client=_http())
+        self.client = Langfuse(
+            public_key=f"pk-test-{uuid.uuid4().hex}",
+            secret_key="sk-test",
+            base_url="http://127.0.0.1:9",
+            tracer_provider=TracerProvider(),
+            should_export_span=is_langfuse_span,
+            span_exporter=self.exporter,
+            httpx_client=_http(),
+        )
         self.scores: list[dict[str, Any]] = []
         self.client.create_score = lambda **kw: self.scores.append(kw)
 
@@ -107,8 +116,7 @@ class FakeLangfusePrompts:
         self.created: list[dict[str, Any]] = []
         self.fetches: list[tuple[str, str, str, int]] = []
 
-    def get_prompt(self, name: str, *, label: str, type: str, fallback: Any,
-                   cache_ttl_seconds: int) -> SimpleNamespace:
+    def get_prompt(self, name: str, *, label: str, type: str, fallback: Any, cache_ttl_seconds: int) -> SimpleNamespace:
         self.fetches.append((name, label, type, cache_ttl_seconds))
         if self.stored is None:
             return SimpleNamespace(is_fallback=True, prompt=fallback, config={}, version=0)
@@ -116,8 +124,12 @@ class FakeLangfusePrompts:
 
     def create_prompt(self, **kw: Any) -> None:
         self.created.append(kw)
-        self.stored = SimpleNamespace(is_fallback=False, prompt=kw["prompt"], config=kw["config"],
-                                      version=(self.stored.version if self.stored else 0) + 1)
+        self.stored = SimpleNamespace(
+            is_fallback=False,
+            prompt=kw["prompt"],
+            config=kw["config"],
+            version=(self.stored.version if self.stored else 0) + 1,
+        )
 
 
 __all__ = ["OBS", "FakeLangfusePrompts", "LangfuseRig", "RefusingLangfuse", "observed"]

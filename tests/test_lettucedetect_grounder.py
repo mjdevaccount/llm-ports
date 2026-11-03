@@ -20,8 +20,11 @@ def test_supported_when_no_span_is_flagged() -> None:
     fake = StubDetector()
     v = lg.LettuceDetectGrounder(fake).verdict(Claim("SPY at 580.5", ("a",)), [SPAN])
     assert v.supported is True and v.score == 1.0 and v.checker == "lettucedetect"
-    assert fake.calls[0] == {"context": ["Close: SPY closed at 580.5"], "answer": "SPY at 580.5",
-                             "output_format": "spans"}
+    assert fake.calls[0] == {
+        "context": ["Close: SPY closed at 580.5"],
+        "answer": "SPY at 580.5",
+        "output_format": "spans",
+    }
 
 
 def test_title_is_part_of_the_premise_like_the_number_law() -> None:
@@ -39,6 +42,7 @@ def test_title_is_part_of_the_premise_like_the_number_law() -> None:
 def test_a_flagged_span_without_confidence_has_no_score_not_a_perfect_one() -> None:
     """Unknown is never zero: worst=0.0 would score 1.0, the 'fully supported' end, on an
     UNSUPPORTED verdict."""
+
     class NoConfidence:
         def predict(self, *, context: list[str], answer: str, output_format: str) -> list[dict[str, Any]]:
             return [{"text": "581", "start": 7, "end": 10}]
@@ -62,10 +66,16 @@ def test_context_over_window_is_named_in_the_reason() -> None:
     """MUST-FIRE: a premise past the model's window is still judged, and the reason SAYS so."""
     at_cap = Chunk(id="c", text="x" * lg.MAX_CONTEXT_CHARS)
     over = Chunk(id="b", text="x" * (lg.MAX_CONTEXT_CHARS + 1))
-    assert not lg.LettuceDetectGrounder(StubDetector()).verdict(Claim("fine", ("c",)), [at_cap]).reason.startswith(
-        lg.WINDOW_REASON)
+    assert (
+        not lg.LettuceDetectGrounder(StubDetector())
+        .verdict(Claim("fine", ("c",)), [at_cap])
+        .reason.startswith(lg.WINDOW_REASON)
+    )
     v = lg.LettuceDetectGrounder(StubDetector()).verdict(Claim("fine", ("b",)), [over])
-    assert v.supported is True and v.reason == f"context_over_window: {lg.MAX_CONTEXT_CHARS + 1} chars; no unsupported span"
+    assert (
+        v.supported is True
+        and v.reason == f"context_over_window: {lg.MAX_CONTEXT_CHARS + 1} chars; no unsupported span"
+    )
 
 
 def test_the_window_counts_every_span_with_its_title() -> None:

@@ -32,12 +32,12 @@ def test_reciprocal_rank() -> None:
 
 
 def test_agree_at_k_is_the_jaccard_of_the_top_k_sets() -> None:
-    assert agree_at_k(["a", "b", "c"], ["c", "b", "a"], 3) == 1.0          # order inside top-k is irrelevant
-    assert agree_at_k(["a", "b", "x"], ["a", "b", "y"], 3) == 0.5          # 2 shared / 4 distinct
-    assert agree_at_k(["a", "b", "x"], ["a", "b", "y"], 2) == 1.0          # only the top k count
+    assert agree_at_k(["a", "b", "c"], ["c", "b", "a"], 3) == 1.0  # order inside top-k is irrelevant
+    assert agree_at_k(["a", "b", "x"], ["a", "b", "y"], 3) == 0.5  # 2 shared / 4 distinct
+    assert agree_at_k(["a", "b", "x"], ["a", "b", "y"], 2) == 1.0  # only the top k count
     assert agree_at_k(["a"], ["b"], 1) == 0.0
     assert agree_at_k([], [], 5) == 0.0, "two empty rankings agree on nothing"
-    assert agree_at_k(["a", "a", "b"], ["a", "b"], 3) == 1.0               # sets, not lists
+    assert agree_at_k(["a", "a", "b"], ["a", "b"], 3) == 1.0  # sets, not lists
 
 
 def test_mean_and_its_refusal_of_no_queries() -> None:

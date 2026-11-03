@@ -23,6 +23,7 @@ class _Note(BaseModel):
 
 class _Level(BaseModel):
     """A deep_extract.mentions row: the prompt orders null unless the advisor STATED the figure."""
+
     ticker: str
     entry_low: float | None = Field(default=None)
     note: str | None = None
@@ -38,8 +39,11 @@ class _Call(BaseModel):
 class TestLeaves:
     def test_dict_pydantic_and_list_flatten_to_paths(self) -> None:
         assert list(cg.leaves({"a": 1, "b": {"c": "x"}})) == [("a", 1), ("b.c", "x")]
-        assert list(cg.leaves(_Note(summary="s", keys=["k1", "k2"]))) == [("summary", "s"), ("keys[0]", "k1"),
-                                                                           ("keys[1]", "k2")]
+        assert list(cg.leaves(_Note(summary="s", keys=["k1", "k2"]))) == [
+            ("summary", "s"),
+            ("keys[0]", "k1"),
+            ("keys[1]", "k2"),
+        ]
         assert list(cg.leaves(["p", "q"])) == [("[0]", "p"), ("[1]", "q")]
 
     def test_an_empty_list_is_itself_a_leaf(self) -> None:
@@ -61,11 +65,18 @@ class TestEachGrader:
         # and ORDERED null when the advisor never said the number -- an honest reply failed by law.
         ok = cg.schema_complete(PROMPT, _Level(ticker="SPY"), ROLE)
         assert (ok.passed, ok.value, ok.reason) == (True, 1.0, ""), ok.reason
-        nested = cg.schema_complete(PROMPT, _Call(thesis="t", tickers=[_Level(ticker="SPY", entry_low=1.0),
-                                                                        _Level(ticker="QQQ")]), ROLE)
+        nested = cg.schema_complete(
+            PROMPT, _Call(thesis="t", tickers=[_Level(ticker="SPY", entry_low=1.0), _Level(ticker="QQQ")]), ROLE
+        )
         assert nested.passed and nested.value == 1.0, nested.reason
-        assert cg.nullable_paths(_Call) == {"stop", "tickers[].entry_low", "tickers[].note", "hedge",
-                                            "hedge.entry_low", "hedge.note"}
+        assert cg.nullable_paths(_Call) == {
+            "stop",
+            "tickers[].entry_low",
+            "tickers[].note",
+            "hedge",
+            "hedge.entry_low",
+            "hedge.note",
+        }
 
     def test_schema_complete_still_fails_a_null_on_a_required_field(self) -> None:
         # The annotation is the law: a REQUIRED field left None (model_construct skips validation,

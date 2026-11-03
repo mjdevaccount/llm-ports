@@ -34,8 +34,7 @@ class GrounderUnavailable(Exception):
 def payload(claim: Claim, spans: Sequence[Chunk]) -> dict[str, Any]:
     """The wire shape, shared with the sidecar's request model: title and text ride separately
     so the sidecar's Grounder reads them exactly as an in-process one would."""
-    return {"claim": claim.text,
-            "spans": [{"id": s.id, "title": s.title, "text": s.text} for s in spans]}
+    return {"claim": claim.text, "spans": [{"id": s.id, "title": s.title, "text": s.text} for s in spans]}
 
 
 class HttpGrounder:
@@ -43,10 +42,9 @@ class HttpGrounder:
     no-spans law included (its own Grounder enforces it): one judge, one `checker` name on every
     verdict. A dead sidecar RAISES for a no-spans claim rather than answering for it."""
 
-    checker = "http"      # replaced by the sidecar's own name on the first verdict
+    checker = "http"  # replaced by the sidecar's own name on the first verdict
 
-    def __init__(self, url: str, *, timeout_s: float = 20.0,
-                 client: httpx.Client | None = None) -> None:
+    def __init__(self, url: str, *, timeout_s: float = 20.0, client: httpx.Client | None = None) -> None:
         self.url = url.rstrip("/")
         self._client = client or httpx.Client(timeout=timeout_s)
 
@@ -63,9 +61,12 @@ class HttpGrounder:
             if not isinstance(supported, bool):
                 raise TypeError("supported is not a bool")
             score = body.get("score")
-            v = GroundingVerdict(supported, str(body.get("reason") or ""),
-                                 score=None if score is None else float(score),
-                                 checker=str(body.get("checker") or self.checker))
+            v = GroundingVerdict(
+                supported,
+                str(body.get("reason") or ""),
+                score=None if score is None else float(score),
+                checker=str(body.get("checker") or self.checker),
+            )
         except (ValueError, KeyError, TypeError) as exc:
             raise GrounderUnavailable(f"grounder bad payload: {exc}") from exc
         self.checker = v.checker

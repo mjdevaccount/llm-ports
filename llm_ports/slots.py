@@ -126,5 +126,17 @@ def to_prose(text: str) -> str:
     return " ".join(_NOT_PROSE.sub(" ", out).split())
 
 
-__all__ = ["ID", "PROSE_CHARS", "PROSE_PATTERN", "SLOT", "belt", "cited", "fill", "loose", "problems",
-           "prose_pattern", "slot_pattern", "to_prose"]
+__all__ = [
+    "ID",
+    "PROSE_CHARS",
+    "PROSE_PATTERN",
+    "SLOT",
+    "belt",
+    "cited",
+    "fill",
+    "loose",
+    "problems",
+    "prose_pattern",
+    "slot_pattern",
+    "to_prose",
+]

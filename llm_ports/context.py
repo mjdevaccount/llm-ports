@@ -4,6 +4,7 @@ plane reads (the tracer, the category switchboard, a cost ledger, the work row).
 A category tag is not a tracing concern: the cost ledger, the switchboard and the tracer all read
 it, and none of them owns it.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -35,6 +36,7 @@ def llm_feature(name: str) -> Iterator[None]:
         except ValueError:
             _feature_var.set(None)
 
+
 def current_feature() -> str | None:
     """The active category, if any — for callers that also persist it (e.g. a transport that writes a work row)."""
     return _feature_var.get()
@@ -65,4 +67,3 @@ def llm_source(name: str) -> Iterator[None]:
 def current_source() -> str:
     """`"live"` unless an `llm_source` block says otherwise; never None, so a label is always set."""
     return _source_var.get() or LIVE_SOURCE
-

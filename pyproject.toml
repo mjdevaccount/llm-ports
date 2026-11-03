@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic>=2.10",
+    "pydantic>=2.12",
     "pydantic-ai-slim[openai]>=2.57,<3",
     "jinja2>=3.1",
     "pyyaml>=6.0",
@@ -26,7 +26,7 @@ langfuse = ["langfuse>=5.0.2,<6"]
 # `otel_gen_ai` (GenAI spans; the attribute names are the semantic-conventions package's constants).
 otel = ["opentelemetry-api>=1.30", "opentelemetry-semantic-conventions>=0.58b0"]
 # `sql_guard` (the read-only AST guard for agent-written SQL).
-sql = ["sqlglot>=30.13"]
+sql = ["sqlglot>=30.22"]
 
 [build-system]
 requires = ["hatchling"]
@@ -39,9 +39,21 @@ packages = ["llm_ports"]
 # pydantic-evals: the judge adapter's tests run in CI (the `evals` extra's one package). lettucedetect
 # is NOT here: its tests run over `testing.StubDetector`, the real model is the consumer's lane.
 # langfuse / otel / sql: those adapters' tests run in CI (each extra's packages, all pure Python).
-dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.15", "pydantic-evals>=2.57,<3",
-       "langfuse>=5.0.2,<6", "opentelemetry-sdk>=1.30", "opentelemetry-semantic-conventions>=0.58b0",
-       "sqlglot>=30.13"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.15",
+    "pydantic-evals>=2.57,<3",
+    "langfuse>=5.0.2,<6",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-semantic-conventions>=0.58b0",
+    "sqlglot>=30.22",
+    "pytest-cov>=7.1.0",
+]
+lint = [
+    "twine>=7.0",
+    "zizmor==1.31.1",
+]
 
 [tool.ruff]
 line-length = 120
@@ -54,3 +66,12 @@ ignore = ["E501", "RUF002", "RUF022"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["llm_ports"]
+branch = true
+
+[tool.coverage.report]
+# The floor is the measured branch-coverage total; raise it when coverage rises, never lower it.
+fail_under = 96.8
+precision = 1

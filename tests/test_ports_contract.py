@@ -22,8 +22,9 @@ def test_the_recording_tracer_satisfies_the_port() -> None:
 
 
 def test_cited_answer_names_ids_it_was_never_given() -> None:
-    a = ports.CitedAnswer(question="q", claims=(ports.Claim("x", ("c1", "zz")),),
-                          chunks={"c1": ports.Chunk(id="c1", text="t")})
+    a = ports.CitedAnswer(
+        question="q", claims=(ports.Claim("x", ("c1", "zz")),), chunks={"c1": ports.Chunk(id="c1", text="t")}
+    )
     assert a.unknown_ids() == ("zz",)
 
 
@@ -37,6 +38,7 @@ async def test_a_stub_turns_a_raise_into_an_outcome_never_an_exception() -> None
 
 
 async def test_a_stub_keeps_validator_problems_with_the_value() -> None:
-    res = await StubGenerator("v").generate(ports.GenRequest(model="m", prompt="p"), str,
-                                            validate=lambda v: ["bad"] if v == "v" else [])
+    res = await StubGenerator("v").generate(
+        ports.GenRequest(model="m", prompt="p"), str, validate=lambda v: ["bad"] if v == "v" else []
+    )
     assert res.outcome == "ok" and res.value == "v" and res.problems == ("bad",)

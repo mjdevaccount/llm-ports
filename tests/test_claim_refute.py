@@ -24,8 +24,10 @@ class TestThePass:
 
     def test_each_claim_is_numbered_from_one_and_a_mapping_keeps_its_keys(self) -> None:
         s = cr.refute_slots(claims=["a holds", {"claim": "b holds", "work_ids": [1, 2]}], evidence='{"e": 1}', **NOUNS)
-        assert json.loads(s["claims"]) == [{"idx": 1, "claim": "a holds"},
-                                           {"idx": 2, "claim": "b holds", "work_ids": [1, 2]}]
+        assert json.loads(s["claims"]) == [
+            {"idx": 1, "claim": "a holds"},
+            {"idx": 2, "claim": "b holds", "work_ids": [1, 2]},
+        ]
         assert s["evidence"] == '{"e": 1}' and s["reason_cap"] == cr.REASON_MAX_CHARS
         assert (s["noun"], s["subject"], s["evidence_label"]) == ("claims", "one decision", "EVIDENCE")
 
@@ -44,8 +46,18 @@ class TestThePass:
             return {"verdicts": [{"idx": 1, "claim": "a", "verdict": "refute", "reason": "no"}]}
 
         gen = partial(call.generate, generator=StubGenerator(reply))
-        res = await cr.refute(gen, REFUTE, pack=PACK, claims=["a holds"], evidence="[]", max_items=3, claim_cap=40,
-                              name="refute_verdicts", reason_cap=90, **NOUNS)
+        res = await cr.refute(
+            gen,
+            REFUTE,
+            pack=PACK,
+            claims=["a holds"],
+            evidence="[]",
+            max_items=3,
+            claim_cap=40,
+            name="refute_verdicts",
+            reason_cap=90,
+            **NOUNS,
+        )
         assert res.outcome == "ok" and cr.match_verdicts(["a holds"], res.value["verdicts"])[0]["verdict"] == "refute"
         assert '"idx": 1' in seen[0].prompt
         schema = outs[0].json_schema  # type: ignore[attr-defined]
@@ -64,10 +76,13 @@ def test_the_grammar_caps_items_claims_and_reasons() -> None:
 
 def test_attribution_is_by_idx_and_text_is_the_fallback() -> None:
     claims = ["alpha holds", "beta holds", "gamma holds"]
-    raw = [{"idx": 2, "claim": "a paraphrase", "verdict": "refute"},
-           {"idx": 2, "claim": "dup idx", "verdict": "uphold"},         # duplicate idx: ignored
-           {"idx": 9, "claim": "gamma holds", "verdict": "uphold"},     # out of range -> text fallback
-           {"idx": True, "claim": "x"}, "junk"]
+    raw = [
+        {"idx": 2, "claim": "a paraphrase", "verdict": "refute"},
+        {"idx": 2, "claim": "dup idx", "verdict": "uphold"},  # duplicate idx: ignored
+        {"idx": 9, "claim": "gamma holds", "verdict": "uphold"},  # out of range -> text fallback
+        {"idx": True, "claim": "x"},
+        "junk",
+    ]
     got = cr.match_verdicts(claims, raw)
     assert got[0] is None
     assert got[1] is not None and got[1]["verdict"] == "refute"

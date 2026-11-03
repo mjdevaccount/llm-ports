@@ -35,8 +35,7 @@ _SPAN_PREVIEW = 40
 class Detector(Protocol):
     """The slice of lettucedetect.models.inference.HallucinationDetector this adapter uses."""
 
-    def predict(self, *, context: list[str], answer: str,
-                output_format: str) -> list[dict[str, Any]]: ...
+    def predict(self, *, context: list[str], answer: str, output_format: str) -> list[dict[str, Any]]: ...
 
 
 def load_detector(model: str = MODEL) -> Detector:
@@ -45,8 +44,10 @@ def load_detector(model: str = MODEL) -> Detector:
     try:
         from lettucedetect.models.inference import HallucinationDetector
     except ImportError as exc:
-        raise RuntimeError("lettucedetect is not installed: install the `llm-ports[lettucedetect]` extra "
-                           "(or the consumer's dependency group that carries lettucedetect)") from exc
+        raise RuntimeError(
+            "lettucedetect is not installed: install the `llm-ports[lettucedetect]` extra "
+            "(or the consumer's dependency group that carries lettucedetect)"
+        ) from exc
     return HallucinationDetector(method="transformer", model_path=model)
 
 
@@ -73,10 +74,8 @@ class LettuceDetectGrounder:
         # scale's 'fully supported' end). No score at all is the honest reading; `supported`
         # still carries the gate.
         confs = [f.get("confidence") for f in found]
-        score = (None if any(c is None for c in confs)
-                 else round(1.0 - max((float(c) for c in confs), default=0.0), 4))
-        why = ("; ".join(str(f.get("text") or "")[:_SPAN_PREVIEW] for f in found[:3])
-               if found else "no unsupported span")
+        score = None if any(c is None for c in confs) else round(1.0 - max((float(c) for c in confs), default=0.0), 4)
+        why = "; ".join(str(f.get("text") or "")[:_SPAN_PREVIEW] for f in found[:3]) if found else "no unsupported span"
         n_chars = sum(len(c) for c in context)
         if n_chars > MAX_CONTEXT_CHARS:
             why = f"{WINDOW_REASON}: {n_chars} chars; {why}"

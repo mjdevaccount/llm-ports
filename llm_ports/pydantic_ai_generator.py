@@ -97,12 +97,17 @@ async def record_response(response: httpx.Response) -> None:
         cap.usage = {"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens")}
         src = body.get("sources")
         cap.sources = tuple(u for u in src if isinstance(u, str)) if isinstance(src, list) else None
-    except Exception:          # telemetry must not break the call it describes
+    except Exception:  # telemetry must not break the call it describes
         return
 
 
-def openai_compatible(base_url: str, api_key: str | None = None, *, max_retries: int = 0,
-                      transport: httpx.AsyncBaseTransport | None = None) -> ModelFor:
+def openai_compatible(
+    base_url: str,
+    api_key: str | None = None,
+    *,
+    max_retries: int = 0,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> ModelFor:
     """A `model_for` over any OpenAI-wire endpoint (`base_url` ends where `/chat/completions`
     starts, e.g. `http://litellm:4000/v1`). One httpx client per call with the request's timeout
     and the capture hook. The SDK's own retries default OFF (`max_retries=0`): a gateway in front
@@ -113,8 +118,9 @@ def openai_compatible(base_url: str, api_key: str | None = None, *, max_retries:
 
     @asynccontextmanager
     async def model_for(req: GenRequest) -> AsyncIterator[Model]:
-        async with httpx.AsyncClient(timeout=req.timeout_s, transport=transport,
-                                     event_hooks={"response": [record_response]}) as client:
+        async with httpx.AsyncClient(
+            timeout=req.timeout_s, transport=transport, event_hooks={"response": [record_response]}
+        ) as client:
             provider = OpenAIProvider(base_url=base_url, api_key=api_key or "no-key", http_client=client)
             provider = OpenAIProvider(openai_client=provider.client.with_options(max_retries=max_retries))
             yield OpenAIChatModel(req.model, provider=provider)
@@ -122,8 +128,9 @@ def openai_compatible(base_url: str, api_key: str | None = None, *, max_retries:
     return model_for
 
 
-def classify(exc: BaseException, finish_reason: str | None = None, *,
-             gated: tuple[type[BaseException], ...] = ()) -> tuple[Outcome, str]:
+def classify(
+    exc: BaseException, finish_reason: str | None = None, *, gated: tuple[type[BaseException], ...] = ()
+) -> tuple[Outcome, str]:
     """Pure. The outcome a failed run maps to, and its one-line reason. Order matters: a gate
     refusal anywhere in the chain wins; a `length` finish is a BUDGET failure even though it
     surfaces as a parse error; then status codes; then the parse failure itself."""
@@ -182,10 +189,15 @@ def _last_finish(res: Any) -> str | None:
 class PydanticAIGenerator:
     """See the module docstring. Exactly one of `model` / `model_for` is required."""
 
-    def __init__(self, model: Model | None = None, *, model_for: ModelFor | None = None,
-                 capture: Callable[[], AbstractContextManager[CaptureLike]] = capture,
-                 gated: tuple[type[BaseException], ...] = (),
-                 wrap: Callable[[Model], Model] | None = None) -> None:
+    def __init__(
+        self,
+        model: Model | None = None,
+        *,
+        model_for: ModelFor | None = None,
+        capture: Callable[[], AbstractContextManager[CaptureLike]] = capture,
+        gated: tuple[type[BaseException], ...] = (),
+        wrap: Callable[[Model], Model] | None = None,
+    ) -> None:
         if (model is None) == (model_for is None):
             raise ValueError("PydanticAIGenerator needs exactly one of model= / model_for=")
         self._model = model
@@ -194,9 +206,14 @@ class PydanticAIGenerator:
         self._gated = gated
         self._wrap = wrap
 
-    async def generate[T](self, req: GenRequest, output: type[T], *,
-                          validate: Callable[[T], Sequence[Any]] | None = None,
-                          retry_message: Callable[[Sequence[Any]], str] | None = None) -> Generated[T]:
+    async def generate[T](
+        self,
+        req: GenRequest,
+        output: type[T],
+        *,
+        validate: Callable[[T], Sequence[Any]] | None = None,
+        retry_message: Callable[[Sequence[Any]], str] | None = None,
+    ) -> Generated[T]:
         if self._model is not None:
             return await self.run(self._model, req, output, validate, retry_message)
         assert self._model_for is not None
@@ -205,23 +222,32 @@ class PydanticAIGenerator:
                 if self._wrap is not None:
                     model = self._wrap(model)
                 return await self.run(model, req, output, validate, retry_message)
-        except Exception as exc:        # building the wire failed (bad URL, a refusing transport)
+        except Exception as exc:  # building the wire failed (bad URL, a refusing transport)
             outcome, reason = classify(exc, gated=self._gated)
             return Generated(value=None, outcome=outcome, model=req.model, reason=reason, retries=None)
 
-    async def run[T](self, model: Model, req: GenRequest, output: type[T],
-                     validate: Callable[[T], Sequence[Any]] | None,
-                     retry_message: Callable[[Sequence[Any]], str] | None) -> Generated[T]:
+    async def run[T](
+        self,
+        model: Model,
+        req: GenRequest,
+        output: type[T],
+        validate: Callable[[T], Sequence[Any]] | None,
+        retry_message: Callable[[Sequence[Any]], str] | None,
+    ) -> Generated[T]:
         """One agent run on `model`. Public so a consumer's subclass can put `model` on its own
         transport and still share the run, the validator and the classification."""
         out_spec: Any = str if output is str else NativeOutput(framework_output(output))
         agent: Agent[None, Any] = Agent(
-            model, output_type=out_spec, system_prompt=req.system or (),
+            model,
+            output_type=out_spec,
+            system_prompt=req.system or (),
             retries={"output": req.output_retries},  # type: ignore[arg-type]
-            model_settings=dict(req.settings))  # type: ignore[arg-type]
+            model_settings=dict(req.settings),
+        )  # type: ignore[arg-type]
         kept: dict[str, tuple[Any, ...]] = {"problems": ()}
 
         if validate is not None:
+
             @agent.output_validator
             def _check(ctx: RunContext[None], out: Any) -> Any:
                 probs = list(validate(out))
@@ -238,14 +264,39 @@ class PydanticAIGenerator:
                 res = await agent.run(prompt)
             except Exception as exc:
                 outcome, reason = classify(exc, cap.finish_reason, gated=self._gated)
-                return Generated(value=None, outcome=outcome, model=req.model, reason=reason,
-                                 retries=None, usage=cap.usage or None, sources=cap.sources,
-                                 finish_reason=cap.finish_reason)
+                return Generated(
+                    value=None,
+                    outcome=outcome,
+                    model=req.model,
+                    reason=reason,
+                    retries=None,
+                    usage=cap.usage or None,
+                    sources=cap.sources,
+                    finish_reason=cap.finish_reason,
+                )
         retries = max(0, sum(isinstance(m, ModelResponse) for m in res.all_messages()) - 1)
-        return Generated(value=res.output, outcome="ok", model=req.model, retries=retries,
-                         problems=kept["problems"], usage=_usage(res, cap.usage),
-                         sources=cap.sources, finish_reason=cap.finish_reason or _last_finish(res))
+        return Generated(
+            value=res.output,
+            outcome="ok",
+            model=req.model,
+            retries=retries,
+            problems=kept["problems"],
+            usage=_usage(res, cap.usage),
+            sources=cap.sources,
+            finish_reason=cap.finish_reason or _last_finish(res),
+        )
 
 
-__all__ = ["REQUEST_FAULT", "Capture", "CaptureLike", "ModelFor", "PydanticAIGenerator", "capture",
-           "classify", "framework_output", "openai_compatible", "record_response", "structured_dict"]
+__all__ = [
+    "REQUEST_FAULT",
+    "Capture",
+    "CaptureLike",
+    "ModelFor",
+    "PydanticAIGenerator",
+    "capture",
+    "classify",
+    "framework_output",
+    "openai_compatible",
+    "record_response",
+    "structured_dict",
+]

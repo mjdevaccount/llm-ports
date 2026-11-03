@@ -183,31 +183,41 @@ import asyncio
 from pydantic import BaseModel, Field
 from groundwire import Role as BaseRole, generate, load_tiers
 from groundwire.grounding import slots
-from groundwire.testing import StubGenerator   # real use: adapters.pydantic_ai.PydanticAIGenerator
+from groundwire.testing import StubGenerator  # real use: adapters.pydantic_ai.PydanticAIGenerator
 
-TIERS = load_tiers({"models": {"small": "gpt-5-nano"}, "ladder": {"fast": 30.0},
-                    "tiers": {"default": {"model": "small", "timeout": "fast"}}})
+TIERS = load_tiers(
+    {
+        "models": {"small": "gpt-5-nano"},
+        "ladder": {"fast": 30.0},
+        "tiers": {"default": {"model": "small", "timeout": "fast"}},
+    }
+)
+
 
 class Role(BaseRole):
     TIERS = TIERS.tiers
 
-SUMMARIZE = Role("orders.summarize", tier="default")
-facts = {"count": "3", "total": "$1,284.50"}          # code renders every value, once
 
-class Summary(BaseModel):                              # the grammar has no digit token:
-    text: str = Field(pattern=slots.slot_pattern(facts, 200))   # the model can only cite {id}
+SUMMARIZE = Role("orders.summarize", tier="default")
+facts = {"count": "3", "total": "$1,284.50"}  # code renders every value, once
+
+
+class Summary(BaseModel):  # the grammar has no digit token:
+    text: str = Field(pattern=slots.slot_pattern(facts, 200))  # the model can only cite {id}
+
 
 async def main() -> None:
     model = StubGenerator(Summary(text="Your {count} items came to {total}."))
     res = await generate(SUMMARIZE, prompt="Summarize the order.", output=Summary, generator=model)
     if res.outcome == "ok":
         prose = slots.fill(res.value.text, facts)
-        assert slots.belt(prose, facts) == 0           # zero invented figures, by construction
+        assert slots.belt(prose, facts) == 0  # zero invented figures, by construction
         print(prose)
 
-    down = StubGenerator(lambda req, out: 1 / 0)       # the wire fails ...
+    down = StubGenerator(lambda req, out: 1 / 0)  # the wire fails ...
     res = await generate(SUMMARIZE, prompt="Summarize the order.", output=Summary, generator=down)
-    print(res.outcome, res.reason)                     # ... 'unavailable', never a traceback
+    print(res.outcome, res.reason)  # ... 'unavailable', never a traceback
+
 
 asyncio.run(main())
 ```

@@ -75,7 +75,7 @@ class PackManifest(BaseModel):
     @field_validator("output_schema", "graders")
     @classmethod
     def _dotted_paths(cls, v: str | list[str] | None) -> str | list[str] | None:
-        for item in ([v] if isinstance(v, str) else (v or [])):
+        for item in [v] if isinstance(v, str) else (v or []):
             if not _DOTTED.match(item):
                 raise ValueError(f"{item!r} is not a dotted path (`pkg.module:NAME` or `pkg.module.NAME`)")
         return v

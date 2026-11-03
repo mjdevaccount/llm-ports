@@ -74,8 +74,11 @@ async def test_a_validator_problem_re_asks_with_the_retry_message() -> None:
     model, calls = _replies(_j(""), _j("QQQ leads"))
     seen: list[str] = []
     res = await PydanticAIGenerator(model).generate(
-        REQ, _Note, validate=lambda n: ["empty headline"] if not n.headline else [],
-        retry_message=lambda p: seen.append(p[0]) or "fix: " + p[0])
+        REQ,
+        _Note,
+        validate=lambda n: ["empty headline"] if not n.headline else [],
+        retry_message=lambda p: seen.append(p[0]) or "fix: " + p[0],
+    )
     assert res.outcome == "ok" and res.value is not None and res.value.headline == "QQQ leads"
     assert res.retries == 1 and len(calls) == 2 and seen == ["empty headline"]
 
@@ -102,8 +105,9 @@ async def test_prose_output_is_a_str() -> None:
 
 async def test_a_port_json_output_comes_back_as_a_plain_dict() -> None:
     model, _ = _replies('{"category": "groceries"}')
-    out = ports.json_output({"type": "object", "properties": {"category": {"type": "string"}},
-                             "required": ["category"]}, "cat")
+    out = ports.json_output(
+        {"type": "object", "properties": {"category": {"type": "string"}}, "required": ["category"]}, "cat"
+    )
     res = await PydanticAIGenerator(model).generate(REQ, out)
     assert res.outcome == "ok" and res.value == {"category": "groceries"}
 
@@ -116,17 +120,21 @@ def _chain(top: BaseException, cause: BaseException) -> BaseException:
     return top
 
 
-@pytest.mark.parametrize(("exc", "finish", "want"), [
-    (_chain(RuntimeError("APIConnectionError"), _Refused("category_disabled: x")), None, "gated"),
-    (UnexpectedModelBehavior("Exceeded maximum output retries"), "length", "truncated"),
-    (UnexpectedModelBehavior("Exceeded maximum output retries"), "stop", "invalid"),
-    (ModelHTTPError(400, "m", body={"error": "bad"}), None, "request_fault"),
-    (ModelHTTPError(413, "m"), None, "request_fault"),
-    (ModelHTTPError(500, "m", body="li..."), None, "unavailable"),
-    (ModelHTTPError(429, "m"), None, "unavailable"),
-    (TimeoutError(), None, "unavailable"),
-    (_chain(RuntimeError("wrapped"), _Refused("capped")), "length", "gated"),
-], ids=["gated", "truncated", "invalid", "400", "413", "500", "429", "timeout", "gated-beats-length"])
+@pytest.mark.parametrize(
+    ("exc", "finish", "want"),
+    [
+        (_chain(RuntimeError("APIConnectionError"), _Refused("category_disabled: x")), None, "gated"),
+        (UnexpectedModelBehavior("Exceeded maximum output retries"), "length", "truncated"),
+        (UnexpectedModelBehavior("Exceeded maximum output retries"), "stop", "invalid"),
+        (ModelHTTPError(400, "m", body={"error": "bad"}), None, "request_fault"),
+        (ModelHTTPError(413, "m"), None, "request_fault"),
+        (ModelHTTPError(500, "m", body="li..."), None, "unavailable"),
+        (ModelHTTPError(429, "m"), None, "unavailable"),
+        (TimeoutError(), None, "unavailable"),
+        (_chain(RuntimeError("wrapped"), _Refused("capped")), "length", "gated"),
+    ],
+    ids=["gated", "truncated", "invalid", "400", "413", "500", "429", "timeout", "gated-beats-length"],
+)
 def test_classify(exc: BaseException, finish: str | None, want: str) -> None:
     assert classify(exc, finish, gated=(_Refused,))[0] == want
 
@@ -144,10 +152,15 @@ def test_a_reason_never_carries_the_error_body() -> None:
 
 
 def _completion(content: str, *, finish: str = "stop", **extra: Any) -> dict[str, Any]:
-    return {"id": "x", "object": "chat.completion", "created": 0, "model": "small-chat",
-            "choices": [{"index": 0, "finish_reason": finish,
-                         "message": {"role": "assistant", "content": content}}],
-            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}, **extra}
+    return {
+        "id": "x",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "small-chat",
+        "choices": [{"index": 0, "finish_reason": finish, "message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+        **extra,
+    }
 
 
 @pytest.fixture(name="wire")
@@ -165,8 +178,9 @@ def _wire() -> dict[str, Any]:
 
 
 def _gen(wire: dict[str, Any]) -> PydanticAIGenerator:
-    return PydanticAIGenerator(model_for=pag.openai_compatible("http://gateway.test/v1", "k",
-                                                               transport=wire["transport"]), gated=(_Refused,))
+    return PydanticAIGenerator(
+        model_for=pag.openai_compatible("http://gateway.test/v1", "k", transport=wire["transport"]), gated=(_Refused,)
+    )
 
 
 async def test_the_wire_returns_value_usage_and_the_sources_pydantic_ai_drops(wire) -> None:
@@ -215,9 +229,12 @@ async def test_wrap_decorates_the_wire_model_and_sees_every_attempt(wire) -> Non
             return resp
 
     wire["replies"] = [(200, _completion(_j(""))), (200, _completion(_j("second try")))]
-    gen = PydanticAIGenerator(model_for=pag.openai_compatible("http://gateway.test/v1", transport=wire["transport"]), wrap=_Spy)
-    res = await gen.generate(REQ, _Note, validate=lambda n: [] if n.headline else ["headline: empty"],
-                             retry_message=lambda p: "; ".join(p))
+    gen = PydanticAIGenerator(
+        model_for=pag.openai_compatible("http://gateway.test/v1", transport=wire["transport"]), wrap=_Spy
+    )
+    res = await gen.generate(
+        REQ, _Note, validate=lambda n: [] if n.headline else ["headline: empty"], retry_message=lambda p: "; ".join(p)
+    )
     assert res.outcome == "ok" and res.value is not None and res.value.headline == "second try" and res.retries == 1
     assert seen == [_j(""), _j("second try")] and len(wire["sent"]) == 2
 

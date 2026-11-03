@@ -30,16 +30,17 @@ def test_posts_the_claim_and_spans_and_maps_the_verdict_back() -> None:
 
     def handler(req: httpx.Request) -> httpx.Response:
         seen.append(req)
-        return httpx.Response(200, json={"supported": False, "reason": "581", "score": 0.1,
-                                         "checker": "lettucedetect"})
+        return httpx.Response(200, json={"supported": False, "reason": "581", "score": 0.1, "checker": "lettucedetect"})
 
     g = gh.HttpGrounder("http://grounder:8094/", client=_client(handler))
     v = g.verdict(Claim("SPY at 581", ("a",)), [SPAN])
     assert v.supported is False and v.reason == "581" and v.score == 0.1 and v.checker == "lettucedetect"
     assert g.checker == "lettucedetect", "the sidecar's name replaces the transport's"
     assert seen[0].url == "http://grounder:8094/verdict"
-    assert json.loads(seen[0].content) == {"claim": "SPY at 581",
-                                           "spans": [{"id": "a", "title": "Close", "text": "SPY closed at 580.5"}]}
+    assert json.loads(seen[0].content) == {
+        "claim": "SPY at 581",
+        "spans": [{"id": "a", "title": "Close", "text": "SPY closed at 580.5"}],
+    }
 
 
 def test_no_spans_is_the_sidecars_answer_not_a_client_guess() -> None:
@@ -47,16 +48,18 @@ def test_no_spans_is_the_sidecars_answer_not_a_client_guess() -> None:
 
     def handler(req: httpx.Request) -> httpx.Response:
         seen.append(json.loads(req.content))
-        return httpx.Response(200, json={"supported": False, "reason": "no evidence spans",
-                                         "score": None, "checker": "lettucedetect"})
+        return httpx.Response(
+            200, json={"supported": False, "reason": "no evidence spans", "score": None, "checker": "lettucedetect"}
+        )
 
     v = gh.HttpGrounder("http://g", client=_client(handler)).verdict(Claim("x"), [])
     assert v.supported is False and v.checker == "lettucedetect" and seen == [{"claim": "x", "spans": []}]
 
 
 def test_a_null_score_stays_none() -> None:
-    v = gh.HttpGrounder("http://g", client=_ok({"supported": False, "reason": "r", "score": None,
-                                                 "checker": "lettucedetect"})).verdict(Claim("x", ("a",)), [SPAN])
+    v = gh.HttpGrounder(
+        "http://g", client=_ok({"supported": False, "reason": "r", "score": None, "checker": "lettucedetect"})
+    ).verdict(Claim("x", ("a",)), [SPAN])
     assert v.score is None and v.supported is False
 
 
@@ -64,13 +67,16 @@ def _raise(_req: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("refused")
 
 
-@pytest.mark.parametrize(("handler", "match"), [
-    (_raise, "transport"),
-    (lambda req: httpx.Response(503, json={"detail": {"status": "loading"}}), "HTTP 503"),
-    (lambda req: httpx.Response(200, content=b"not json"), "bad payload"),
-    (lambda req: httpx.Response(200, json={"reason": "no supported key"}), "bad payload"),
-    (lambda req: httpx.Response(200, json={"supported": "yes"}), "bad payload"),
-])
+@pytest.mark.parametrize(
+    ("handler", "match"),
+    [
+        (_raise, "transport"),
+        (lambda req: httpx.Response(503, json={"detail": {"status": "loading"}}), "HTTP 503"),
+        (lambda req: httpx.Response(200, content=b"not json"), "bad payload"),
+        (lambda req: httpx.Response(200, json={"reason": "no supported key"}), "bad payload"),
+        (lambda req: httpx.Response(200, json={"supported": "yes"}), "bad payload"),
+    ],
+)
 def test_every_non_answer_raises_unavailable(handler: Callable[[httpx.Request], httpx.Response], match: str) -> None:
     with pytest.raises(gh.GrounderUnavailable, match=match):
         gh.HttpGrounder("http://g", client=_client(handler)).verdict(Claim("x", ("a",)), [SPAN])
