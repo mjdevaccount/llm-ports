@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "0.9.0"
+version = "0.10.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -13,6 +13,14 @@ dependencies = [
     "httpx>=0.27",
 ]
 
+[project.optional-dependencies]
+# `pydantic_evals_judge` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
+# pydantic-ai-slim to its own version, so it moves with the core dependency above.
+evals = ["pydantic-evals>=2.57,<3"]
+# `lettucedetect_grounder` with the REAL model (torch + transformers, hundreds of MB). The module
+# imports it lazily; without the extra it runs over an injected detector (`testing.StubDetector`).
+lettucedetect = ["lettucedetect>=0.1.6"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -21,7 +29,9 @@ build-backend = "hatchling.build"
 packages = ["llm_ports"]
 
 [dependency-groups]
-dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.15"]
+# pydantic-evals: the judge adapter's tests run in CI (the `evals` extra's one package). lettucedetect
+# is NOT here: its tests run over `testing.StubDetector`, the real model is the consumer's lane.
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.15", "pydantic-evals>=2.57,<3"]
 
 [tool.ruff]
 line-length = 120

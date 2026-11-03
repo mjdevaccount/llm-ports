@@ -15,14 +15,31 @@ Attribution is BY `idx`, claim text only as a legacy fallback: the grammar force
 string, not THE string -- a model paraphrases the sentence it echoes (measured: unexamined rate 1.0
 over 99 runs when attributed by text), and a capped echo cannot carry a longer claim at all.
 
-The wire half -- rendering a refute pack and calling the facade -- is the consumer's.
+The PASS (`refute`) is one prompt, one grammar, any number of callers: each claim is echoed with
+the 1-based `idx` its verdict must return (`refute_slots`), the consumer's refute pack renders it
+(`refute_prompt` -- the PACK is the consumer's: its manifest names the consumer's role and its
+store mirrors it), and the consumer's own `generate` runs it under its hooks (gate, trace, graders).
+Attribute the reply with `match_verdicts(texts, value["verdicts"])`.
 """
 
 from __future__ import annotations
 
+import json
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
+from llm_ports.packs import Pack
+from llm_ports.ports import Generated, json_output
+from llm_ports.roles import Role
+
 REASON_MAX_CHARS = 200
+
+#: A claim as the adversary sees it: a sentence, or a mapping whose extra keys ride along (e.g. the
+#: row ids a hypothesis leaned on, so the adversary sees what it was built from).
+RefuteClaim = str | Mapping[str, Any]
+#: The consumer's generation call: `generate(role, prompt=..., output=...) -> Generated`, its own
+#: hooks bound (e.g. `functools.partial(call.generate, generator=g, hooks=h)`).
+GenerateFn = Callable[..., Awaitable[Generated[Any]]]
 
 
 def verdicts_schema(*, max_items: int, claim_cap: int, reason_cap: int = REASON_MAX_CHARS) -> dict[str, Any]:
@@ -82,4 +99,34 @@ def refutation(claim: str, reason: Any, cap: int = REASON_MAX_CHARS,
     return out
 
 
-__all__ = ["REASON_MAX_CHARS", "match_verdicts", "refutation", "verdicts_schema"]
+def refute_slots(*, claims: Sequence[RefuteClaim], evidence: str, noun: str, subject: str,
+                 evidence_label: str, reason_cap: int = REASON_MAX_CHARS) -> dict[str, Any]:
+    """The refute pack's slots. Pure. Each claim gets a 1-based `idx` the verdicts must return -- a
+    string becomes `{idx, claim}`, a mapping keeps its extra keys; `claims` is that list as JSON
+    and `evidence` is the caller's JSON text, verbatim."""
+    slim = [{"idx": i, **({"claim": c} if isinstance(c, str) else dict(c))} for i, c in enumerate(claims, start=1)]
+    return {"noun": noun, "subject": subject, "evidence_label": evidence_label, "reason_cap": reason_cap,
+            "claims": json.dumps(slim, default=str), "evidence": evidence}
+
+
+def refute_prompt(pack: Pack, *, claims: Sequence[RefuteClaim], evidence: str, noun: str, subject: str,
+                  evidence_label: str, reason_cap: int = REASON_MAX_CHARS) -> str:
+    """The adversary's prompt: `pack`'s primary template rendered with `refute_slots`. Pure."""
+    return pack.render(**refute_slots(claims=claims, evidence=evidence, noun=noun, subject=subject,
+                                      evidence_label=evidence_label, reason_cap=reason_cap))
+
+
+async def refute(generate: GenerateFn, role: Role, *, pack: Pack, claims: Sequence[RefuteClaim], evidence: str,
+                 max_items: int, claim_cap: int, noun: str, subject: str, evidence_label: str, name: str,
+                 reason_cap: int = REASON_MAX_CHARS) -> Generated[Any]:
+    """THE ADVERSARIAL PASS: `refute_prompt` under `verdicts_schema`, through the consumer's
+    `generate`. `name` is the output-schema name (`json_output`) a test stub dispatches on. The
+    outcome is the caller's to read; nothing here catches."""
+    prompt = refute_prompt(pack, claims=claims, evidence=evidence, noun=noun, subject=subject,
+                           evidence_label=evidence_label, reason_cap=reason_cap)
+    schema = verdicts_schema(max_items=max_items, claim_cap=claim_cap, reason_cap=reason_cap)
+    return await generate(role, prompt=prompt, output=json_output(schema, name))
+
+
+__all__ = ["REASON_MAX_CHARS", "GenerateFn", "RefuteClaim", "match_verdicts", "refutation", "refute",
+           "refute_prompt", "refute_slots", "verdicts_schema"]

@@ -1,14 +1,54 @@
-"""json_schema -- the strict-schema shape both OpenAI and llama.cpp accept, and the JSON-object
-substring of an LLM response (fenced, prefixed or suffixed by prose)."""
+"""json_schema -- the strict-schema shape both OpenAI and llama.cpp accept, the JSON-object
+substring of an LLM response (fenced, prefixed or suffixed by prose), and the RESEARCH grammar:
+a free-text `analysis` scratchpad first, every property required, the scratchpad popped after."""
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
+from llm_ports.ports import Generated, json_output
+from llm_ports.roles import Role
+
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.S)
+
+ANALYSIS_KEY = "analysis"
+RESEARCH_ANALYSIS = {"type": "string",
+                     "description": "your full reasoning -- mechanism, who moves and why. Think HERE first; "
+                                    "then fill every other field from this analysis."}
+
+
+def research_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """Pure. The grammar a web-research synthesis pass gets (A/B'd on a self-hosted model): a
+    free-text `analysis` property injected FIRST (a bare complex schema collapses quality -- the
+    grammar leaves no room to think) and `required` forced to EVERY property (pydantic marks
+    defaulted fields optional, so a lazy model emits near-empty objects)."""
+    out = dict(schema)
+    props: dict[str, Any] = {ANALYSIS_KEY: RESEARCH_ANALYSIS}
+    props.update(out.get("properties") or {})
+    out["properties"] = props
+    out["required"] = list(props)
+    return out
+
+
+def without_analysis[T](res: Generated[T]) -> Generated[T]:
+    """`res` with the in-band scratchpad popped from a dict value (any other value: unchanged)."""
+    if isinstance(res.value, dict) and ANALYSIS_KEY in res.value:
+        return replace(res, value={k: v for k, v in res.value.items() if k != ANALYSIS_KEY})  # type: ignore[arg-type]
+    return res
+
+
+async def research(generate: Callable[..., Awaitable[Generated[Any]]], role: Role, *, prompt: str,
+                   schema: Mapping[str, Any], name: str, **kwargs: Any) -> Generated[dict[str, Any]]:
+    """Research -> grammar-enforced dict through the consumer's `generate` (its hooks bound):
+    `research_schema` as the grammar (`json_output(..., name)`), the scratchpad popped from the
+    value. `kwargs` pass through to `generate` untouched."""
+    res = await generate(role, prompt=prompt, output=json_output(research_schema(schema), name), **kwargs)
+    return without_analysis(res)
 
 
 def strict_json_schema(model: type[BaseModel]) -> dict[str, Any]:

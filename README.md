@@ -22,13 +22,19 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `slots` | grounded prose BY CONSTRUCTION: code renders each value under a digit-free id, the model writes `{id}` under a grammar with no digit token (`slot_pattern` / `prose_pattern`), code `fill`s it, and `belt` over the filled text is 0. Use it for any prose a reader takes numbers from |
 | `content` | the OUTPUT shape in W3C PROV-O words: `ContentItem` (prov:Entity), `Activity` (prov:Activity), `uses` (prov:used); `DataClass{rights, private, link_required}` with `join` (most restrictive wins) and an audience `CEILING`; `print_gate(item, audience)` -> ok or ONE named refusal (`rights \| unclaimed \| uncited \| unsourced \| link`) |
 | `pydantic_ai_embedder` | the first `Embedder` adapter (`PydanticAIEmbedder` on pydantic-ai's `embeddings`, `openai_compatible_embeddings(base_url, model)`): a `stamp` per space, count + dims laws, index order (`IndexOrderedTransport`), batching, the asymmetric query prefix, named outcomes |
-| `testing` | `StubGenerator`, `StubEmbedder`, `RecordingTracer`, `StubCiter`, `StubPromptSource` for consumers' tests |
+| `testing` | `StubGenerator`, `StubEmbedder`, `RecordingTracer`, `StubCiter`, `StubPromptSource`, `StubDetector` for consumers' tests |
+| `pydantic_evals_judge` | the first `Judge` adapter (`PydanticEvalsJudge(role, model_for=...)` on pydantic-evals' `LLMJudge`, extra `[evals]`): the grade on the NATIVE grammar (`JUDGE_PROFILE`), `clean_reason` refuses leaked tool-call markup or a contradicting leaked verdict, multimodal `images=`; raises, never a default verdict |
+| `judge_sampling` | a sampled judge's pure half: `Seen` (what the judged call saw beside the prompt) + `judge_input`, a deterministic `sample_key` + `selected` (1-in-N), the four-law `rubric` (platform, grounding mode, calendar injected), `verdict_label` (`pass \| fail \| could_not_run`) |
+| `lettucedetect_grounder` | `LettuceDetectGrounder` (token-span hallucination detector behind `Grounder`, extra `[lettucedetect]`, lazy import, injectable detector); a context past the model's window is judged and NAMED `context_over_window` |
+| `grounder_http` | `HttpGrounder`: the `Grounder` port over HTTP to a grounder sidecar (`POST {url}/verdict`); every non-answer raises `GrounderUnavailable`, never a guessed verdict |
 | `reference` | the framework-free impl behind a port: `GauntletEvaluator` (rows + graders -> ONE board), `NumberLawGrounder` (the number law; numbers only), `RepoPromptSource` (every name its repo `Seed`), `NoopTracer` (no sink; also `call.generate`'s null trace -- one null sink) |
 | `chunking` | `chunk_text` (paragraph > line > sentence breaks in the window's tail third, overlap, a per-chunk header), `max_chars_for_chunks` (the TIGHT worst-case char bound for n chunks, derived from the same floor), `content_hash` + `should_ingest` (skip-unchanged) |
 | `retrieval_metrics` | `first_rank`, `hit_at_k`, `reciprocal_rank` over an ANY-OF relevant set, `agree_at_k` (top-k Jaccard), `mean`, `clears` (a parity gate's floor, rounded so a reported metric compares as written) |
 | `pydantic_ai_replay` | record a live model once, replay in CI: `Recorder` / `replay` keyed by the first prompt's sha + attempt (a changed prompt is `NotRecorded`), `Recording` (every attempt kept parsed) |
 | `numbers` | THE number law: `loose(text, allowed, words_ok)` names every digit run (by value) and spelled number no input licensed; every belt, grader and validator in the package reads a number through it |
-| `failure`, `context`, `json_schema`, `claim_refute` | small EDGE-free helpers the call path and graders use |
+| `claim_refute` | the adversarial pass: `verdicts_schema` (capped grammar), `refute_slots` / `refute_prompt(pack, ...)` (each claim idx-numbered, the consumer's pack rendered), `refute(generate, role, ...)` through the consumer's `generate`, `match_verdicts` (by idx), `refutation` (a cut reason flagged) |
+| `json_schema` | `strict_json_schema`, `extract_json_object`; the research grammar `research_schema` (an `analysis` scratchpad first, every field required) + `research(generate, role, ...)` / `without_analysis` (scratchpad popped) |
+| `failure`, `context` | small EDGE-free helpers the call path and graders use |
 
 The package root imports no framework; import `llm_ports.pydantic_ai_generator` explicitly.
 
