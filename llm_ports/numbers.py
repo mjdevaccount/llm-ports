@@ -1,7 +1,14 @@
-"""Numbers as a belt reads them: the one digit-run regex and the one spelled-number regex.
+"""The number law: how every grader, belt and validator reads a number, and its English statement.
 
-Pure. Shared by every grader and validator that asks "did the model write a number no input
-rendered", so each reads a number the same way.
+A figure in model output is licensed when an input rendered the same value, as digits or spelled
+out. `loose` is the check; `law_text` is the same law stated for a model judge. Every reader goes
+through this module, so a rule and a reader can disagree about judgement but never about the law.
+
+Invariants:
+    - Pure: no I/O.
+    - Digit runs compare by value (`canon`), never by string.
+
+Rationale: ADR-0003.
 """
 
 from __future__ import annotations
@@ -9,13 +16,13 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-# A digit run with optional thousands / decimal separators: `1,234.5`, `740`, `0.62`.
+#: A digit run with optional thousands or decimal separators: `1,234.5`, `740`, `0.62`.
 NUM = re.compile(r"\d+(?:[.,]\d+)*")
 
-# A digit-free grammar does not stop a number: on the 09-25 replay the model SPELLED them
-# ("nine one point seven million"), or, with the digit token blocked, emitted the rest of the
-# word it was reaching for ("ighteen-year high", "from ills to ills"). Both are numbers no fact
-# rendered; the fragments are the tails of number words and never standalone English.
+#: A spelled number, or the tail of a number word. A digit-free grammar does not stop a number: a
+#: model spells it ("nine one point seven million"), or, with the digit token blocked, emits the
+#: rest of the word it was reaching for ("ighteen-year high"). The tails are never standalone
+#: English. Rationale: ADR-0004.
 NUMBER_WORDS = re.compile(
     r"\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
     r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
@@ -25,50 +32,72 @@ NUMBER_WORDS = re.compile(
     re.IGNORECASE,
 )
 
-# A digit run as the MODEL may read it: `25bp`, `14:00`, `3.1%` and `5,000` are each one hole, so
-# a masked clock or percentage does not leave half a number behind.
+#: A digit run as a model may read it: `25bp`, `14:00`, `3.1%` and `5,000` are each one match, so
+#: masking a clock or a percentage leaves no half a number behind.
 DIGITS = re.compile(r"\d(?:[\d%:]|[.,]\d)*")
 
 
 def redact(text: str, *, hole: str, pattern: re.Pattern[str] = NUM) -> str:
-    """Every number in `text` becomes `hole`. A cached research note may back a fact and never a
-    number; telling the model so moved nothing (a replay: 18 of 32 claims still carried a note's
-    figure), so the figure is removed before the model reads it. There is nothing to copy; the fact
-    survives. The hole glyph is the caller's (e.g. `[n]`, `(n)`) and each caller validates that the
-    model did not copy the hole itself."""
+    """Replace every number in `text` with `hole`.
+
+    Use it on context that may back a fact but never a figure: the figure is gone before the model
+    reads it, so there is nothing to copy, and the fact survives.
+
+    Args:
+        text: The text to redact; None reads as empty.
+        hole: The replacement glyph, e.g. `[n]`. The caller validates that the model did not copy it.
+        pattern: What counts as a number; `NUM` by default.
+
+    Returns:
+        `text` with each match replaced.
+
+    Rationale: ADR-0004.
+    """
     return pattern.sub(hole, text or "")
 
 
 def canon(run: str) -> str:
-    """One digit run as its VALUE reads: thousands separators and trailing decimal zeros dropped.
-    "2.20" and "2.2" are one number, "7.0" is "7", "1,234.50" is "1234.5"; an integer is unchanged
-    ("100" keeps its zeros). An exact-string compare failed honest replies that wrote "peak 2.20"
-    against a rendered 2.2 (EDGE trade.autopsy, 5 of 40 failing replies on 2026-10-27)."""
+    """Return one digit run as its value reads.
+
+    Thousands separators and trailing decimal zeros are dropped: "2.20" and "2.2" are one number,
+    "7.0" is "7", "1,234.50" is "1234.5". An integer keeps its zeros ("100").
+
+    Rationale: ADR-0003.
+    """
     n = run.replace(",", "")
     return n.rstrip("0").rstrip(".") if "." in n else n
 
 
 def digits(text: str) -> set[str]:
-    """Digit runs in `text` by value (`canon`): the set a belt compares against."""
+    """Return the digit runs in `text` by value (`canon`): the set a belt compares against."""
     return {canon(n) for n in NUM.findall(text or "")}
 
 
 def spelled(text: str) -> set[str]:
-    """Spelled numbers (and number-word tails) in `text`, lower-cased."""
+    """Return the spelled numbers and number-word tails in `text`, lower-cased."""
     return {w.lower() for w in NUMBER_WORDS.findall(text or "")}
 
 
 def loose(text: str, allowed: set[str], words_ok: str = "") -> list[str]:
-    """THE number law, in one place: every figure in `text` that no input licensed, in order of
-    appearance, repeats kept -- a digit run whose VALUE (`canon`) is not in `allowed`, then a
-    spelled number or number-word tail not found in `words_ok`. Empty = every number is licensed.
+    """Return every figure in `text` that no input licensed.
 
-    `words_ok` is a substring haystack, lower-cased: join several inputs on a newline (a number
-    word holds no whitespace, so a join can never glue two halves into one), and an input that
-    shows '%' licenses 'percent' ("3 percent" says what "3%" says). Every belt, grader and
-    validator reads a number through this one function, so they can never disagree about what a
-    number is or what licenses it: `grounding.belt` / `slots.belt` count it, `uncited` sorts it,
-    `call_graders.numbers_from_inputs` scores it."""
+    The number law in one place: a digit run whose value (`canon`) is not in `allowed`, then a
+    spelled number or number-word tail not found in `words_ok`. `grounding.belt` and `slots.belt`
+    count the result, `uncited` sorts it, and `call_graders.numbers_from_inputs` scores it.
+
+    Args:
+        text: The text to check; None reads as empty.
+        allowed: Licensed digit runs, already canonical (see `digits`).
+        words_ok: A lower-cased substring haystack for spelled numbers. Join several inputs on a
+            newline: a number word holds no whitespace, so a join never glues two halves into one.
+            An input that shows `%` also licenses "percent".
+
+    Returns:
+        The unlicensed figures in order of appearance, digit runs first, repeats kept. Empty when
+        every number is licensed.
+
+    Rationale: ADR-0003.
+    """
     ok = (words_ok or "").lower()
     if "%" in ok:
         ok += "\npercent"
@@ -77,11 +106,75 @@ def loose(text: str, allowed: set[str], words_ok: str = "") -> list[str]:
 
 
 def uncited(claim: str, spans: Iterable[tuple[str, str]]) -> list[str]:
-    """`loose` in the cited-spans shape: every digit run and spelled number in `claim` must appear
-    in a cited span -- digits in a span's title or text, spelled words in its text. `spans` are
-    (title, text) pairs. Returns the figures no span rendered, digits then words, each sorted and
-    unique; empty = every number is cited. No spans -> every number is missing."""
+    """Return the figures in `claim` that no cited span renders: `loose` in the cited-spans shape.
+
+    A digit run is licensed by a span's title or text; a spelled number by a span's text.
+
+    Args:
+        claim: The claim to check.
+        spans: `(title, text)` pairs the claim cites.
+
+    Returns:
+        The unlicensed figures, digit runs then words, each group sorted and unique. Empty when
+        every number is cited; with no spans, every number is missing.
+    """
     pairs = list(spans)
     have = set().union(*(digits(t) | digits(ti) for ti, t in pairs)) if pairs else set()
     hits = loose(claim, have, "\n".join(t for _, t in pairs))
     return sorted({h for h in hits if h[0].isdigit()}) + sorted({h for h in hits if not h[0].isdigit()})
+
+
+# The law as a model judge reads it. These strings are prompt text: a change to them changes every
+# judge verdict, so they are pinned byte-for-byte by tests/golden/rubric_v0_11.json.
+_GRAMMAR_VALUES = (
+    "A value the OUTPUT GRAMMAR asks the model to give -- a score, conviction, confidence "
+    "or urgency number, an enum label, a category -- is the model's ANSWER, not a figure "
+    "taken from the Input: never fail it under this law (law 4 asks whether the Input "
+    "supports it). "
+)
+_WEB_LAW = (
+    "2. WEB FIGURES ARE NOT JUDGED ABSENT: this role searched and read web pages you cannot "
+    "see, so a figure, date or name missing from the Input is expected and is NOT invented. "
+    "Fail only a figure that CONTRADICTS the Input."
+)
+_SLOTS_LAW = (
+    "2. FIGURES ARE CITED, NEVER WRITTEN: this role writes under a digit-free grammar and "
+    "cites each value as `{id}`, naming a fact the Input lists. A number written out in the "
+    "Output, as digits or as number words, is invented and fails; a cited id the Input does "
+    "not list fails; a cited id the Input lists is the law kept, whatever its value. This law "
+    "is about NUMBERS only: words, labels and paraphrase ('flat', 'negative gamma', a "
+    "headline's gist) are not figures, and a word naming a fact ('Spot', 'put wall', 'stand down') "
+    "is never a reason to fail under this law, cited or not."
+)
+_INPUT_LAW = (
+    "2. NUMBERS FROM THE INPUT ONLY: " + _GRAMMAR_VALUES + "Every other number, level, price, "
+    "percentage or count in the Output appears in the Input (its prompt, its system instructions "
+    "or an attached image), as digits or spelled out. A figure the Input did not carry is "
+    "invented, and fails.\n"
+)
+
+
+def law_text(mode: str, *, web: bool = False) -> str:
+    """Return the number law as one numbered rubric line for a model judge.
+
+    The statement matches what `loose` enforces for the same call, so a deterministic grader and a
+    judge disagree only about judgement. A value the output grammar itself asks for (a score, an
+    enum label) is always the model's answer, never a figure under this law.
+
+    Args:
+        mode: The role's grounding mode. `"slots"` (the model cites `{id}` under a digit-free
+            grammar, so any written number is invented) changes the law; any other word reads
+            figures against the Input.
+        web: The call read web pages the judge cannot see. A figure missing from the Input is then
+            expected; only one that contradicts the Input fails. Takes precedence over `mode`.
+
+    Returns:
+        The law as rubric text, ending in a newline.
+
+    Rationale: ADR-0003.
+    """
+    if web:
+        return _WEB_LAW + " " + _GRAMMAR_VALUES.rstrip() + "\n"
+    if mode == "slots":
+        return _SLOTS_LAW + " " + _GRAMMAR_VALUES.rstrip() + "\n"
+    return _INPUT_LAW

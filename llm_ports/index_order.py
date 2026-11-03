@@ -1,16 +1,19 @@
-"""index_order -- an OpenAI-compatible reply's index-keyed list, back in INDEX order.
+"""Index order restored to an OpenAI-compatible batch reply's index-keyed list.
 
 Two wire shapes answer a batch with one item per input and an `index` on each item:
 
-  * `/embeddings` -> `{"data": [{"index": i, "embedding": [...]}, ...]}`
-  * `/rerank`     -> `{"results": [{"index": i, "relevance_score": s}, ...]}` (the Cohere / Jina
-                     shape that llama.cpp's server, LiteLLM and vLLM also speak)
+- `/embeddings` -> `{"data": [{"index": i, "embedding": [...]}, ...]}`
+- `/rerank` -> `{"results": [{"index": i, "relevance_score": s}, ...]}` (the Cohere/Jina shape,
+  which llama.cpp's server, LiteLLM and vLLM also speak)
 
-Neither promises the list is in index order: a rerank reply is usually sorted by SCORE, and an
+Neither promises the list is in index order: a rerank reply is usually sorted by score, and an
 embeddings server may answer out of order. A reader that takes the list as listed lands every
-value on the wrong input while every count law still holds. `IndexOrderedTransport` sorts the list
-by `index` under the client, so whatever reads the body above it (an SDK, or `HttpReranker`) sees
-input order. Anything it cannot read passes through untouched; the reader's own laws judge it.
+value on the wrong input while every count check still holds. `IndexOrderedTransport` sorts the
+list by `index` under the client, so whatever reads the body above it (an SDK, or `HttpReranker`)
+sees input order.
+
+Invariants:
+    - A body the transport cannot read passes through untouched; the reader's own checks judge it.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from collections.abc import Mapping
 
 import httpx
 
-#: Reply path suffix -> the index-keyed list in that reply's body.
+#: Maps a reply path suffix to the key of that reply's index-keyed list.
 INDEXED_LISTS: Mapping[str, str] = {"/embeddings": "data", "/rerank": "results"}
 
 _HOP_HEADERS = ("content-length", "content-encoding", "transfer-encoding")
@@ -31,13 +34,21 @@ def _list_key(path: str) -> str | None:
 
 
 class IndexOrderedTransport(httpx.AsyncBaseTransport):
-    """Re-sorts a 200 reply's index-keyed list (`INDEXED_LISTS`) by `index`. `inner` None = httpx's
-    own transport."""
+    """An httpx transport that re-sorts a 200 reply's index-keyed list (`INDEXED_LISTS`) by `index`.
+
+    Args:
+        inner: The transport that sends the request; None uses httpx's own.
+
+    Invariants:
+        - A non-200 reply, a path not in `INDEXED_LISTS`, an unreadable body, or a list already in
+          index order is returned unchanged.
+    """
 
     def __init__(self, inner: httpx.AsyncBaseTransport | None = None) -> None:
         self._inner = inner or httpx.AsyncHTTPTransport()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        """Send `request` through the inner transport and return the reply with its list in index order."""
         resp = await self._inner.handle_async_request(request)
         key = _list_key(request.url.path)
         if resp.status_code != 200 or key is None:
@@ -56,6 +67,7 @@ class IndexOrderedTransport(httpx.AsyncBaseTransport):
         return httpx.Response(200, headers=headers, json=body, request=request)
 
     async def aclose(self) -> None:
+        """Close the inner transport."""
         await self._inner.aclose()
 
 

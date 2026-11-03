@@ -1,31 +1,37 @@
-"""LangfuseTracer -- the `Tracer` port over the Langfuse Python SDK 5.x (extra `[langfuse]`).
+"""The `Tracer` port over the Langfuse Python SDK 5 (extra `[langfuse]`).
 
-    tracer = LangfuseTracer(Langfuse(...))            # the client is the consumer's to build
+Example:
+    tracer = LangfuseTracer(Langfuse(...))  # the caller builds the client
     async with observe(tracer, name="summarize", model=m, provider="openai", input=prompt) as obs:
         ...
 
-What this adapter owns: the generation lifecycle, the usage block, `end`, `score` and the managed
-prompt link. What the consumer owns: building the client (keys, host, its OpenTelemetry provider
-and export filter) and what goes INTO the calls (names, metadata).
+This adapter owns the generation lifecycle, the usage block, `end`, `score` and the managed-prompt
+link. The caller owns building the client (keys, host, its OpenTelemetry provider and export
+filter) and what goes into the calls (names, metadata).
 
-SDK 5 is OpenTelemetry underneath:
-- A generation is `start_observation(as_type="generation")`, opened as a ROOT in the CURRENT OTel
+Langfuse SDK 5 is OpenTelemetry underneath:
+
+- A generation is `start_observation(as_type="generation")`, opened as a root in the current OTel
   trace (`trace_context={"trace_id": ...}`), so the Langfuse trace id is the id every other span of
   that request carries. Outside a span a fresh trace id is minted.
 - Trace-level fields (session, trace name, tags) ride `propagate_attributes` around the open.
-  `name` is stored verbatim as the generation name, the trace name and the one tag -- the key a
-  cost dashboard groups by.
+  `name` is stored verbatim as the generation name, the trace name and the one tag, so a cost
+  dashboard can group by it.
 - Usage is `usage_details={"input", "output"}`; the server adds `total` and prices by model.
-  Neither count reported = no usage block (`usage_details`), never zero tokens; one side reported =
-  the other booked as 0, which is what the provider said.
-- Export is a background batch: `end` never blocks on the network.
+- Export is a background batch: `end` does not block on the network.
 
-`provider` has no Langfuse field: it rides `metadata["provider"]` unless the caller set that key.
+`provider` has no Langfuse field; it rides `metadata["provider"]` unless the caller set that key.
 
-FAILS OPEN by contract: a client that raises on open hands back a `NoopGeneration`, and every
-failure (open, end, score) emits ONE warning event per `warn_hold_s` through `on_event` (default:
-the stdlib logger `llm_ports.langfuse_tracer`) -- a sink that is down must not log once per model
-call, and must never raise into the call it describes. The prompt link is best effort and silent.
+Invariants:
+    - When neither token count is reported, no usage block is sent, never zero tokens; when one
+      side is reported, the other is booked as 0.
+    - Fails open: a client that raises on open yields a `NoopGeneration`.
+    - Every failure (open, end, score) emits at most one warning event per `warn_hold_s` through
+      `on_event` (default: the stdlib logger `llm_ports.langfuse_tracer`), and never raises into
+      the call it describes.
+    - The prompt link is best effort and silent.
+
+Rationale: ADR-0007.
 """
 
 from __future__ import annotations
@@ -56,21 +62,29 @@ def _log_event(level: int, event: str, fields: Mapping[str, Any]) -> None:
 
 
 def usage_details(prompt: int | None, completion: int | None) -> dict[str, int] | None:
-    """Pure. The usage block, or None when the provider reported NEITHER count (module docstring)."""
+    """Return the Langfuse usage block, or None when the provider reported neither count.
+
+    When only one count is reported, the other is booked as 0. Pure.
+
+    Rationale: ADR-0007.
+    """
     if prompt is None and completion is None:
         return None
     return {"input": prompt or 0, "output": completion or 0}
 
 
 def trace_id(client: Any) -> str:
-    """The current OTel trace id as 32 hex, or a fresh one from the client outside a span."""
+    """Return the current OTel trace id as 32 hex digits, or a fresh one from the client outside a span."""
     ctx = otel_trace.get_current_span().get_span_context()
     return format(ctx.trace_id, "032x") if ctx.is_valid else client.create_trace_id()
 
 
 class LangfuseGeneration:
-    """`Generation` over an SDK 5 `LangfuseGeneration`. One terminal call: the fields go in one
-    `update` (an ERROR adds level + status_message), then `end()` closes the span."""
+    """`Generation` over an SDK 5 `LangfuseGeneration`.
+
+    `end` is the one terminal call: its fields go in a single `update`, then `end()` closes the
+    span. Failures go to `warn`, never raised.
+    """
 
     def __init__(self, gen: Any, warn: Callable[[str, Exception], None]) -> None:
         self._gen = gen
@@ -85,6 +99,11 @@ class LangfuseGeneration:
         status_message: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        """Close the generation with its output, usage and metadata; never raises.
+
+        Usage with neither count reported sends no usage block. Only `level="ERROR"` sends a level,
+        together with `status_message`.
+        """
         kw: dict[str, Any] = {}
         if output is not None:
             kw["output"] = output
@@ -104,7 +123,8 @@ class LangfuseGeneration:
             self._warn("end_failed", exc)
 
     def score(self, name: str, value: float, comment: str | None = None) -> None:
-        # The port's value is a float, so the score is NUMERIC (summable on a dashboard).
+        """Attach a numeric score to the generation; never raises."""
+        # The port's value is a float, so the score's data type is `NUMERIC` (summable on a dashboard).
         try:
             self._gen.score(name=name, value=value, data_type="NUMERIC", comment=comment)
         except Exception as exc:
@@ -112,7 +132,18 @@ class LangfuseGeneration:
 
 
 class LangfuseTracer:
-    """`Tracer` whose sink is Langfuse. Build one per client (the SDK client is per process)."""
+    """`Tracer` whose sink is Langfuse.
+
+    Build one per client; the SDK client is per process.
+
+    Args:
+        client: A Langfuse SDK 5 client, built by the caller.
+        prompt_label: The managed-prompt label a generation links to.
+        prompt_cache_ttl_s: The SDK's cache TTL for that prompt fetch.
+        warn_hold_s: The minimum seconds between two warning events.
+        clock: A monotonic clock, injectable for tests.
+        on_event: The warning sink; defaults to the stdlib logger `llm_ports.langfuse_tracer`.
+    """
 
     def __init__(
         self,
@@ -133,7 +164,7 @@ class LangfuseTracer:
         self._quiet_until = 0.0
 
     def _warn(self, action: str, exc: Exception) -> None:
-        """One warning event per `warn_hold_s`."""
+        """Emit one warning event per `warn_hold_s`."""
         now = self._clock()
         if now < self._quiet_until:
             return
@@ -155,8 +186,13 @@ class LangfuseTracer:
         session_id: str | None,
         prompt_name: str | None,
     ) -> Generation:
-        # The link is to the LABELLED version (a cached fetch), so the generation count follows
-        # the live version across prompt re-syncs.
+        """Open a generation as a root span in the current OTel trace; never raises.
+
+        With `prompt_name`, the generation links to the prompt's labelled version (a cached fetch),
+        so the prompt's generation count follows the live version across re-syncs. Any failure to
+        open returns a `NoopGeneration`.
+        """
+        # Best effort: a failed prompt fetch leaves the generation unlinked.
         lf_prompt = None
         if prompt_name:
             with contextlib.suppress(Exception):

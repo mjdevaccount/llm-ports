@@ -1,9 +1,14 @@
-"""failure -- how a failed model call is NAMED: the one persisted reason line (pure).
+"""Named failure reasons for a failed model call.
 
-A provider's error payload is a log line's business, not a ledger row's: a 300-char
-`ModelHTTPError: status_code: 500, model_name: ..., body: {'message': "li...` once reached an
-operator feed through a reason field, one row per tick. And a proxy error can embed a keyed URL.
-`failure_reason` keeps the class, the status code and the head of the message -- never the body.
+`failure_reason` turns an exception into the one reason line a caller persists: the exception
+class, the status code when there is one, and the head of the message. A provider's error payload
+belongs in a log line, not in a persisted reason, and a proxy error can embed a keyed URL.
+
+Invariants:
+    - Pure: no I/O.
+    - A reason line never carries the response body and never exceeds `REASON_MAX` characters.
+
+Rationale: ADR-0001.
 """
 
 from __future__ import annotations
@@ -15,9 +20,15 @@ REASON_MAX = 200
 
 
 class GenerationFailed(RuntimeError):
-    """The facade's non-ok, non-gated outcome, RAISED for a caller whose contract is that a failed
-    generation propagates (the Citer port; the `except Exception` ledgers of the structured family
-    that record `ok=false` rows). `outcome` and `reason` ride on it so the row can name both."""
+    """A non-ok, non-gated outcome raised for a caller whose contract is that a failure propagates.
+
+    The facade raises it for a caller that expects an exception (a `Citer`, or a caller that records
+    a failed row from an `except` block).
+
+    Attributes:
+        outcome: The `Outcome` the call ended with.
+        reason: The one-line reason, or None.
+    """
 
     def __init__(self, outcome: str, reason: str | None) -> None:
         super().__init__(f"{outcome}: {reason or ''}".rstrip(": "))
@@ -26,13 +37,20 @@ class GenerationFailed(RuntimeError):
 
 
 def failure_reason(exc: BaseException, *, with_cause: bool = False) -> str:
-    """Exception class, the status code when the exception carries one, and the first line of its
-    message cut BEFORE any `body:` payload -- never the body.
+    """Return the persisted reason line for `exc`.
 
-    `with_cause`: append ` <- <the cause's reason>`, cut by the same rule. A wrapper's own line
-    can name nothing ("Exceeded maximum output retries"); its cause ("Invalid JSON: EOF while
-    parsing a string" -- the reply hit max_tokens) is what names the fix. The whole line stays
-    within REASON_MAX, and the cause keeps up to half of it."""
+    The line is the exception class, the status code when the exception carries one, and the
+    first line of its message cut before any `body:` payload.
+
+    Args:
+        exc: The exception to name.
+        with_cause: Append ` <- <the cause's reason>`, cut by the same rule. A wrapper's own line
+            can name nothing ("Exceeded maximum output retries") while its cause ("Invalid JSON:
+            EOF while parsing a string") names the fix.
+
+    Returns:
+        A line of at most `REASON_MAX` characters; the cause keeps up to half of it.
+    """
     head = _reason(exc)
     cause = next(islice(exception_chain(exc), 1, None), None) if with_cause else None
     if cause is None:
@@ -52,8 +70,15 @@ def _reason(exc: BaseException) -> str:
 
 
 def exception_chain(exc: BaseException, limit: int = 12) -> Iterator[BaseException]:
-    """`exc`, then its `__cause__` (else `__context__`), and so on: the SDK layers (pydantic-ai ->
-    openai -> httpx -> our transport) each wrap the one below, so the cause is never on top."""
+    """Yield `exc`, then its `__cause__` (else `__context__`), and so on down the chain.
+
+    SDK layers (pydantic-ai, openai, httpx, a transport) each wrap the one below, so the root
+    cause is never on top.
+
+    Args:
+        exc: The outermost exception.
+        limit: The most exceptions to yield. A cycle ends the chain early.
+    """
     seen: set[int] = set()
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen and len(seen) < limit:

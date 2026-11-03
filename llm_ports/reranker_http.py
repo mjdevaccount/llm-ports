@@ -1,22 +1,29 @@
-"""HttpReranker -- the `Reranker` port over the Cohere/Jina-shaped `/rerank` wire.
-
-    reranker = HttpReranker("http://localhost:8080/v1/rerank", "bge-reranker-v2-m3")
-    res = await reranker.rerank("what moved the index", [doc.text for doc in docs])
-    if res.ok:
-        ranked = sorted(zip(res.scores, docs), key=lambda t: -t[0])
+"""The `Reranker` port over the Cohere/Jina-shaped `/rerank` wire.
 
 The wire is `POST {url}` with `{model, query, documents}` -> `{results: [{index, relevance_score}]}`,
-which llama.cpp's server, LiteLLM, vLLM, Jina and Cohere all speak. A reply lists results in SCORE
-order (or any order); `IndexOrderedTransport` puts them back in input order under the client --
-the same transport that orders an `/embeddings` reply, so the index is read in one place.
+which llama.cpp's server, LiteLLM, vLLM, Jina and Cohere all speak. A reply may list its results
+in score order or any other order; `IndexOrderedTransport` puts them back in input order under the
+client. It is the same transport that orders an `/embeddings` reply, so the index is read in one
+place.
 
-THE LAWS, each `invalid` when broken, never a partial ranking: the reply scores every document
-exactly once (indices are exactly 0..n-1 -- a duplicate index would otherwise pass a count check
-and leave one document unscored), and every score is a finite number (a NaN sorts nowhere).
+On a failure the caller keeps the order it already had: a reranker that is down degrades ranking,
+never search.
 
-NEVER RAISES for a model, wire or gate failure: a transport error is `unavailable`, a refused
-request (400/413/422) is `request_fault`, any other non-200 is `unavailable`. The caller's
-fallback is the order it already had; a reranker that is down degrades ranking, never search.
+Invariants:
+    - An `ok` reply scores every document exactly once: its indices are exactly 0..n-1, so a
+      duplicate index cannot pass a count check and leave one document unscored.
+    - Every `ok` score is a finite number.
+    - A reply that breaks either rule is `invalid`, never a partial ranking.
+    - A call never raises for a model, wire or gate failure: a transport error is `unavailable`, a
+      refused request (400/413/422) is `request_fault`, and any other non-200 is `unavailable`.
+
+Rationale: ADR-0001.
+
+Example:
+    reranker = HttpReranker("http://localhost:8080/v1/rerank", "bge-reranker-v2-m3")
+    res = await reranker.rerank("late shipment refund", [doc.text for doc in docs])
+    if res.ok:
+        ranked = sorted(zip(res.scores, docs), key=lambda t: -t[0])
 """
 
 from __future__ import annotations
@@ -34,14 +41,19 @@ from llm_ports.pydantic_ai_generator import REQUEST_FAULT
 
 
 def payload(model: str, query: str, documents: Sequence[str]) -> dict[str, Any]:
-    """The request body (the shape every `/rerank` server above accepts)."""
+    """Return the `/rerank` request body."""
     return {"model": model, "query": query, "documents": list(documents)}
 
 
 def scores_from(body: Any, n: int) -> tuple[float, ...]:
-    """Pure. The scores of an INDEX-ORDERED reply body (what `IndexOrderedTransport` hands up) for
-    `n` documents, in input order. Raises
-    ValueError naming the broken law (count, index set, non-finite score) or the unreadable shape."""
+    """Return the scores of an index-ordered reply body for `n` documents, in input order.
+
+    Pure. `body` is what `IndexOrderedTransport` hands up.
+
+    Raises:
+        ValueError: The body is unreadable, or breaks a rule (score count, index set, index order,
+            non-finite score); the message names which.
+    """
     try:
         results = body["results"]
         indices = [int(r["index"]) for r in results]
@@ -60,9 +72,21 @@ def scores_from(body: Any, n: int) -> tuple[float, ...]:
 
 
 class HttpReranker:
-    """`Reranker` over one `/rerank` endpoint. One httpx client per call; `transport` replaces
-    httpx's own (a consumer's counting transport, or `httpx.MockTransport` in a test) and always
-    sits under `IndexOrderedTransport`."""
+    """A `Reranker` over one `/rerank` endpoint.
+
+    Each call opens its own httpx client.
+
+    Args:
+        url: The full `/rerank` endpoint URL.
+        model: The model name sent on every request and reported on every result.
+        api_key: Sent as a bearer token when set.
+        timeout_s: The per-call httpx timeout, in seconds.
+        transport: Replaces httpx's own transport (a consumer's counting transport, or
+            `httpx.MockTransport` in a test). It always sits under `IndexOrderedTransport`.
+
+    Raises:
+        ValueError: At construction, when `url` or `model` is empty.
+    """
 
     def __init__(
         self,
@@ -85,6 +109,11 @@ class HttpReranker:
         return Reranked(scores=(), outcome=outcome, model=self.model, reason=reason[:200])  # type: ignore[arg-type]
 
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
+        """Score `documents` against `query`, in input order.
+
+        An empty `documents` returns `ok` with no scores and sends no request. A failure is a named
+        outcome, never an exception (see the module invariants).
+        """
         if not documents:
             return Reranked(scores=(), outcome="ok", model=self.model)
         try:

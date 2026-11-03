@@ -1,20 +1,25 @@
-"""content -- the OUTPUT shape: one `ContentItem` per printed thing, and the rule that says who may see it.
+"""The output shape: one `ContentItem` per printed thing, and the rule that says who may see it.
 
-The input side already has shapes (`Chunk`, `Claim`, `CitedAnswer`) and the process side has one
-(`Role` + pack sha + `Generated.stamp`). This module is the third: what a consumer PRINTS, in the
-W3C PROV-O vocabulary (https://www.w3.org/TR/prov-o/) so a lineage reader needs no translation:
+The input side has its shapes (`Chunk`, `Claim`, `CitedAnswer`) and the process side has one
+(`Role`, pack sha, `Generated.stamp`). This module is the third: what a consumer prints, in the
+W3C PROV-O vocabulary (https://www.w3.org/TR/prov-o/), so a lineage reader needs no translation:
 
     ContentItem  = prov:Entity            the printed thing (a card, a note, a brief edition)
     Activity     = prov:Activity          the generation that made it (trace, role, pack@sha, model, git sha)
-    item.uses    = prov:used              the source ids / item ids it was made FROM
+    item.uses    = prov:used              the source ids or item ids it was made from
     item.as_of   = prov:generatedAtTime   when it was made (the time it speaks for)
 
-`DataClass` is the rights + privacy class of a source or an item. An item's class is the JOIN of
-the classes it uses: the most restrictive rights tier, private if any input is private, a link
+`DataClass` is the rights and privacy class of a source or an item. An item's class is the join
+of the classes it uses: the most restrictive rights tier, private if any input is private, a link
 owed if any input owes one. `print_gate(item, audience)` is the deterministic rule over all of it:
-`ok`, or `refused` with ONE named reason. It never raises and never reads anything but the item.
+the item may be printed, or it is refused with one named reason.
 
-Zero I/O, no framework. ODRL 2.2 supplies the words (permission/prohibition/duty), not an engine.
+Invariants:
+    - No I/O and no framework. ODRL 2.2 supplies the words (permission, prohibition, duty), not an
+      engine.
+    - `print_gate` reads nothing but the item, and raises only for an audience outside `AUDIENCES`.
+
+Rationale: ADR-0006.
 """
 
 from __future__ import annotations
@@ -26,20 +31,22 @@ from typing import Any, Literal
 
 from llm_ports.ports import Chunk, Claim
 
-#: Rights tiers, LEAST to MOST restrictive. The join of two classes takes the later one.
-#:   public    free to print anywhere, cited (FRED non-copyright series, SEC EDGAR)
-#:   owned     ours: the operator's own lists, journal, decisions, our signals
-#:   licensed  a vendor licence for personal use (Tradier/OPRA non-pro, Yahoo RSS, vendor emails)
-#:   scraped   taken from a page with no licence (yfinance, ForexFactory, mn.co, a web search)
+#: Rights tiers, least to most restrictive. The join of two classes takes the later one.
+#:   public    free to print anywhere, cited (a public-domain statistics series, a government filing)
+#:   owned     the owner's own data: their lists, journal and decisions, and signals derived from them
+#:   licensed  a vendor licence for personal use (a market-data vendor's non-professional licence,
+#:             a news feed's RSS terms, a vendor's emails)
+#:   scraped   taken from a page with no licence (an unofficial site wrapper, a forum, a web search)
 RIGHTS: tuple[str, ...] = ("public", "owned", "licensed", "scraped")
 Rights = Literal["public", "owned", "licensed", "scraped"]
 
-#: Who an item is printed FOR, least to most exposed.
+#: Who an item is printed for, least to most exposed.
 AUDIENCES: tuple[str, ...] = ("operator", "shared", "public")
 Audience = Literal["operator", "shared", "public"]
 
-#: The rights tiers each audience may see. `operator` sees everything; `shared` (a signed-in viewer
-#: who is not the operator) and `public` see what we may redistribute, and never a private item.
+#: The rights tiers each audience may see. `operator` (the data's owner) sees everything; `shared`
+#: (a signed-in viewer who is not the owner) and `public` see what may be redistributed, and never a
+#: private item.
 CEILING: Mapping[str, frozenset[str]] = {
     "operator": frozenset(RIGHTS),
     "shared": frozenset({"public", "owned"}),
@@ -47,7 +54,8 @@ CEILING: Mapping[str, frozenset[str]] = {
 }
 
 #: Why `print_gate` refused, in the order it checks (the first that applies is the one reported):
-#:   rights     the item's class is above the audience's ceiling (or it is private and the audience is not the operator)
+#:   rights     the item's class is above the audience's ceiling, or the item is private and the
+#:              audience is not `operator`
 #:   unclaimed  the body was never decomposed into claims, so nothing about its citations can be checked
 #:   uncited    a claim cites nothing, or cites an id that is not in the item's evidence
 #:   unsourced  a cited chunk carries no source or no as_of
@@ -58,11 +66,22 @@ Refusal = Literal["rights", "unclaimed", "uncited", "unsourced", "link"]
 
 @dataclass(frozen=True)
 class DataClass:
-    """Rights tier + privacy + attribution duty. Order-comparable on rights through `rank`."""
+    """A rights tier, a privacy flag and an attribution duty.
+
+    Classes order on rights through `rank`.
+
+    Attributes:
+        rights: One of `RIGHTS`.
+        private: PII or the owner's personal data; only the `operator` audience may see it.
+        link_required: The licence owes a link back to the original (an ODRL duty).
+
+    Raises:
+        ValueError: When `rights` is not one of `RIGHTS`.
+    """
 
     rights: str
-    private: bool = False  # PII / the operator's personal data: never leaves the operator
-    link_required: bool = False  # the licence owes a link back to the original (an ODRL duty)
+    private: bool = False
+    link_required: bool = False
 
     def __post_init__(self) -> None:
         if self.rights not in RIGHTS:
@@ -70,10 +89,11 @@ class DataClass:
 
     @property
     def rank(self) -> int:
+        """The rights tier's index in `RIGHTS`; higher is more restrictive."""
         return RIGHTS.index(self.rights)
 
     def join(self, *others: DataClass) -> DataClass:
-        """The most restrictive of self and others: max rights, any private, any link owed."""
+        """Return the most restrictive of self and `others`: max rights, any private, any link owed."""
         every = (self, *others)
         return DataClass(
             rights=max(every, key=lambda c: c.rank).rights,
@@ -82,6 +102,11 @@ class DataClass:
         )
 
     def allows(self, audience: str) -> bool:
+        """Return whether an item of this class may be printed for `audience`.
+
+        Raises:
+            ValueError: When `audience` is not one of `AUDIENCES`.
+        """
         if audience not in CEILING:
             raise ValueError(f"audience {audience!r} not in {AUDIENCES}")
         return self.rights in CEILING[audience] and (audience == "operator" or not self.private)
@@ -94,18 +119,21 @@ SCRAPED = DataClass("scraped")
 
 
 def join_all(classes: Iterable[DataClass]) -> DataClass | None:
-    """The join of a possibly-empty set; None when there is nothing to join (UNKNOWN, never public)."""
+    """Return the join of a possibly empty set of classes; None (unknown, never public) when it is empty."""
     got = tuple(classes)
     return got[0].join(*got[1:]) if got else None
 
 
 @dataclass(frozen=True)
 class Activity:
-    """prov:Activity -- one generation. Every field is optional: a deterministic writer has no
-    model or pack, and an empty string says 'not recorded', never 'none'."""
+    """A `prov:Activity`: one generation.
 
-    id: str = ""  # the trace / audit id that names this generation
-    role: str = ""  # feature.action
+    Every field is optional: a deterministic writer has no model or pack. An empty string means
+    "not recorded", never "none".
+    """
+
+    id: str = ""  # the trace or audit id that names this generation
+    role: str = ""  # `feature.action`
     pack: str = ""
     pack_sha: str = ""
     model: str = ""
@@ -114,6 +142,7 @@ class Activity:
     ended_at: datetime | None = None
 
     def prov(self) -> dict[str, Any]:
+        """Return the PROV-JSON-shaped view of this activity; empty fields are omitted."""
         out: dict[str, Any] = {"prov:type": "prov:Activity"}
         if self.id:
             out["@id"] = self.id
@@ -139,14 +168,16 @@ class Activity:
 
 @dataclass(frozen=True)
 class ContentItem:
-    """prov:Entity -- one printed thing.
+    """A `prov:Entity`: one printed thing.
 
-    claims    the body decomposed into claims, or None when it never was (`print_gate` says
-              `unclaimed` rather than guessing either way)
-    evidence  id -> Chunk, the universe the claims may cite
-    uses      prov:used -- the source ids (or item ids) it was made from
-    verdict   the writer's own check (ok | degraded | refused ...), as written; None = none recorded
-    status    what the reader is shown: ok | unavailable | ...
+    Attributes:
+        claims: The body decomposed into claims, or None when it never was (`print_gate` then
+            reports `unclaimed` rather than guessing either way).
+        evidence: Id to `Chunk`: the universe the claims may cite.
+        uses: `prov:used`: the source ids, or item ids, it was made from.
+        verdict: The writer's own check (ok, degraded, refused, ...) as written; None when none was
+            recorded.
+        status: What the reader is shown: ok, unavailable, ...
     """
 
     kind: str
@@ -179,13 +210,27 @@ class ContentItem:
 
 @dataclass(frozen=True)
 class GateVerdict:
+    """The result of `print_gate`.
+
+    Attributes:
+        ok: Whether the item may be printed.
+        reason: One of `REFUSALS` when not ok; None when ok.
+        detail: What failed, for a human reader.
+    """
+
     ok: bool
-    reason: str | None = None  # one of REFUSALS when not ok
+    reason: str | None = None
     detail: str = ""
 
 
 def print_gate(item: ContentItem, audience: str) -> GateVerdict:
-    """PURE. May this item be printed for this audience? The first rule that fails is the reason."""
+    """Return whether `item` may be printed for `audience`.
+
+    Pure. The rules run in `REFUSALS` order, and the first that fails is the reason.
+
+    Raises:
+        ValueError: When `audience` is not one of `AUDIENCES`.
+    """
     if not item.data_class.allows(audience):
         why = "private" if item.data_class.private and audience != "operator" else item.data_class.rights
         return GateVerdict(False, "rights", f"{why} is above the {audience} ceiling")

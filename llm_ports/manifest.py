@@ -1,24 +1,10 @@
-"""PackManifest -- the contract a `<packs root>/<id>/pack.yaml` must satisfy.
+"""The manifest a prompt pack's `<packs root>/<id>/pack.yaml` must satisfy.
 
-A prompt pack is a directory holding this manifest plus the Jinja2 templates it names. The
-manifest is pure data -- zero I/O -- and STRICT (`extra="forbid"`): a field invented in a yaml
-fails in a unit test, not as a silent extra the loader never reads.
+A prompt pack is a directory holding this manifest and the Jinja2 templates it names.
 
-What each field is a property OF:
-  id             `feature.action` -- equals the directory name AND the managed-prompt name, so
-                 the stamp on an output row, the prompt-store link and the repo path agree by name.
-  version        semver. MAJOR = output schema changed, MINOR = instruction/claim-rule change,
-                 PATCH = wording. The content SHA (computed by the loader, never written here)
-                 says WHETHER the text changed; the version says WHAT KIND of change it was.
-  role           the model alias (or Role name) the pack is written for.
-  templates      name -> file inside the pack dir. `prompt` is the primary template; the content
-                 SHA covers every template in manifest order (the first one alone when there is
-                 one, so a moved single-template prompt keeps its recorded sha -- continuity).
-  output_schema  dotted path to the pydantic class the output must parse as, or None for prose.
-  graders        dotted paths to grader tables (`module:NAME`); a pack with graders is EVAL-ABLE
-                 and then REQUIRES `golden`.
-  golden         repo-relative path of the golden set the graders replay.
-  langfuse_label the label a managed mirror serves under; `production` mirrors, never leads.
+Invariants:
+    - Pure data: no I/O.
+    - Strict (`extra="forbid"`): a field the model does not declare fails validation.
 """
 
 from __future__ import annotations
@@ -35,6 +21,31 @@ PRIMARY_TEMPLATE = "prompt"
 
 
 class PackManifest(BaseModel):
+    """A validated, frozen `pack.yaml`.
+
+    Attributes:
+        id: `feature.action`. Equals the pack's directory name and the managed prompt's name, so
+            the stamp on an output row, the prompt-store link and the repo path agree by name.
+        version: Semver. MAJOR: the output schema changed. MINOR: an instruction or claim-rule
+            changed. PATCH: wording. The content sha, computed by the loader and never written
+            here, says whether the text changed; the version says what kind of change it was.
+        role: The model alias or `Role` name the pack is written for.
+        templates: Template name to a `.j2` file inside the pack directory. `prompt` is the
+            primary template and is required. The content sha covers every template in manifest
+            order, and a single-template pack hashes that template alone.
+        output_schema: Dotted path to the pydantic class the output parses as; None for prose.
+        graders: Dotted paths to grader tables (`module:NAME`). A pack with graders is evaluable
+            and requires `golden`.
+        golden: Repo-relative path of the golden set the graders replay.
+        langfuse_label: The label a managed mirror serves under. The managed copy mirrors the
+            repo; it never leads.
+
+    Raises:
+        pydantic.ValidationError: A field is unknown, malformed, or `graders` lacks `golden`.
+
+    Rationale: ADR-0008.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str
@@ -95,9 +106,10 @@ class PackManifest(BaseModel):
 
     @property
     def feature(self) -> str:
+        """The `feature` half of `id`."""
         return self.id.split(".", 1)[0]
 
     @property
     def evaluable(self) -> bool:
-        """True when usecases/prompt_eval can grade this pack (graders + a golden set declared)."""
+        """True when the pack declares graders and a golden set, so an eval can grade it."""
         return bool(self.graders) and self.golden is not None

@@ -1,16 +1,17 @@
-"""roles -- the ONE place a model call's knobs are declared.
+"""Roles: the one place a model call's settings are declared.
 
-A `Role` names one generation surface (`feature.action`, the same string a category switchboard,
-a trace and a work row group by) and resolves it to a `Tier` -- model group, self-hosted-or-cloud,
-and the client timeout rung -- plus the per-role budget and sampling. Feature code declares a role
-and calls `llm_ports.call.generate`; it never carries a model literal, a timeout literal or a
-framework import.
+A `Role` names one generation surface (`feature.action`, the string a category switchboard, a
+trace and a work row group by) and resolves it to a `Tier`: a model group, whether that group is
+self-hosted, and a client timeout rung. The role adds the per-role budget and sampling. Feature
+code declares a role and calls `llm_ports.call.generate`; it carries no model literal, no timeout
+literal and no framework import.
 
-THE TIER TABLE IS DATA, and it is the CONSUMER's: a TOML file (`[ladder]` rungs in seconds,
-`[models]` groups, `[tiers.<name>]` = a model key + a rung + `box`), parsed and CHECKED by
-`load_tiers`. A consumer binds its table to its roles ONCE, by subclass, so two consumers never
-share a process-global table:
+The tier table is data, and it belongs to the consumer: a TOML file (`[ladder]` rungs in seconds,
+`[models]` groups, `[tiers.<name>]` naming a model key, a rung and `box`), parsed and checked by
+`load_tiers`. A consumer binds its table to its roles once, by subclass, so two consumers never
+share a process-global table.
 
+Example:
     TABLE = load_tiers(Path(__file__).with_name("llm_tiers.toml"))
 
     class Role(roles.Role):
@@ -18,8 +19,9 @@ share a process-global table:
 
     CATEGORIZE = Role("categorize.batch", tier="gateway", temperature=0.0)
 
-A `Role` whose tier is not in its class's table raises at construction -- at import, never as a
-call that resolved to nothing.
+Invariants:
+    - A `Role` whose tier is not in its class's table raises at construction, at import time,
+      never as a call that resolved to nothing.
 """
 
 from __future__ import annotations
@@ -33,6 +35,15 @@ from typing import Any, ClassVar
 
 @dataclass(frozen=True)
 class Tier:
+    """One resolved tier: a model, a client timeout, and whether the model is self-hosted.
+
+    Attributes:
+        name: The tier's key in the table.
+        model: The model id its `[models]` key names.
+        timeout_s: The client timeout its `[ladder]` rung names, in seconds.
+        box: True when the model group is self-hosted.
+    """
+
     name: str
     model: str
     timeout_s: float
@@ -41,7 +52,13 @@ class Tier:
 
 @dataclass(frozen=True)
 class TierTable:
-    """A parsed tier table: the ladder rungs (seconds), the model groups, the tiers."""
+    """A parsed tier table.
+
+    Attributes:
+        ladder: Rung name to timeout, in seconds.
+        models: Model key to model id.
+        tiers: Tier name to resolved `Tier`.
+    """
 
     ladder: Mapping[str, float]
     models: Mapping[str, str]
@@ -52,10 +69,17 @@ LadderCheck = Callable[[Mapping[str, float], Path], None]
 
 
 def load_tiers(path: Path, *, check_ladder: LadderCheck | None = None) -> TierTable:
-    """Parse and CHECK a tier table. A tier names a `[models]` key and a `[ladder]` rung; an unknown
-    one raises HERE. `check_ladder(ladder, path)` is the consumer's own ordering law over the rungs
-    (e.g. a client timeout that must clear a server deadline); it runs before the tiers resolve and
-    raises ValueError to refuse the table."""
+    """Parse and check a tier table.
+
+    Args:
+        path: The TOML file.
+        check_ladder: The consumer's own ordering rule over the rungs (e.g. a client timeout that
+            must clear a server deadline). Called as `check_ladder(ladder, path)` before the tiers
+            resolve; it raises `ValueError` to refuse the table.
+
+    Raises:
+        ValueError: A tier names a `[models]` key or a `[ladder]` rung the table does not have.
+    """
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
     ladder = {k: float(v) for k, v in raw["ladder"].items()}
     models = {k: str(v) for k, v in raw["models"].items()}
@@ -74,13 +98,29 @@ def load_tiers(path: Path, *, check_ladder: LadderCheck | None = None) -> TierTa
 
 @dataclass(frozen=True)
 class Role:
-    """`name` = `feature.action`. `category` defaults to `name`. `thinking=False` is the self-hosted
-    default: on a hybrid thinker the grammar binds only `content` and reasoning otherwise eats the
-    budget. `settings` carries per-role sampling the tier does not decide (seed, top_p, temperature).
-    `graders` names `call_graders` entries `call.generate` scores every `ok` reply with.
+    """One generation surface and the settings its calls use.
 
-    `TIERS` is the CLASS's tier table -- empty here, so the base class cannot be instantiated; a
-    consumer subclasses with its own (module docstring)."""
+    Attributes:
+        TIERS: The class's tier table. Empty on the base class, so the base class cannot be
+            instantiated; a consumer subclasses it with its own table (see the module docstring).
+        name: `feature.action`.
+        tier: A key of `TIERS`.
+        category: The category a switchboard and a trace group by; defaults to `name`.
+        model: Overrides the tier's model.
+        pack: The prompt pack id.
+        max_tokens: The token ceiling for the reply.
+        temperature: The sampling temperature.
+        thinking: The thinking switch sent to a self-hosted tier; off by default. On a hybrid
+            thinking model the grammar binds only the content, and reasoning otherwise spends the
+            token budget.
+        output_retries: Re-asks allowed when the validator finds problems.
+        timeout_s: Overrides the tier's timeout, in seconds.
+        graders: Names of `call_graders` entries that `call.generate` scores every `ok` reply with.
+        settings: Per-role sampling the tier does not decide (seed, top_p, temperature).
+
+    Raises:
+        ValueError: `tier` is not in `TIERS`.
+    """
 
     TIERS: ClassVar[Mapping[str, Tier]] = {}
 
@@ -105,19 +145,25 @@ class Role:
 
     @property
     def resolved_tier(self) -> Tier:
+        """The `Tier` this role names."""
         return self.TIERS[self.tier]
 
     @property
     def resolved_model(self) -> str:
+        """The role's model override, else the tier's model."""
         return self.model or self.resolved_tier.model
 
     @property
     def resolved_timeout_s(self) -> float:
+        """The role's timeout override, else the tier's timeout, in seconds."""
         return self.timeout_s if self.timeout_s is not None else self.resolved_tier.timeout_s
 
     def model_settings(self) -> dict[str, Any]:
-        """The pydantic-ai ModelSettings this role sends. Self-hosted (`box`) tiers carry the
-        thinking switch (`chat_template_kwargs.enable_thinking`, llama.cpp / vLLM)."""
+        """Return the pydantic-ai `ModelSettings` this role sends.
+
+        A self-hosted tier (`Tier.box`) also carries the thinking switch,
+        `extra_body.chat_template_kwargs.enable_thinking`, which llama.cpp and vLLM read.
+        """
         out: dict[str, Any] = dict(self.settings)
         if self.max_tokens is not None:
             out["max_tokens"] = self.max_tokens

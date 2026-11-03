@@ -1,44 +1,228 @@
 # Changelog
 
-Releases before 0.9.0: the GitHub release notes (`gh release view vX.Y.Z -R mjdevaccount/llm-ports`).
+All notable changes to this project are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Why a design is the way it is lives in
+[`docs/adr/`](docs/adr/).
 
-## 0.11.0 -- 2026-11-03
+## [Unreleased]
 
-Third wave out of trade-data: the reranker port and its HTTP adapter, the Langfuse tracer and prompt source, OpenTelemetry GenAI spans, the generation-observation lifecycle, and the read-only SQL guard. trade-data keeps only its wire (client construction, flags, its category semantics, its schema allowlist).
+## [0.12.0] - 2026-11-03
 
-- `ports`: `Reranker` (the tenth port) + `Reranked` (scores in input order, ORDER-ONLY; never raises for a model, wire or gate failure). Also exported from the package root.
-- `reranker_http` (new): `HttpReranker` over the Cohere/Jina-shaped `/rerank` wire, `payload`, `scores_from`. Laws: every document scored exactly once (indices exactly 0..n-1 -- a duplicate index no longer passes a count check), every score finite; else `invalid`.
-- `index_order` (new): `IndexOrderedTransport` moved here from `pydantic_ai_embedder` (still importable there -- the same object) and extended to `/rerank` replies' `results`, so the index is read in one place for both wires.
-- `observation` (new): `observe(tracer, ...)` -- one generation around a block, ended once (ERROR + `latency_ms` on an exception); `PortObservation` (public; was `call._PortObservation`) with `usage_counts()` and `fail(exc, metadata)`; `opt_int`. Neither usage count reported now also stamps `tokens_unmeasured: true` in the metadata. `call.tracer_trace` is built on `observe`; `call.Observation` is re-exported from here.
-- `langfuse_tracer` (new, extra `langfuse`): `LangfuseTracer(client, ..., on_event=)`, `LangfuseGeneration`, `usage_details`, `trace_id`. `provider` rides `metadata["provider"]` unless the caller set it.
-- `langfuse_prompt_source` (new): `LangfusePromptSource(client, seed_for, ..., on_event=)` -- the repo leads, the label mirrors; duck-typed client, no SDK import.
-- `otel_gen_ai` (new, extra `otel`): `gen_ai_span(tracer, ...)`, `record_gen_ai(tracer, ...)` (back-dated), `GenAiRecorder`; attribute names from `opentelemetry-semantic-conventions`; emits `gen_ai.provider.name` beside the deprecated `gen_ai.system`.
-- `sql_guard` (new, extra `sql`): `guard(sql, policy)`, `SqlGuardPolicy` (adds `dialect`, default postgres), `SqlGuardError`, `FORBIDDEN_NODES`, `POSTGRES_DENY_FUNCTIONS`.
-- `testing`: `StubReranker`. `testing_langfuse` (new, extra `langfuse`): `LangfuseRig` (a real SDK 5 client exporting to memory), `observed`, `FakeLangfusePrompts`, `RefusingLangfuse` (every call raises).
-- Dev group gains langfuse, opentelemetry-sdk, opentelemetry-semantic-conventions and sqlglot (those adapters' tests run in CI).
+No behaviour change and no public name change; the release carries documentation, tooling and
+dependency floors.
 
-## 0.10.0 -- 2026-11-03
+### Added
 
-Second wave out of trade-data: the judge, the judge sampler's pure half, the research and refute passes, and the two grounder adapters. trade-data keeps only its wire (transport, roles, calendar, flags, tables).
+- `numbers.law_text(mode, *, web)`: the number law's one English statement, beside the check it
+  states (`numbers.loose`). `judge_sampling.rubric` composes it; its output is byte-identical to
+  0.11.0 for every grounding mode and web flag, pinned by `tests/test_rubric_golden.py`.
+- Architecture decision records `docs/adr/0001`–`0008` (MADR), holding the rationale and the
+  measured evidence that used to live in docstrings.
+- `CONTRIBUTING.md`: the docstring rules, where history goes, how to release.
+- A `pre-commit` hook that rejects deployment vocabulary in `llm_ports/`, run in CI.
+- CI: pytest on Python 3.12, 3.13, 3.14 and 3.15 (Ubuntu) and 3.13 (Windows); the suite at every
+  dependency's declared lower bound (`--resolution lowest-direct`); a branch-coverage floor with
+  Codecov upload over OIDC; `ruff format --check`; `twine check --strict` on the build; `zizmor`
+  over the workflows; every workflow defaults to `permissions: {}`.
 
-- `pydantic_evals_judge` (new, extra `evals`): `PydanticEvalsJudge(role, model=|model_for=)`, `JUDGE_PROFILE`, `clean_reason`, `verdict_of`, `judge_inputs`.
-- `judge_sampling` (new): `Seen`, `seen_for`, `schema_of`, `judge_input`, `reply_text`, `sample_key`, `selected`, `rubric(role, seen, *, platform, mode, today, tz_label)`, `verdict_label`.
-- `lettucedetect_grounder` (new, extra `lettucedetect`): `LettuceDetectGrounder`, `load_detector`, `Detector`, `MODEL`, `MAX_CONTEXT_CHARS`, `WINDOW_REASON`.
-- `grounder_http` (new): `HttpGrounder`, `GrounderUnavailable`, `payload`.
-- `claim_refute`: `refute_slots`, `refute_prompt(pack, ...)`, `refute(generate, role, *, pack, ...)`, `RefuteClaim`, `GenerateFn`.
-- `json_schema`: `research_schema`, `RESEARCH_ANALYSIS`, `ANALYSIS_KEY`, `without_analysis`, `research(generate, role, ...)`.
-- `testing`: `StubDetector`.
-- Dev group gains `pydantic-evals` (the judge's tests run in CI); `lettucedetect` stays out of it (its tests run over `StubDetector`).
+### Changed
 
-## 0.9.0 -- 2026-11-03
+- Every docstring states the contract in Google style, with invariants in an `Invariants:`
+  section; ruff's `D` rules (Google convention) enforce the layout.
+- The tree is formatted with `ruff format`.
+- Dependency floors match what is tested: `pydantic>=2.12` (already required by
+  `pydantic-ai-slim>=2.57`) and, for the `sql` extra, `sqlglot>=30.22`. Older sqlglot drops
+  `LIMIT ALL` at parse time, so `sql_guard.guard` capped the query instead of refusing it.
 
-Generic LLM/RAG mechanics moved out of trade-data (its first wave; trade-data keeps only the EDGE wiring).
+### Fixed
 
-- `chunking` (new): `chunk_text`, `break_floor`, `max_chars_for_chunks` (tight worst-case bound), `content_hash`, `should_ingest`, `CHUNK_CHARS` / `CHUNK_OVERLAP`.
-- `retrieval_metrics` (new): `first_rank`, `hit_at_k`, `reciprocal_rank`, `agree_at_k`, `mean`, `clears`.
-- `reference` (new): `GauntletEvaluator`, `NumberLawGrounder`, `RepoPromptSource`, `NoopTracer` / `NoopGeneration`.
-- `pydantic_ai_replay` (new): `Recorder`, `replay`, `Recording`, `key`, `NotRecorded`.
-- `testing`: `StubCiter`, `StubPromptSource`.
-- `ports`: `Seed` (a prompt's repo copy; also exported from the package root).
-- `call_graders`: `TEXT_ONLY_GRADERS`, `graders_for_inputs`.
-- `call.generate`: drops `TEXT_ONLY_GRADERS` for a call with `images=` or the new `web=True`, so an image or a web tier no longer fails `numbers_from_inputs` by construction. With no `trace` hook the call now observes into `tracer_trace(NoopTracer())` -- one null sink in the package (the private `_NullObservation` is gone).
+- `content.print_gate` and `DataClass.allows` document the `ValueError` they raise for an audience
+  outside `AUDIENCES`; the old text said `print_gate` never raised.
+
+## [0.11.0] - 2026-11-03
+
+### Added
+
+- `ports.Reranker`, the tenth port, and `Reranked` (scores in input order, order-only; never
+  raises for a model, wire or gate failure). Also exported from the package root.
+- `reranker_http`: `HttpReranker` over the Cohere/Jina-shaped `/rerank` wire, `payload`,
+  `scores_from`. Every document is scored exactly once (indices exactly `0..n-1`) and every score
+  is finite, or the result is `invalid`.
+- `observation`: `observe(tracer, ...)` opens one generation around a block and ends it once
+  (`ERROR` and `latency_ms` on an exception); `PortObservation` (was `call._PortObservation`) with
+  `usage_counts()` and `fail(exc, metadata)`; `opt_int`. A call that reported neither usage count
+  stamps `tokens_unmeasured: true`. `call.tracer_trace` is built on `observe`.
+- `langfuse_tracer` (extra `langfuse`): `LangfuseTracer(client, ..., on_event=)`,
+  `LangfuseGeneration`, `usage_details`, `trace_id`.
+- `langfuse_prompt_source`: `LangfusePromptSource(client, seed_for, ..., on_event=)`; the repo
+  leads and the label mirrors. Duck-typed client, no SDK import.
+- `otel_gen_ai` (extra `otel`): `gen_ai_span`, `record_gen_ai` (back-dated), `GenAiRecorder`;
+  attribute names from `opentelemetry-semantic-conventions`, emitting `gen_ai.provider.name`
+  beside the deprecated `gen_ai.system`.
+- `sql_guard` (extra `sql`): `guard(sql, policy)`, `SqlGuardPolicy` (with `dialect`, default
+  postgres), `SqlGuardError`, `FORBIDDEN_NODES`, `POSTGRES_DENY_FUNCTIONS`.
+- `testing.StubReranker`; `testing_langfuse` (extra `langfuse`): `LangfuseRig`, `observed`,
+  `FakeLangfusePrompts`, `RefusingLangfuse`.
+
+### Changed
+
+- `index_order.IndexOrderedTransport` moved out of `pydantic_ai_embedder` (still importable
+  there, the same object) and also orders `/rerank` replies' `results`.
+
+## [0.10.0] - 2026-11-03
+
+### Added
+
+- `pydantic_evals_judge` (extra `evals`): `PydanticEvalsJudge(role, model=|model_for=)`,
+  `JUDGE_PROFILE`, `clean_reason`, `verdict_of`, `judge_inputs`.
+- `judge_sampling`: `Seen`, `seen_for`, `schema_of`, `judge_input`, `reply_text`, `sample_key`,
+  `selected`, `rubric(role, seen, *, platform, mode, today, tz_label)`, `verdict_label`.
+- `lettucedetect_grounder` (extra `lettucedetect`): `LettuceDetectGrounder`, `load_detector`,
+  `Detector`, `MODEL`, `MAX_CONTEXT_CHARS`, `WINDOW_REASON`.
+- `grounder_http`: `HttpGrounder`, `GrounderUnavailable`, `payload`.
+- `claim_refute`: `refute_slots`, `refute_prompt(pack, ...)`, `refute(generate, role, *, pack, ...)`,
+  `RefuteClaim`, `GenerateFn`.
+- `json_schema`: `research_schema`, `RESEARCH_ANALYSIS`, `ANALYSIS_KEY`, `without_analysis`,
+  `research(generate, role, ...)`.
+- `testing.StubDetector`.
+
+## [0.9.0] - 2026-11-03
+
+### Added
+
+- `chunking`: `chunk_text`, `break_floor`, `max_chars_for_chunks`, `content_hash`,
+  `should_ingest`, `CHUNK_CHARS`, `CHUNK_OVERLAP`.
+- `retrieval_metrics`: `first_rank`, `hit_at_k`, `reciprocal_rank`, `agree_at_k`, `mean`, `clears`.
+- `reference`: `GauntletEvaluator`, `NumberLawGrounder`, `RepoPromptSource`, `NoopTracer`,
+  `NoopGeneration`.
+- `pydantic_ai_replay`: `Recorder`, `replay`, `Recording`, `key`, `NotRecorded`.
+- `testing.StubCiter`, `testing.StubPromptSource`; `ports.Seed` (also exported from the root).
+- `call_graders.TEXT_ONLY_GRADERS`, `graders_for_inputs`.
+
+### Changed
+
+- `call.generate` drops `TEXT_ONLY_GRADERS` for a call with `images=` or the new `web=True`, so an
+  image or a web tier no longer fails `numbers_from_inputs` by construction. With no `trace` hook
+  the call observes into `tracer_trace(NoopTracer())`, the package's one null sink.
+
+## [0.8.1] - 2026-11-03
+
+### Fixed
+
+- `IndexOrderedTransport` re-sorts an `/embeddings` reply's `data` by `index`. pydantic-ai drops
+  `index`, so a server answering out of order put every vector on its neighbour's row, which the
+  count check cannot see. `openai_compatible_embeddings` always wraps its transport with it.
+
+## [0.8.0] - 2026-11-03
+
+### Added
+
+- `ports.Embedder`, the ninth port, and `Embedded(vectors, outcome, stamp, reason, input_tokens)`:
+  one vector per text in one named space; `input_tokens=None` when the wire reported no usage.
+- `pydantic_ai_embedder.PydanticAIEmbedder` on pydantic-ai's `OpenAIEmbeddingModel`: count and
+  dimension checks (a short batch or a wrong dimension is `invalid`, never a partial result),
+  batching, an asymmetric query prefix, and the generator's never-raise outcome classification.
+- `openai_compatible_embeddings(base_url, model_name, key, transport=)`.
+- `testing.StubEmbedder`: deterministic hashed unit vectors.
+
+## [0.7.0] - 2026-11-03
+
+### Added
+
+- `content`: `ContentItem` (`prov:Entity`), `Activity` (`prov:Activity`), `DataClass` (rights
+  `public < owned < licensed < scraped`, `private`, `link_required`; `join` takes the most
+  restrictive), `CEILING` per audience, and `print_gate(item, audience) -> GateVerdict`: ok, or one
+  named refusal (`rights`, `unclaimed`, `uncited`, `unsourced`, `link`).
+
+## [0.6.0] - 2026-10-31
+
+### Added
+
+- `slots.to_prose(text)`: context a digit-free grammar can read with no figure to reach for. Every
+  digit run is removed whole (`numbers.DIGITS`), every character outside `PROSE_CHARS` becomes a
+  space.
+
+### Fixed
+
+- `__version__` matches the package version (it said 0.3.0).
+
+## [0.5.0] - 2026-10-31
+
+### Added
+
+- `call_graders.nullable_paths(model)`: the nullable leaf paths of a pydantic model.
+
+### Changed
+
+- `call_graders.schema_complete` reads a None on a nullable pydantic field as an answer; a None on
+  a required field still fails, and a dict value is graded as before.
+
+## [0.4.0] - 2026-10-29
+
+### Added
+
+- `numbers.loose(text, allowed, words_ok)`: the number law in one function. Digit runs by value
+  not in `allowed`, then spelled numbers and number-word tails not in `words_ok`, in order and
+  named.
+- `grounding.loose`, `slots.loose`; `grounding.belt` and `slots.belt` count `loose`.
+
+### Changed
+
+- `numbers.uncited` is `loose` sorted into the cited-spans shape (same results on every pinned case).
+- `call_graders.numbers_from_inputs` scores the distinct figures of `loose`, so spelled numbers
+  count; the prompt's own words and a `%` license them.
+
+## [0.3.0] - 2026-10-28
+
+### Added
+
+- `slots`: grounded prose by construction. `PROSE_CHARS`, `prose_pattern`, `slot_pattern` (the
+  digit-free grammar), `SLOT`, `ID`, `cited`, `fill`, `problems` (unknown slot, stray brace, cited
+  twice), `belt` over filled text.
+- `numbers.canon` and `numbers.digits`: digit runs compare by value ("2.20" == "2.2").
+
+### Changed
+
+- `grounding.belt` compares digit runs by value.
+
+## [0.2.0] - 2026-10-23
+
+### Added
+
+- `grounding`: `Problem(path, reason, detail="")`, `describe`, `retry_message`,
+  `belt(text, allowed, words_ok, *, strip_links)`, `allowed_numbers(texts)`.
+- `failure_reason(exc, *, with_cause=False)`: an optional ` <- <cause reason>` tail, cut by the
+  same body-safe rule and within `REASON_MAX`.
+
+## [0.1.1] - 2026-10-22
+
+### Added
+
+- `py.typed` (PEP 561).
+- A release workflow: a `v*` tag builds the wheel and sdist from the tagged commit, refuses a
+  tag that does not match the package version, and attaches both to a GitHub release.
+
+## [0.1.0] - 2026-10-22
+
+### Added
+
+- The ports (Protocols and frozen value types), roles over a consumer's tier table, prompt packs
+  named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
+  pydantic-ai `Generator` adapter, and test doubles.
+
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/mjdevaccount/llm-ports/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/mjdevaccount/llm-ports/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/mjdevaccount/llm-ports/releases/tag/v0.1.0

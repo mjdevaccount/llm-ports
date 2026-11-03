@@ -1,36 +1,32 @@
-"""call_graders -- deterministic graders over ONE generation: the prompt in, the value out.
+"""Deterministic graders over one generation: the prompt in, the value out.
 
-Pure. A `CallGrader` is `(prompt, value, role) -> CallScore`: a NUMERIC value (what a trace score
-and a dashboard can sum), a pass/fail against the grader's own bar, and a reason that names the
+Pure. A `CallGrader` is `(prompt, value, role) -> CallScore`: a numeric value (what a trace score
+and a dashboard can sum), a pass or fail against the grader's own bar, and a reason that names the
 violated property on failure. `call.generate` runs the graders a `Role.graders` names on every
-`ok` reply and writes each as a score on the call's trace observation; a golden eval runs the SAME
+`ok` reply and writes each as a score on the call's trace observation. A golden eval runs the same
 functions over a pack's golden set (`board_graders`), so the live score and the offline verdict
-can never disagree about what "complete" or "echoed" means.
+agree on what "complete" or "echoed" means.
 
-Three built-in graders, for the `structured` family (dict or pydantic outputs under a grammar):
+Built-in graders, for structured outputs (a dict or pydantic value under a grammar):
 
-  schema_complete      share of fields that carry a value. A strict grammar admits `""` for every
-                       required key, so "parsed" is not "answered". An EMPTY LIST is an answer
-                       (prompts ask for `[]` when nothing applies), so only None and blank text
-                       count as unanswered -- and for a PYDANTIC value, a None on a field whose
-                       annotation admits None (`float | None`, `Optional[X]`) is an answer too:
-                       the schema declared "unknown" legal and the prompt ordered null when the
-                       source never stated the figure, so an honest reply must not fail by
-                       construction. A None on a REQUIRED field still fails; a dict value (no
-                       annotations to read) is graded exactly as before.
-  numbers_from_inputs  figures in the reply's prose that no part of the prompt rendered: digit
-                       runs by value AND spelled numbers (`numbers.loose`, the one number law;
-                       a digit-free grammar made models SPELL the figure, so a digits-only
-                       grader passed what the writers' belts refused). The number law, per call.
-  echo                 share of the reply's sentences copied verbatim from the prompt. A model
-                       that hands the evidence back is not analysing it.
+- `schema_complete`: the share of fields that carry a value. A strict grammar admits `""` for
+  every required key, so a parsed reply is not necessarily an answered one. An empty list is an
+  answer; only None and blank text count as unanswered. On a pydantic value, None on a field whose
+  annotation admits None (`float | None`, `Optional[X]`) is an answer too, while None on a required
+  field fails. A dict value has no annotations to read, so every None in it is unanswered.
+- `numbers_from_inputs`: figures in the reply's prose that no part of the prompt rendered, digit
+  runs by value and spelled numbers alike (`numbers.loose`): the number law, per call.
+- `echo`: the share of the reply's sentences copied verbatim from the prompt.
 
-A consumer adds its OWN graders by passing a table (`{**GRADERS, "mine": fn}`) to `score_all` /
-`board_graders` / `call.Hooks(graders=...)`; `GRADERS` itself is never mutated by this package.
+A consumer adds its own graders by passing a table (`{**GRADERS, "mine": fn}`) to `score_all`,
+`board_graders` or `call.Hooks(graders=...)`. This package never mutates `GRADERS`.
 
-NEVER RAISES: `score_all` turns a grader's exception into a FAILED score of value -1 (below every
-honest value, all of which are >= 0) whose reason names the exception -- a crashed detector
-must not read as a pass.
+Invariants:
+    - `score_one` and `score_all` never raise. A grader's exception becomes a failed score of value
+      `CRASHED` (-1, below every honest value, all of which are >= 0) whose reason names the
+      exception, so a crashed grader never reads as a pass.
+
+Rationale: ADR-0003.
 """
 
 from __future__ import annotations
@@ -46,27 +42,39 @@ from pydantic import BaseModel
 from llm_ports.numbers import digits, loose
 from llm_ports.roles import Role
 
-ECHO_MAX_SHARE = 0.5  # bar for `echo`: half the sentences copied is a reply, not an analysis
+ECHO_MAX_SHARE = 0.5  # `echo` fails at or above this share of copied sentences
 ECHO_MIN_CHARS = 40  # a sentence shorter than this is a label ("unclear", a key), not prose
 CRASHED = -1.0  # the value of a grader that raised; every honest value is >= 0
 _SENTENCE = re.compile(r"[.!?\n]+")
 _WS = re.compile(r"\s+")
-_INDEX = re.compile(r"\[\d+\]")  # `tickers[3].entry_low` -> `tickers[].entry_low`: the field, not the row
+_INDEX = re.compile(r"\[\d+\]")  # `items[3].price` -> `items[].price`: the field, not the row
 
 
 @dataclass(frozen=True)
 class CallScore:
+    """One grader's verdict on one reply.
+
+    Attributes:
+        name: The grader's name.
+        value: The numeric score; `CRASHED` when the grader raised.
+        passed: Whether the value meets the grader's own bar.
+        reason: Empty on a pass; names the violated property on a failure.
+    """
+
     name: str
     value: float
     passed: bool
-    reason: str = ""  # empty on pass; names the violated property on failure
+    reason: str = ""
 
 
 CallGrader = Callable[[str, Any, Role], CallScore]
 
 
 def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
-    """(path, scalar) for every leaf of a dict / pydantic / list value, in order. Pure."""
+    """Yield `(path, scalar)` for every leaf of a dict, pydantic or list value, in order.
+
+    Pure. An empty list is itself a leaf.
+    """
     dump = getattr(value, "model_dump", None)
     if callable(dump):
         value = dump()
@@ -75,7 +83,7 @@ def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
             yield from leaves(v, f"{path}.{k}" if path else str(k))
     elif isinstance(value, (list, tuple)):
         if not value:
-            yield path, value  # an empty list IS a leaf: the field answered nothing
+            yield path, value  # an empty list is a leaf: the field answered nothing
         for i, v in enumerate(value):
             yield from leaves(v, f"{path}[{i}]")
     else:
@@ -83,7 +91,7 @@ def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
 
 
 def prose(value: Any) -> list[str]:
-    """Every string leaf of the reply: what the number law and the echo check read."""
+    """Return every string leaf of the reply: what the number law and the echo check read."""
     return [v for _p, v in leaves(value) if isinstance(v, str)]
 
 
@@ -92,7 +100,7 @@ def _empty(v: Any) -> bool:
 
 
 def _admits_none(ann: Any) -> bool:
-    """Does the annotation accept None (`X | None`, `Optional[X]`, `Annotated[X | None, ...]`)?"""
+    """Return whether the annotation accepts None (`X | None`, `Optional[X]`, `Annotated[X | None, ...]`)."""
     if ann is None or ann is type(None):
         return True
     origin = get_origin(ann)
@@ -102,8 +110,11 @@ def _admits_none(ann: Any) -> bool:
 
 
 def _models_in(ann: Any, suffix: str = "") -> Iterator[tuple[str, type[BaseModel]]]:
-    """(path suffix, model) for every BaseModel an annotation reaches: `""` for the model itself
-    or through a union, `[]` per list/tuple/set layer -- the spelling `leaves` emits, index-free."""
+    """Yield `(path suffix, model)` for every `BaseModel` an annotation reaches.
+
+    The suffix is `""` for the model itself or through a union, plus `[]` per list, tuple or set
+    layer: the spelling `leaves` emits, without indexes.
+    """
     if isinstance(ann, type) and issubclass(ann, BaseModel):
         yield suffix, ann
         return
@@ -118,9 +129,12 @@ def _models_in(ann: Any, suffix: str = "") -> Iterator[tuple[str, type[BaseModel
 
 
 def nullable_paths(model: type[BaseModel], prefix: str = "", _seen: frozenset[type] = frozenset()) -> frozenset[str]:
-    """Index-free leaf paths (`tickers[].entry_low`) of every field whose annotation admits None,
-    through nested models and lists of models. Read off the class, so it never depends on which
-    rows a reply happened to carry. A self-referential model stops at its own repeat. Pure."""
+    """Return the index-free leaf paths of every field whose annotation admits None.
+
+    Pure. Paths (`items[].price`) run through nested models and lists of models. They are read off
+    the class, so they never depend on which rows a reply carried. A self-referential model stops at
+    its own repeat.
+    """
     out: set[str] = set()
     seen = _seen | {model}
     for name, field in model.model_fields.items():
@@ -134,6 +148,11 @@ def nullable_paths(model: type[BaseModel], prefix: str = "", _seen: frozenset[ty
 
 
 def schema_complete(_prompt: str, value: Any, _role: Role) -> CallScore:
+    """Score the share of the reply's fields that carry a value.
+
+    Passes only when no field is unanswered. None and blank text are unanswered; an empty list is an
+    answer, and so is None on a pydantic field whose annotation admits None.
+    """
     fields = list(leaves(value))
     if not fields:
         return CallScore("schema_complete", 0.0, False, "the reply carries no fields")
@@ -144,8 +163,13 @@ def schema_complete(_prompt: str, value: Any, _role: Role) -> CallScore:
 
 
 def numbers_from_inputs(prompt: str, value: Any, _role: Role) -> CallScore:
-    """Distinct figures (digit runs by value, spelled numbers) in the reply's prose that the prompt
-    did not render; the prompt's own text licenses a spelled word and '%' licenses 'percent'."""
+    """Count the distinct figures in the reply's prose that the prompt did not render.
+
+    Digit runs compare by value, and spelled numbers count too (`numbers.loose`). The prompt's own
+    text licenses a spelled word, and '%' licenses 'percent'. Passes only at zero.
+
+    Rationale: ADR-0003.
+    """
     have = digits(prompt)
     hits = sorted({n for s in prose(value) for n in loose(s, have, prompt)})
     return CallScore(
@@ -158,6 +182,11 @@ def _sentences(text: str) -> list[str]:
 
 
 def echo(prompt: str, value: Any, _role: Role) -> CallScore:
+    """Score the share of the reply's sentences copied verbatim from the prompt.
+
+    The compare ignores case and whitespace, and a sentence shorter than `ECHO_MIN_CHARS` is not
+    counted; a reply with no counted sentence passes at 0. Fails at or above `ECHO_MAX_SHARE`.
+    """
     hay = _WS.sub(" ", prompt).lower()
     sents = [s for p in prose(value) for s in _sentences(p)]
     if not sents:
@@ -174,7 +203,7 @@ def echo(prompt: str, value: Any, _role: Role) -> CallScore:
     )
 
 
-#: By name, because a Role names its graders as strings (data, comparable, printable).
+#: The built-in graders by name; a `Role` names its graders as strings (data, comparable, printable).
 GRADERS: dict[str, CallGrader] = {
     "schema_complete": schema_complete,
     "numbers_from_inputs": numbers_from_inputs,
@@ -182,19 +211,20 @@ GRADERS: dict[str, CallGrader] = {
 }
 
 
-#: Graders whose verdict is only true when the prompt TEXT is the call's whole input. Every grader
-#: is `(prompt, value, role)`: an image sent beside the prompt is invisible to it, and so are the
-#: pages a web-fetching tier read. `numbers_from_inputs` asks "did the reply write a number no input
-#: rendered" -- a chart read's figures come off the IMAGE, a research reply's off the PAGES -- so on
-#: such a call every honest reply fails it, and a guard that always fails carries as little
-#: information as one that never fires. `call.generate` drops these for any call with an image
-#: (`images=`) or a web tier (`web=True`); a text-only call keeps every grader its role names.
+#: Graders whose verdict holds only when the prompt text is the call's whole input. A grader sees
+#: `(prompt, value, role)`, so an image sent beside the prompt is invisible to it, as are the pages
+#: a web-fetching tier read. `numbers_from_inputs` fails every honest reply on such a call: a chart
+#: read's figures come off the image, a research reply's off the pages. `call.generate` drops these
+#: for any call with `images=` or `web=True`; a text-only call keeps every grader its role names.
 TEXT_ONLY_GRADERS: frozenset[str] = frozenset({"numbers_from_inputs"})
 
 
 def graders_for_inputs(graders: tuple[str, ...], *, has_images: bool, has_web: bool = False) -> tuple[str, ...]:
-    """Pure. The graders that can see this call's inputs: all of them for text, minus
-    TEXT_ONLY_GRADERS when an image rides beside the prompt or the tier fetches the web. Order kept."""
+    """Return the graders that can see this call's inputs, in their given order.
+
+    Pure. A text-only call keeps all of them; an image beside the prompt or a web-fetching tier
+    removes `TEXT_ONLY_GRADERS`.
+    """
     if has_images or has_web:
         return tuple(g for g in graders if g not in TEXT_ONLY_GRADERS)
     return graders
@@ -203,21 +233,23 @@ def graders_for_inputs(graders: tuple[str, ...], *, has_images: bool, has_web: b
 def score_one(
     name: str, prompt: str, value: Any, role: Role, table: Mapping[str, CallGrader] | None = None
 ) -> CallScore:
-    """One grader by name (from `table`, default `GRADERS`); an unknown name or a raise is a
-    FAILED score, never an exception."""
+    """Run one grader by name from `table` (default `GRADERS`).
+
+    Never raises: an unknown name or a grader exception becomes a failed score of value `CRASHED`.
+    """
     fn = (GRADERS if table is None else table).get(name)
     if fn is None:
         return CallScore(name, CRASHED, False, f"no grader named {name!r}")
     try:
         return fn(prompt, value, role)
-    except Exception as exc:  # a crashed detector must not exit 0
+    except Exception as exc:  # a crashed grader must not read as a pass
         return CallScore(name, CRASHED, False, f"grader raised {type(exc).__name__}: {exc}"[:200])
 
 
 def score_all(
     role: Role, prompt: str, value: Any, table: Mapping[str, CallGrader] | None = None
 ) -> tuple[CallScore, ...]:
-    """Every grader the role names, in the role's order. Never raises."""
+    """Run every grader the role names, in the role's order; never raises."""
     return tuple(score_one(n, prompt, value, role, table) for n in role.graders)
 
 
@@ -225,9 +257,12 @@ def board_graders(
     role: Role,
     table: Mapping[str, CallGrader] | None = None,
 ) -> dict[str, Callable[[dict[str, Any]], tuple[bool, str]]]:
-    """The same graders in the `Evaluator` row shape (`ports.Grader`): a golden row carries
-    `prompt` and `value`; a row whose model never answered (`value is None`) fails every grader
-    with its `reason`, so the board names the outage rather than grading an absence."""
+    """Return the same graders in the `Evaluator` row shape (`ports.Grader`).
+
+    A golden row carries `prompt` and `value`. A row whose model never answered (`value is None`)
+    fails every grader with its `reason`, so the board names the outage rather than grading an
+    absence.
+    """
 
     def bind(name: str) -> Callable[[dict[str, Any]], tuple[bool, str]]:
         def grader(row: dict[str, Any]) -> tuple[bool, str]:

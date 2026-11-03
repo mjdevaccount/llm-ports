@@ -1,25 +1,28 @@
-"""packs -- load and fingerprint prompt packs: `<root>/<id>/pack.yaml` + the `.j2` it names.
+"""Load and fingerprint prompt packs: `<root>/<id>/pack.yaml` and the `.j2` templates it names.
 
-The repo file is the truth, a content SHA names the text, a managed store (if any) holds a
-labelled mirror. A pack ships with the code it serves; the consumer names the root directory.
+The repo file is the source of truth, a content sha names the text, and a managed store, if any,
+holds a labelled mirror. A pack ships with the code it serves; the consumer names the root
+directory. Mirroring to a managed store is a `PromptSource` adapter's job, and the mirror never
+decides what the text is.
 
-CONTINUITY BY CONSTRUCTION. `Pack.content_sha` is sha256[:16] over the template SOURCE, and a
-single-template pack hashes exactly that one source, so a prompt that MOVES into a pack keeps the
-sha its recording was graded under. Multi-template packs hash `first + NEWLINE + second ...` in
-manifest order. Over source, never over a render: a render depends on the context. A persisted
-stamp may never change algorithm (a changed stamp for unchanged content reads as a config change
-that never happened), so `sha` is frozen and tests pin it on fixed inputs.
+`Pack.content_sha` is sha256, cut to 16 hex characters, over the template source. A
+single-template pack hashes exactly that one source; a multi-template pack hashes the sources
+joined by one newline, in manifest order. The hash is over the source, never a render, because a
+render depends on its context.
 
-The Jinja2 environment: StrictUndefined, trim_blocks, lstrip_blocks, no autoescape, no trailing
-newline. A missing slot RAISES.
+Templates render in a Jinja2 environment with `StrictUndefined`, `trim_blocks` and
+`lstrip_blocks`, no autoescape and no trailing newline.
 
-FAIL CLOSED ON THE PACK. A malformed manifest, a template that will not parse, a file the
-manifest names but the directory lacks: `PromptPackInvalid`, never a fallback to an inline string.
-`scan()` keeps every invalid pack as a NAMED row (`id -> reason`) so a gauge or a health block can
-say which one, instead of a quiet skip. A managed-store mirror is a `PromptSource` adapter's job;
-it never decides what the text IS -- the repo does, at every boot.
+Invariants:
+    - No database and no network: the module reads files and hashes text.
+    - A prompt that moves into a single-template pack keeps its content sha.
+    - The sha algorithm never changes; tests pin it on fixed inputs.
+    - A missing template variable raises at render time.
+    - A pack fails closed: a malformed manifest, a template that does not parse, or a file the
+      manifest names but the directory lacks raises `PromptPackInvalid`, never falls back to an
+      inline string. `scan` reports each invalid pack by id instead of skipping it.
 
-Zero DB, zero network: this module reads files and hashes text.
+Rationale: ADR-0008.
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ class PromptPackInvalid(ValueError):
 
 
 def _env(pack_dir: Path) -> Environment:
-    # FROZEN knobs: a template moved into a pack must render byte-equal to where it came from.
+    # These settings are fixed: a template moved into a pack renders byte-equal to its old output.
     return Environment(
         loader=FileSystemLoader(str(pack_dir)),
         autoescape=False,
@@ -56,50 +59,79 @@ def _env(pack_dir: Path) -> Environment:
 
 @dataclass(frozen=True)
 class Pack:
+    """One loaded prompt pack.
+
+    Attributes:
+        manifest: The validated manifest.
+        dir: The pack's directory.
+        sources: Template name to source text, in manifest order.
+        content_sha: The `content_sha` of the sources.
+    """
+
     manifest: PackManifest
     dir: Path
-    sources: dict[str, str]  # template name -> source text, manifest order
+    sources: dict[str, str]
     content_sha: str
 
     @property
     def id(self) -> str:
+        """The pack id, `feature.action`."""
         return self.manifest.id
 
     @property
     def source(self) -> str:
-        """The primary template's source -- what a single-template pack's sha is over."""
+        """The primary template's source; a single-template pack's sha is over this text."""
         return self.sources[PRIMARY_TEMPLATE]
 
     def stamp(self) -> dict[str, str]:
-        """What a writer puts beside an output row: `{pack, version, sha}` (the marker says WHAT
-        changed -- version says the kind, sha says the text)."""
+        """Return the stamp a writer stores beside an output row: `{pack, version, sha}`.
+
+        The version says what kind of change the text had; the sha says whether it changed.
+        """
         return {"pack": self.id, "version": self.manifest.version, "sha": self.content_sha}
 
     def stamp_str(self) -> str:
+        """Return the stamp as one string, `<id>@<version>+<sha>`."""
         return f"{self.id}@{self.manifest.version}+{self.content_sha}"
 
     def render(self, name: str = PRIMARY_TEMPLATE, /, **ctx: Any) -> str:
-        """Render one template of this pack. StrictUndefined: a missing slot raises."""
+        """Render the template `name` of this pack with `ctx`.
+
+        Raises:
+            jinja2.UndefinedError: The template reads a variable `ctx` does not supply.
+        """
         return _env(self.dir).get_template(self.manifest.templates[name]).render(**ctx)
 
     def render_source(self, source: str, **ctx: Any) -> str:
-        """Render CANDIDATE text under this pack's environment (the eval judges text the image
-        does not carry yet -- the box runs the old image while a PR is open)."""
+        """Render candidate template text under this pack's environment.
+
+        Lets an eval grade a template revision that is not yet the pack's installed source.
+        """
         return _env(self.dir).from_string(source).render(**ctx)
 
 
 def sha(text: str, *, n: int = 16) -> str:
-    """sha256 hex over a string, truncated to n chars. FROZEN (continuity): stamps are persisted."""
+    """Return the sha256 hex digest of `text`, cut to `n` characters.
+
+    Invariants:
+        - The algorithm never changes: stamps built on it are persisted.
+    """
     return hashlib.sha256(text.encode()).hexdigest()[:n]
 
 
 def content_sha(sources: list[str]) -> str:
-    """`sha` over the sources joined by one newline; ONE source hashes as itself (continuity)."""
+    """Return `sha` over the sources joined by one newline; a single source hashes as itself."""
     return sha(sources[0] + "".join("\n" + s for s in sources[1:]))
 
 
 def load(pack_id: str, root: Path) -> Pack:
-    """Read, validate and fingerprint one pack. Raises PromptPackInvalid naming the defect."""
+    """Read, validate and fingerprint the pack `pack_id` under `root`.
+
+    Raises:
+        PromptPackInvalid: The manifest is missing, unreadable or invalid, its id is not the
+            directory name, or a template it names is missing or does not parse. The message
+            names the pack and the defect.
+    """
     pack_dir = root / pack_id
     manifest_path = pack_dir / MANIFEST
     if not manifest_path.is_file():
@@ -132,9 +164,14 @@ def load(pack_id: str, root: Path) -> Pack:
 
 
 def scan(root: Path) -> tuple[tuple[Pack, ...], dict[str, str]]:
-    """Every pack directory under `root`: (loaded packs, {id: why} for the ones that failed). A
-    directory with no manifest is not a pack (a README beside the packs is not a finding). An
-    invalid pack is a NAMED row here, never a quiet skip."""
+    """Load every pack directory under `root`, keeping the ones that fail by name.
+
+    A directory with no manifest is not a pack and is not reported. A missing `root` returns
+    `((), {})`.
+
+    Returns:
+        The loaded packs, and `{id: reason}` for each invalid pack.
+    """
     packs: list[Pack] = []
     invalid: dict[str, str] = {}
     if not root.is_dir():
@@ -148,8 +185,14 @@ def scan(root: Path) -> tuple[tuple[Pack, ...], dict[str, str]]:
 
 
 def registry(root: Path) -> tuple[Pack, ...]:
-    """Every pack, STRICT: one invalid pack raises (a consumer's `every pack loads` test is this call).
-    Runtime readers that must keep serving the valid ones use `scan()`."""
+    """Load every pack under `root`, strictly.
+
+    Suits a test that every pack loads. A runtime reader that must keep serving the valid packs
+    uses `scan` instead.
+
+    Raises:
+        PromptPackInvalid: Any pack is invalid; the message joins every pack's reason.
+    """
     packs, invalid = scan(root)
     if invalid:
         raise PromptPackInvalid("; ".join(invalid.values()))
@@ -157,12 +200,19 @@ def registry(root: Path) -> tuple[Pack, ...]:
 
 
 def served_shas(root: Path) -> dict[str, str]:
-    """{pack id: content sha} of every LOADABLE pack -- the 'served' side of the unevaluated gauge."""
+    """Return `{pack id: content sha}` for every loadable pack: the served side of `unevaluated`."""
     packs, _ = scan(root)
     return {p.id: p.content_sha for p in packs}
 
 
 def unevaluated(served: dict[str, str], evaluated: dict[str, str]) -> list[str]:
-    """Pack ids whose SERVED sha is not the sha of their newest pass|fail grade: a pack change
-    reads as due until it has been graded. ONE definition, for every reader of "unevaluated"."""
+    """Return the pack ids whose served sha is not the sha of their newest pass or fail grade.
+
+    A changed pack reads as due until it has been graded. This is the one definition of
+    "unevaluated"; every reader uses it.
+
+    Args:
+        served: `{pack id: content sha}` as served (see `served_shas`).
+        evaluated: `{pack id: sha}` of each pack's newest pass or fail grade.
+    """
     return sorted(pid for pid, sha in served.items() if evaluated.get(pid) != sha)

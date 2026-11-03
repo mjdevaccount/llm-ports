@@ -1,30 +1,35 @@
-"""PydanticAIEmbedder -- the `Embedder` port on pydantic-ai's embeddings (OUR seam, THEIR impl).
+"""The `Embedder` port implemented on pydantic-ai's embeddings.
 
-pydantic-ai's `OpenAIEmbeddingModel` does the wire (`/v1/embeddings` on any OpenAI-compatible
-endpoint: a LiteLLM gateway, llama.cpp's server, OpenAI itself). This adapter adds only what a
+pydantic-ai's `OpenAIEmbeddingModel` speaks the wire (`/v1/embeddings` on any OpenAI-compatible
+endpoint: a LiteLLM gateway, llama.cpp's server, OpenAI itself). This adapter adds what a vector
 store needs and the framework does not promise:
 
-  * the STAMP -- the space every vector lands in (model identity + dims), constant per embedder;
-  * the LAWS -- one vector per input in input order, every vector `dims` long, or the whole call
-    is `invalid` (a 512-d vector in a 1024 column cosines against garbage; a short batch shifts
-    every later vector onto the wrong row);
-  * batching (`batch_size` inputs per request) and the asymmetric QUERY prefix (`query_instruct`,
-    e.g. Qwen3-Embedding's `Instruct: {task}\\nQuery: {text}`; documents embed plain);
-  * NEVER RAISES for a model, wire or gate failure: `classify` names the outcome, exactly as the
-    Generator does (one taxonomy for both ports);
-  * INDEX ORDER (`IndexOrderedTransport`): pydantic-ai reads a reply's `data` as listed and drops
-    each item's `index` (embeddings/openai.py, 2.59), so a server that answers out of order lands
-    every vector on the wrong row with the count law still satisfied. The transport puts `data`
-    back in `index` order under the SDK (`llm_ports.index_order`, shared with the rerank wire);
-    `openai_compatible_embeddings` always wraps with it, and a consumer that builds its own
-    provider wraps its transport the same way.
+- A stamp: the name of the space every vector lands in (model identity and dimensions), constant
+  per embedder.
+- Count and dimension checks: one vector per input, in input order, each `dims` long; otherwise
+  the whole call is `invalid`.
+- Batching (`batch_size` inputs per request) and an asymmetric query prefix (`query_instruct`,
+  sent as an `Instruct: {task}` line before `Query: {text}`); documents embed plain.
+- Index order: pydantic-ai (2.59, `embeddings/openai.py`) reads a reply's `data` in listed order
+  and drops each item's `index`, so a server that answers out of order would put vectors on the
+  wrong rows while the count check still passes. `IndexOrderedTransport` (`llm_ports.index_order`,
+  shared with the rerank wire) re-sorts `data` by `index` beneath the SDK.
+  `openai_compatible_embeddings` always installs it; a caller that builds its own provider wraps
+  its transport the same way.
 
-WHERE THE MODEL COMES FROM is the consumer's, as for the Generator:
-  * `model=`      a fixed pydantic-ai `EmbeddingModel` (tests pass `TestEmbeddingModel`);
-  * `model_for=`  `() -> async context manager yielding an EmbeddingModel`, per call -- how a
-                  consumer puts the model on its own transport (admission, leases, a work row);
-  * `openai_compatible_embeddings(base_url, model_name, ...)` builds a `model_for` for any
-                  OpenAI-wire endpoint.
+The model source is the caller's, as for the generator:
+
+- `model=`: a fixed pydantic-ai `EmbeddingModel` (tests pass `TestEmbeddingModel`).
+- `model_for=`: `() -> async context manager yielding an EmbeddingModel`, called per request, so
+  a caller can put the model on its own transport (admission control, leases, a work queue).
+- `openai_compatible_embeddings(base_url, model_name, ...)` builds a `model_for` for any
+  OpenAI-wire endpoint.
+
+Invariants:
+    - A model, wire or gate failure never raises; `classify` names the outcome, with one
+      taxonomy for the generator and the embedder.
+
+Rationale: ADR-0001.
 """
 
 from __future__ import annotations
@@ -52,11 +57,23 @@ def openai_compatible_embeddings(
     max_retries: int = 0,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> EmbedModelFor:
-    """A `model_for` over any OpenAI-wire `/embeddings` endpoint (`base_url` ends where
-    `/embeddings` starts, e.g. `http://litellm:4000/v1`). One httpx client per call. The SDK's
-    own retries default OFF: a gateway in front retries, and two stacked policies multiply.
-    `transport` replaces httpx's own (a consumer's admitting/counting transport, or
-    `httpx.MockTransport` in a test); it always sits under `IndexOrderedTransport`."""
+    """Build a `model_for` over any OpenAI-wire `/embeddings` endpoint.
+
+    Each call opens one httpx client.
+
+    Args:
+        base_url: The URL up to where `/embeddings` starts, e.g. `http://localhost:4000/v1`.
+        model_name: The embedding model the endpoint serves.
+        api_key: The bearer key; None sends a placeholder, for servers that need no key.
+        timeout_s: The httpx timeout per call.
+        max_retries: The OpenAI SDK's own retry count. Defaults to 0, so retries are not stacked
+            on those of a gateway in front.
+        transport: Replaces httpx's own transport (a caller's admitting or counting transport, or
+            `httpx.MockTransport` in a test). It always sits under `IndexOrderedTransport`.
+
+    Returns:
+        An `EmbedModelFor` that yields an `OpenAIEmbeddingModel`.
+    """
     from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -72,7 +89,22 @@ def openai_compatible_embeddings(
 
 
 class PydanticAIEmbedder:
-    """The `Embedder` port. `stamp` names the space; `dims` (when given) is enforced per vector."""
+    """The `Embedder` port on pydantic-ai; the module docstring states the contract.
+
+    Args:
+        model: A fixed pydantic-ai `EmbeddingModel`.
+        stamp: The name of the space the vectors live in; an unnamed space cannot be stored.
+        dims: When given, every vector must be this long, or the call is `invalid`.
+        model_for: A per-call model factory.
+        batch_size: Inputs per request.
+        query_instruct: The task line prefixed to `input_type="query"` inputs; empty sends queries
+            plain.
+        gated: Exception types that classify as `gated`.
+
+    Raises:
+        ValueError: When neither or both of `model` and `model_for` are given, `stamp` is empty,
+            or `batch_size` is below 1.
+    """
 
     def __init__(
         self,
@@ -101,6 +133,7 @@ class PydanticAIEmbedder:
 
     @property
     def stamp(self) -> str:
+        """The name of the space this embedder's vectors live in."""
         return self._stamp
 
     def _inputs(self, texts: Sequence[str], input_type: EmbedInput) -> list[str]:
@@ -130,6 +163,20 @@ class PydanticAIEmbedder:
         return out, tokens
 
     async def embed(self, texts: Sequence[str], *, input_type: EmbedInput = "document") -> Embedded:
+        """Embed `texts` in order; a model, wire or gate failure returns a named outcome, never raises.
+
+        `input_type="query"` applies `query_instruct`. Empty `texts` returns `ok` with no vectors
+        and zero input tokens. A reply that breaks the count or dimension check is `invalid`. A
+        failure the generator would call `invalid` or `truncated` is `unavailable` here, since an
+        embeddings reply has no parse step and no token ceiling; its reason ends with the root
+        cause of the exception chain (refused, timed out, DNS).
+
+        Returns:
+            An `Embedded` stamped with this embedder's space. `input_tokens` is None when any
+            batch did not report usage, never 0.
+
+        Rationale: ADR-0001, ADR-0007.
+        """
         if not texts:
             return Embedded(vectors=(), outcome="ok", stamp=self._stamp, input_tokens=0)
         inputs = self._inputs(texts, input_type)
@@ -148,15 +195,15 @@ class PydanticAIEmbedder:
                 outcome = "unavailable"  # an embeddings reply has no parse step or token ceiling
             root = list(exception_chain(exc))[-1]
             if outcome == "unavailable" and root is not exc:
-                # pydantic-ai -> openai -> httpx: the wrappers say "Connection error."; the
-                # bottom of the chain says WHICH (refused, timed out, DNS) -- what names the fix.
+                # pydantic-ai -> openai -> httpx: the wrappers say "Connection error."; the root
+                # of the chain names the cause (refused, timed out, DNS).
                 reason = f"{reason} <- {failure_reason(root)}"[:240]
             return Embedded(vectors=(), outcome=outcome, stamp=self._stamp, reason=reason)
         return Embedded(vectors=tuple(vecs), outcome="ok", stamp=self._stamp, input_tokens=tokens)
 
 
 class _Invalid(Exception):
-    """A reply that broke the count or dimension law."""
+    """A reply that broke the count or dimension check."""
 
 
 __all__ = ["EmbedModelFor", "IndexOrderedTransport", "PydanticAIEmbedder", "openai_compatible_embeddings"]

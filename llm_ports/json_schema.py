@@ -1,6 +1,11 @@
-"""json_schema -- the strict-schema shape both OpenAI and llama.cpp accept, the JSON-object
-substring of an LLM response (fenced, prefixed or suffixed by prose), and the RESEARCH grammar:
-a free-text `analysis` scratchpad first, every property required, the scratchpad popped after."""
+"""Strict JSON schemas, JSON-object extraction, and the research grammar.
+
+- `strict_json_schema`: the strict-schema shape both OpenAI and llama.cpp accept.
+- `extract_json_object`: the JSON-object substring of a model response that is fenced, or
+  prefixed or suffixed by prose.
+- `research_schema`, `research`: a free-text `analysis` scratchpad first, every property required,
+  and the scratchpad popped from the value afterwards.
+"""
 
 from __future__ import annotations
 
@@ -26,10 +31,11 @@ RESEARCH_ANALYSIS = {
 
 
 def research_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
-    """Pure. The grammar a web-research synthesis pass gets (A/B'd on a self-hosted model): a
-    free-text `analysis` property injected FIRST (a bare complex schema collapses quality -- the
-    grammar leaves no room to think) and `required` forced to EVERY property (pydantic marks
-    defaulted fields optional, so a lazy model emits near-empty objects)."""
+    """Return the research grammar for `schema`.
+
+    Pure. A free-text `analysis` property (`RESEARCH_ANALYSIS`) is injected first, and `required`
+    lists every property, including the ones pydantic marks optional because they have a default.
+    """
     out = dict(schema)
     props: dict[str, Any] = {ANALYSIS_KEY: RESEARCH_ANALYSIS}
     props.update(out.get("properties") or {})
@@ -39,7 +45,7 @@ def research_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def without_analysis[T](res: Generated[T]) -> Generated[T]:
-    """`res` with the in-band scratchpad popped from a dict value (any other value: unchanged)."""
+    """Return `res` with the `analysis` scratchpad popped from a dict value; other values pass unchanged."""
     if isinstance(res.value, dict) and ANALYSIS_KEY in res.value:
         return replace(res, value={k: v for k, v in res.value.items() if k != ANALYSIS_KEY})  # type: ignore[arg-type]
     return res
@@ -54,34 +60,35 @@ async def research(
     name: str,
     **kwargs: Any,
 ) -> Generated[dict[str, Any]]:
-    """Research -> grammar-enforced dict through the consumer's `generate` (its hooks bound):
-    `research_schema` as the grammar (`json_output(..., name)`), the scratchpad popped from the
-    value. `kwargs` pass through to `generate` untouched."""
+    """Run a research call that returns a grammar-enforced dict.
+
+    The consumer's `generate` (its hooks bound) runs with `research_schema(schema)` as the grammar
+    (`json_output(..., name)`), and the scratchpad is popped from the value. `kwargs` pass through
+    to `generate` unchanged.
+    """
     res = await generate(role, prompt=prompt, output=json_output(research_schema(schema), name), **kwargs)
     return without_analysis(res)
 
 
 def strict_json_schema(model: type[BaseModel]) -> dict[str, Any]:
-    """A `response_format: json_schema, strict: true` schema BOTH decoders accept.
+    """Return a `response_format: json_schema, strict: true` schema that OpenAI and llama.cpp accept.
 
     OpenAI's strict mode refuses what pydantic's `model_json_schema()` emits: every object needs
-    `additionalProperties: false` and every property listed in `required` (nullable via
-    `anyOf null`) -- a gateway that falls back from a self-hosted model to OpenAI on an outage
-    otherwise cannot take a single request. llama.cpp's grammar compiler accepts the strict form
-    too, so one shape serves both. pydantic-ai's OpenAI transformer is the integrated tool."""
+    `additionalProperties: false` and every property listed in `required` (nullable via `anyOf`
+    null). llama.cpp's grammar compiler accepts the strict form too, so one shape serves both. The
+    transform is pydantic-ai's `OpenAIJsonSchemaTransformer`.
+    """
     return OpenAIJsonSchemaTransformer(model.model_json_schema(), strict=True).walk()
 
 
 def extract_json_object(text: str) -> str:
-    """Return the JSON-object substring of an LLM response, tolerant of
-    markdown fences and leading/trailing prose.
+    """Return the JSON-object substring of a model response.
 
-    gemini-2.5-pro fences ~100% of its outputs (and the OAuth CLI route
-    can't enforce response_mime_type), and models occasionally add a
-    sentence before/after the JSON. Strip a leading code-fence, then take
-    the first ``{`` .. last ``}`` so ``json.loads`` succeeds regardless of
-    surrounding noise. Falls back to the stripped text when no object is
-    found (so the caller still raises a meaningful JSON error).
+    Tolerates markdown fences and leading or trailing prose: some models fence their JSON even when
+    asked not to, and some routes cannot enforce `response_mime_type`. A leading code fence is
+    stripped, then the first `{` through the last `}` is taken, so `json.loads` succeeds regardless
+    of surrounding text. Falls back to the stripped text when no object is found, so the caller's
+    JSON error stays meaningful.
     """
     s = text.strip()
     if s.startswith("```"):

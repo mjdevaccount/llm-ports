@@ -1,20 +1,26 @@
-"""observation -- one open generation observation over the `Tracer` port, and its lifecycle.
+"""One open generation observation over the `Tracer` port, and its lifecycle.
 
+`observe` opens one generation, yields a `PortObservation` that holds the last `update`, and ends
+the generation exactly once: on a clean exit with what was held; on an exception at `level="ERROR"`
+with the error line and the measured latency, after which the exception propagates.
+`call.tracer_trace` is built on it, so a consumer that wraps its own model call shares one
+lifecycle with the package's call path.
+
+Usage is the raw `{input, output}` pair as the provider reported it, each side coerced by `opt_int`.
+`usage_counts()` hands the same pair to a second sink (an OpenTelemetry span) without re-reading
+the provider's reply.
+
+Example:
     async with observe(tracer, name="summarize", model=m, provider="openai", input=prompt) as obs:
         reply = await client.call(...)
         obs.update(output=reply.text, usage_details={"input": reply.in_tok, "output": reply.out_tok})
 
-`observe` opens ONE generation, yields a `PortObservation` that holds the last `update`, and ends
-the generation exactly once: on a clean exit with what was held, on an exception at level ERROR
-with the error line and the measured latency (the exception propagates). `call.tracer_trace` is
-built on it, so a consumer that wraps its own model call and the package's call path share one
-lifecycle.
+Invariants:
+    - Unmeasured usage is never zero: an absent or unreadable count is None, never 0.
+    - A provider that reported neither count gets no usage block and `tokens_unmeasured: true` in
+      the metadata. A reported zero stays a zero.
 
-UNMEASURED IS NOT FREE. Usage is the raw `{input, output}` pair as the provider reported it, each
-side coerced by `opt_int` (absent or unreadable -> None, never 0). A provider that reported NEITHER
-count gets no usage block at all and `tokens_unmeasured: true` in the metadata, so a sink never
-books an unmetered call as zero tokens; a reported zero stays a zero. `usage_counts()` hands the
-same pair to a second sink (an OpenTelemetry span) without re-reading the provider's reply.
+Rationale: ADR-0007.
 """
 
 from __future__ import annotations
@@ -31,8 +37,10 @@ STATUS_MAX = 500
 
 
 def opt_int(v: Any) -> int | None:
-    """int(v), or None when the provider reported nothing readable -- the replacement for
-    `int(v or 0)`, which turns "no usage block arrived" into "this call used zero tokens"."""
+    """Return `int(v)`, or None when the provider reported nothing readable.
+
+    Replaces `int(v or 0)`, which reads "no usage block arrived" as "this call used zero tokens".
+    """
     try:
         return None if v is None else int(v)
     except (TypeError, ValueError):
@@ -40,7 +48,11 @@ def opt_int(v: Any) -> int | None:
 
 
 class Observation(Protocol):
-    """What a trace hook yields: one open observation of one call. Neither method may raise."""
+    """What a trace hook yields: one open observation of one call.
+
+    Invariants:
+        - Neither method raises.
+    """
 
     def update(
         self,
@@ -48,14 +60,21 @@ class Observation(Protocol):
         output: Any = None,
         usage_details: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Record what the call produced so far; a None argument leaves that field as it was."""
+        ...
 
-    def score(self, *, name: str, value: float, comment: str | None = None) -> None: ...
+    def score(self, *, name: str, value: float, comment: str | None = None) -> None:
+        """Attach a numeric score to the observation."""
+        ...
 
 
 class PortObservation:
-    """An `Observation` over a `Generation`: holds the last update, ends the generation ONCE
-    (`flush` or `fail`). Never raises -- `Generation.end` / `.score` do not."""
+    """An `Observation` over a `Generation`.
+
+    Holds the last update and ends the generation once, through `flush` or `fail`. Never raises,
+    because `Generation.end` and `Generation.score` do not.
+    """
 
     def __init__(self, gen: Generation) -> None:
         self._gen = gen
@@ -71,6 +90,14 @@ class PortObservation:
         usage_details: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        """Hold the call's output, usage and metadata; a None argument keeps the held value.
+
+        Args:
+            output: What the call produced.
+            usage_details: The provider's `{"input": ..., "output": ...}` counts; each side is
+                read through `opt_int`.
+            metadata: Replaces the held metadata.
+        """
         if output is not None:
             self._output = output
         if usage_details is not None:
@@ -80,15 +107,16 @@ class PortObservation:
             self._meta = metadata
 
     def score(self, *, name: str, value: float, comment: str | None = None) -> None:
+        """Attach a numeric score to the underlying generation."""
         self._gen.score(name, float(value), comment)
 
     @property
     def metadata(self) -> Mapping[str, Any] | None:
-        """The last `update`'s metadata (None = never updated)."""
+        """The last update's metadata; None when no update carried any."""
         return self._meta
 
     def usage_counts(self) -> tuple[int | None, int | None]:
-        """(input, output) exactly as reported -- None where the provider said nothing."""
+        """Return `(input, output)` exactly as reported; None where the provider said nothing."""
         return self._usage
 
     def flush(self) -> None:
@@ -101,8 +129,12 @@ class PortObservation:
         self._gen.end(output=self._output, usage=usage, metadata=meta)
 
     def fail(self, exc: BaseException, metadata: Mapping[str, Any] | None = None) -> None:
-        """End the generation at level ERROR with the error line (capped). `metadata` None = the
-        last update's."""
+        """End the generation at level ERROR with the error line, cut to `STATUS_MAX` characters.
+
+        Args:
+            exc: The exception that ended the call.
+            metadata: The metadata to end with; None uses the last update's.
+        """
         self._gen.end(
             level="ERROR",
             status_message=f"{type(exc).__name__}: {exc}"[:STATUS_MAX],
@@ -123,8 +155,25 @@ async def observe(
     prompt_name: str | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> AsyncIterator[PortObservation]:
-    """One generation around the block (module docstring). On an exception the ERROR end carries
-    the opening metadata, then the last update's, then `latency_ms`."""
+    """Open one generation around the block and end it once; see the module docstring.
+
+    On an exception, the `level="ERROR"` end carries the opening metadata, overlaid by the last update's,
+    plus `latency_ms`; the exception then propagates.
+
+    Args:
+        tracer: The tracer that opens the generation.
+        name: The category a cost view groups by.
+        model: The model id.
+        provider: The provider name.
+        input: What the model is sent.
+        metadata: Opening metadata.
+        session_id: When set, groups the generation under that session.
+        prompt_name: When set, links the managed prompt of that name.
+        clock: The monotonic clock the latency is measured on.
+
+    Yields:
+        The open `PortObservation`.
+    """
     meta = dict(metadata or {})
     started = clock()
     obs = PortObservation(

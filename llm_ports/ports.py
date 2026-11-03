@@ -1,35 +1,36 @@
-"""ports -- the seams a consumer owns; frameworks live behind them.
+"""Protocols and frozen value types: the seams a consumer owns.
 
-Zero-I/O: Protocols and frozen value types only. One adapter module per framework implements a
-port; contract tests exercise the SEAM, so any adapter that passes them can replace any other.
+Frameworks live behind these ports. One adapter module per framework implements a port, and the
+contract tests exercise the port rather than the adapter, so any adapter that passes them can
+replace any other.
 
-Ten ports, named by the industry pattern they stand for:
+Ten ports, each named for the pattern it stands for:
 
-- `Retriever`    -- RAG retrieval: query -> ranked chunks with provenance (hybrid + rerank is the
-                    adapter's business; the port only promises order and provenance).
-- `Citer`        -- citation-grounded generation: question + chunks -> claims, each citing ids
-                    from the chunks it was given, never a URL it typed.
-- `Grounder`     -- groundedness / faithfulness: one claim against the spans it cites -> a verdict.
-- `Evaluator`    -- the eval harness: rows + graders -> one board.
-- `PromptSource` -- prompt management: name + label -> the SOURCE template and where it came
-                    from (repo seed or a managed version). Rendering is the caller's (Jinja for
-                    packs); the port never compiles.
-- `Tracer`       -- LLM observability: open one generation observation per model call, end it
-                    with what the call produced, score it. SYNC and FAIL-OPEN (a sink that is down
-                    returns a no-op `Generation`, never raises).
-- `Generator`    -- typed structured generation: one prompt + an output type -> a validated value
-                    or a named outcome. NEVER RAISES for a model, wire or gate failure. The call
-                    path around it (role, pack, gate, trace, graders) is `llm_ports.call`.
-- `Embedder`     -- text embeddings: texts -> one vector per text, all in ONE named space (the
-                    `stamp`: model + dims). NEVER RAISES for a model, wire or gate failure; a
-                    wrong count or a wrong dimension is `invalid`, never a partial result.
-- `Reranker`     -- cross-encoder reranking: one query + documents -> one ORDER-ONLY score per
-                    document, in input order. NEVER RAISES for a model, wire or gate failure (the
-                    caller's fallback is the order it already had); a reply that does not score
-                    every document exactly once is `invalid`, never a partial ranking.
-- `Judge`        -- LLM-as-a-judge: one prompt + the reply it drew + a rubric -> a graded verdict.
-                    RAISES on a model/wire failure: an unjudged sample must never read as a pass,
-                    so the caller owns the catch, never the port.
+- `Retriever`: RAG retrieval. A query becomes ranked chunks with provenance.
+- `Citer`: citation-grounded generation. A question and chunks become claims, each citing ids of
+  the chunks it was given.
+- `Grounder`: groundedness. One claim is checked against the spans it cites.
+- `Evaluator`: the eval harness. Rows and graders become one board.
+- `PromptSource`: prompt management. A name and a label resolve to a source template and its
+  provenance (the repo seed or a managed version).
+- `Tracer`: LLM observability. One generation observation per model call, ended with what the
+  call produced and scored.
+- `Generator`: typed structured generation. A prompt and an output type become a validated value
+  or a named outcome. The call path around it (role, pack, gate, trace, graders) is `llm_ports.call`.
+- `Embedder`: text embeddings. Texts become one vector per text, all in one named space.
+- `Reranker`: cross-encoder reranking. A query and documents become one order-only score per
+  document.
+- `Judge`: LLM-as-a-judge. A prompt, the reply it drew and a rubric become a graded verdict.
+
+Invariants:
+    - No I/O: the module holds Protocols and frozen value types only. Adapters translate their
+      framework's objects into these types.
+    - `Generator`, `Embedder` and `Reranker` never raise for a model, wire or gate failure; the
+      failure is the result's `outcome`, and a partial result is `invalid`.
+    - `Tracer` and `Generation` never raise; a sink that is down yields a no-op `Generation`.
+    - `Judge` raises when the judging model cannot answer; the caller owns the catch.
+
+Rationale: ADR-0001.
 """
 
 from __future__ import annotations
@@ -39,71 +40,115 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
-# ── value types (frozen; adapters translate their framework's objects INTO these) ───────────────
+# ── value types ─────────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class Chunk:
-    """One retrievable unit with its provenance. `score` is adapter-relative and ORDER-ONLY
-    (box_rerank: raw logits; RRF: fused rank score) -- never threshold across adapters."""
+    """One retrievable unit of text, with its provenance.
+
+    Attributes:
+        id: The id a `Claim` cites.
+        title: Display title; empty when the source has none.
+        source: The corpus or feed the chunk came from (e.g. "wiki", "tickets", "web").
+        url: The chunk's address; empty when it has none.
+        as_of: The date the content speaks for; None when undated.
+        score: Adapter-relative relevance (a cross-encoder's raw logit, a fused rank score).
+        meta: Adapter extras, read by name.
+
+    Invariants:
+        - `score` is order-only: it ranks one adapter's results and is never a threshold or
+          compared across adapters.
+    """
 
     id: str
     text: str
     title: str = ""
-    source: str = ""  # corpus/feed name (e.g. 'mnco', 'tear_feed', 'web')
+    source: str = ""
     url: str = ""
-    as_of: date | None = None  # the date the content speaks FOR; None = undated
+    as_of: date | None = None
     score: float | None = None
     meta: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class Claim:
-    """A sentence the writer asserts, with the chunk ids it rests on. Empty ids = ungrounded."""
+    """A sentence the writer asserts, with the ids of the chunks it rests on.
+
+    Attributes:
+        evidence_ids: Ids of the cited chunks; empty means the claim is ungrounded.
+        meta: Adapter extras for this claim, read by name.
+    """
 
     text: str
     evidence_ids: tuple[str, ...] = ()
-    meta: Mapping[str, Any] = field(default_factory=dict)  # adapter extras per claim (e.g. tickers)
+    meta: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class CitedAnswer:
-    """What a Citer returns: claims (cited) plus the chunks it was given, so a Grounder can read
-    the cited text without a second retrieval. `extras` is the adapter's own per-answer report
-    (horizon, retries, box_ms, ...): a consumer that needs one reads it by name, the seam does not."""
+    """What a `Citer` returns: the cited claims and the chunks they may cite.
+
+    Carrying the chunks lets a `Grounder` read the cited text without a second retrieval.
+
+    Attributes:
+        question: The question answered.
+        claims: The claims, in the order written.
+        chunks: Chunk id to chunk; the universe the claims may cite.
+        model: The model the adapter reports; empty when the adapter has none (a stub).
+        extras: The adapter's own per-answer report (retries, latency, ...). A consumer reads a
+            key by name; the port defines none.
+    """
 
     question: str
     claims: tuple[Claim, ...]
-    chunks: Mapping[str, Chunk]  # id -> chunk, the universe the claims may cite
-    model: str = ""  # adapter-reported; '' when the adapter has no model (stub)
+    chunks: Mapping[str, Chunk]
+    model: str = ""
     extras: Mapping[str, Any] = field(default_factory=dict)
 
     def unknown_ids(self) -> tuple[str, ...]:
-        """Ids cited that were not in `chunks` -- a citer that invents ids fails the contract."""
+        """Return the cited ids that are not in `chunks`.
+
+        A non-empty result means the citer broke the `Citer` contract.
+        """
         return tuple(i for c in self.claims for i in c.evidence_ids if i not in self.chunks)
 
 
 @dataclass(frozen=True)
 class GroundingVerdict:
-    """`supported` is the gate; `score` is the adapter's own scale (a number-law check has
-    none, an entailment model has a probability) -- report it, never compare across adapters."""
+    """What a `Grounder` returns for one claim.
+
+    Attributes:
+        supported: The gate.
+        reason: One line saying why.
+        score: The adapter's own scale (an entailment model's probability); None for a rule-based
+            check that has none. Reported, never compared across adapters.
+        checker: The adapter that produced the verdict (e.g. "number_law", "hhem", "lettucedetect").
+    """
 
     supported: bool
     reason: str = ""
     score: float | None = None
-    checker: str = ""  # which adapter spoke (number_law | hhem | lettucedetect | ...)
+    checker: str = ""
 
 
 @dataclass(frozen=True)
 class Prompt:
-    """What a PromptSource returns: the SOURCE template (our renderer runs it, never the
-    adapter's -- the narrator's Jinja has loops a mustache compiler cannot), plus provenance.
-    LAW: `version is None` exactly when `source == "repo"` (the in-image seed served because the
-    managed copy was absent, unreachable or disagreed); a managed copy carries its integer
-    version and a source like `langfuse:v7`. `config` is the adapter's per-version extras
-    (content sha, pack version, model role ...) -- read by name, never part of the seam.
-    `system` is the SOURCE system template of a two-message (chat) prompt; `""` for a text prompt
-    (the narrator pack, the macro classifier) -- the classifiers that send one read it here."""
+    """What a `PromptSource` returns: a source template and its provenance.
+
+    Attributes:
+        name: The prompt's name.
+        text: The source template. The caller renders it; an adapter never compiles it.
+        version: The managed copy's integer version; None for the repo seed.
+        source: "repo" for the repo seed, otherwise the managed copy's origin (e.g. "langfuse:v7").
+        config: The adapter's per-version extras (content sha, pack version, model role, ...),
+            read by name.
+        system: The system template of a two-message (chat) prompt; empty for a text prompt.
+
+    Invariants:
+        - `version is None` exactly when `source == "repo"`. The repo seed is served when the
+          managed copy is absent, unreachable or disagrees with the seed.
+    """
 
     name: str
     text: str
@@ -115,10 +160,19 @@ class Prompt:
 
 @dataclass(frozen=True)
 class Seed:
-    """What the REPO says a prompt is -- the copy a `PromptSource` serves as `Prompt(repo)` and a
-    managed store mirrors: its source text, the sha that names that text, the config carried
-    beside it (pack version, model role ...) and its tags. `system` non-empty = a CHAT prompt
-    (system + user); `kind` ("chat" | "text") forces the managed type, "" derives it from `system`."""
+    """What the repo says a prompt is.
+
+    A `PromptSource` serves a seed as a `Prompt` with `source == "repo"`, and a managed store
+    mirrors it.
+
+    Attributes:
+        text: The source template.
+        sha: The content sha that names `text`.
+        config: Carried beside the text (pack version, model role, ...).
+        tags: Tags for the managed copy.
+        system: The system template; non-empty makes the seed a chat prompt (system + user).
+        kind: "chat" or "text" forces the managed prompt's type; empty derives it from `system`.
+    """
 
     text: str
     sha: str
@@ -128,36 +182,62 @@ class Seed:
     kind: str = ""
 
 
-#: Every way one generation can end. `gated` = the category switchboard refused it; `unavailable`
-#: = the box/gateway failed and no input is to blame; `request_fault` = the request was refused
-#: (400/413/422), so the input is to blame; `truncated` = the token ceiling cut the reply (a BUDGET
-#: failure, never a parse error); `invalid` = the reply would not parse into the output type.
+#: Every way one generation can end:
+#:
+#: - `ok`: the reply parsed into the output type.
+#: - `gated`: the category switchboard refused the call.
+#: - `unavailable`: the model server or gateway failed, and the input is not to blame.
+#: - `request_fault`: the request was refused (HTTP 400, 413 or 422), so the input is to blame.
+#: - `truncated`: the token ceiling cut the reply. A budget failure, never a parse error.
+#: - `invalid`: the reply would not parse into the output type.
 Outcome = Literal["ok", "gated", "unavailable", "request_fault", "truncated", "invalid"]
 
 
 class JsonOutput(dict[str, Any]):
-    """A hand-written JSON schema as a `Generator` output type: the value is a plain dict, the
-    schema goes to the model unchanged. Never used directly -- `json_output(schema, name)` mints one
-    subclass per schema, and each `Generator` adapter translates it into its framework's own
-    structured-output object (pydantic-ai: `StructuredDict`). This is what keeps the facade
-    (`call.json_output`) from importing an adapter."""
+    """A hand-written JSON schema used as a `Generator` output type.
+
+    The value is a plain dict, and the schema reaches the model unchanged. Callers use
+    `json_output`, which mints one subclass per schema; each `Generator` adapter translates that
+    subclass into its framework's structured-output object (pydantic-ai: `StructuredDict`), so the
+    facade (`call.json_output`) imports no adapter.
+
+    Attributes:
+        json_schema: The schema sent to the model.
+        schema_name: The schema's title.
+    """
 
     json_schema: ClassVar[Mapping[str, Any]] = {}
     schema_name: ClassVar[str] = ""
 
 
 def json_output(schema: Mapping[str, Any], name: str) -> type[JsonOutput]:
-    """Pure. One `JsonOutput` subclass carrying `schema` and `name` (the schema's title, and the
-    name a test stub dispatches on)."""
+    """Return a `JsonOutput` subclass that carries `schema` and `name`.
+
+    Pure.
+
+    Args:
+        schema: The JSON schema, sent to the model unchanged.
+        name: The schema's title, and the name a test stub dispatches on.
+    """
     return type(name, (JsonOutput,), {"json_schema": dict(schema), "schema_name": name})
 
 
 @dataclass(frozen=True)
 class GenRequest:
-    """One model call, already resolved from a role: model id, rendered prompt, wire knobs.
-    `images` are (bytes, mime) pairs for vision; `settings` reach the model verbatim (max_tokens,
-    temperature, seed, top_p, extra_body). `box` = a self-hosted model group (an adapter may take
-    a lease for it; a role sends it the thinking switch)."""
+    """One model call, already resolved from a role: model id, rendered prompt and wire settings.
+
+    Attributes:
+        model: The model id.
+        prompt: The rendered user prompt.
+        system: The rendered system prompt; empty for none.
+        images: (bytes, MIME type) pairs for a vision model.
+        settings: Sent to the model verbatim (max_tokens, temperature, seed, top_p, extra_body).
+        box: True for the self-hosted tier. An adapter may take a lease on that model group, and a
+            role sends it the thinking switch.
+        timeout_s: The client timeout, in seconds.
+        output_retries: Re-asks allowed when the validator finds problems.
+        label: A name for the call in an adapter's logs; `call.request_for` sets the role name.
+    """
 
     model: str
     prompt: str
@@ -172,10 +252,22 @@ class GenRequest:
 
 @dataclass(frozen=True)
 class Generated[T]:
-    """What a Generator returns. `value` is None exactly when `outcome != "ok"`. `problems` are the
-    validator's findings on the KEPT value once the re-asks ran out (the caller prunes or drops);
-    `retries` is None when the run died mid-flight (how many it took is unknown, never 0).
-    `sources` are URLs the box FETCHED (research-server extension); None = the reply carried none."""
+    """What a `Generator` returns.
+
+    Attributes:
+        value: The parsed value; None exactly when `outcome != "ok"`.
+        outcome: How the call ended.
+        model: The model that answered.
+        reason: One line naming the failure; None on `ok`.
+        retries: Re-asks used; None when the run died mid-flight and the count is unknown, never 0.
+        problems: The validator's findings on the kept value once the re-asks ran out. The caller
+            prunes the value or drops it.
+        usage: Token counts as the provider reported them; None, or a None count, is unmeasured.
+        sources: URLs the model server fetched while answering (a research-server extension);
+            None when the reply carried none.
+        finish_reason: The provider's finish reason, when it sent one.
+        stamp: Extras the call path attaches by name (e.g. `scores`, `generation`).
+    """
 
     value: T | None
     outcome: Outcome
@@ -189,16 +281,25 @@ class Generated[T]:
     stamp: Mapping[str, Any] = field(default_factory=dict)
 
 
+#: Which side of an asymmetric embedding model a text is on.
 EmbedInput = Literal["document", "query"]
 
 
 @dataclass(frozen=True)
 class Embedded:
-    """What an Embedder returns: one vector per input, IN INPUT ORDER, all in ONE space. `stamp`
-    names that space (model + dims) and belongs on every stored vector: two stamps never compare,
-    so a store holding two is a reindex in progress, not an index. `vectors` is () exactly when
-    `outcome != "ok"` (a batch that half-landed is a failed batch). `input_tokens` is None when the
-    wire reported no usage -- unknown, never 0."""
+    """What an `Embedder` returns: one vector per input, in input order, all in one space.
+
+    Attributes:
+        vectors: One vector per input; `()` exactly when `outcome != "ok"`.
+        outcome: How the call ended.
+        stamp: The vector space (model and dims). It belongs on every stored vector.
+        reason: One line naming the failure; None on `ok`.
+        input_tokens: Tokens the wire reported; None when it reported no usage (unknown, never 0).
+
+    Invariants:
+        - Two stamps never compare: a store holding two is a reindex in progress, not an index.
+        - A batch that half-landed is a failed batch; no partial result is returned.
+    """
 
     vectors: tuple[tuple[float, ...], ...]
     outcome: Outcome
@@ -208,14 +309,24 @@ class Embedded:
 
     @property
     def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
         return self.outcome == "ok"
 
 
 @dataclass(frozen=True)
 class Reranked:
-    """What a Reranker returns: one score per document, IN INPUT ORDER. Scores are model-relative
-    and ORDER-ONLY (one model emits raw logits, another 0..1): rank by them, never threshold or
-    compare them across models. `scores` is () exactly when `outcome != "ok"`."""
+    """What a `Reranker` returns: one score per document, in input order.
+
+    Attributes:
+        scores: One score per document; `()` exactly when `outcome != "ok"`.
+        outcome: How the call ended.
+        model: The model that scored.
+        reason: One line naming the failure; None on `ok`.
+
+    Invariants:
+        - Scores are model-relative and order-only (one model emits raw logits, another 0..1).
+          Rank by them; never threshold them or compare them across models.
+    """
 
     scores: tuple[float, ...]
     outcome: Outcome
@@ -224,18 +335,25 @@ class Reranked:
 
     @property
     def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
         return self.outcome == "ok"
 
 
 @dataclass(frozen=True)
 class JudgeVerdict:
-    """What a Judge returns. `passed` is the gate; `score` is the judge's own 0..1 reading and
-    `reason` its one- or two-sentence justification (the Langfuse score comment)."""
+    """What a `Judge` returns.
+
+    Attributes:
+        passed: The gate.
+        score: The judge's own reading, from 0 to 1.
+        reason: The judge's one- or two-sentence justification, recorded as the score comment.
+        judge: The adapter that produced the verdict (e.g. "pydantic_evals", "stub").
+    """
 
     passed: bool
     score: float
     reason: str = ""
-    judge: str = ""  # which adapter spoke (pydantic_evals | stub ...)
+    judge: str = ""
 
 
 # ── ports ───────────────────────────────────────────────────────────────────────────────────────
@@ -243,34 +361,71 @@ class JudgeVerdict:
 
 @runtime_checkable
 class Retriever(Protocol):
+    """RAG retrieval: a query to ranked chunks with provenance.
+
+    Hybrid search and reranking are the adapter's concern; the port promises order and provenance.
+    """
+
     async def search(
         self, q: str, *, k: int = 8, date_from: date | None = None, date_to: date | None = None
     ) -> list[Chunk]:
-        """Best first. An empty/blank `q` returns []. Never raises for 'nothing found'."""
+        """Return up to `k` chunks for `q`, best first.
+
+        An empty or blank `q` returns `[]`. Finding nothing is an empty list, never an exception.
+
+        Args:
+            q: The query.
+            k: The most chunks to return.
+            date_from: Lower bound on `Chunk.as_of`; None leaves it open.
+            date_to: Upper bound on `Chunk.as_of`; None leaves it open.
+        """
         ...
 
 
 @runtime_checkable
 class Citer(Protocol):
+    """Citation-grounded generation: a question and chunks to cited claims."""
+
     async def answer(self, q: str, chunks: Sequence[Chunk]) -> CitedAnswer:
-        """Every claim's `evidence_ids` must be a subset of `{c.id for c in chunks}`
-        (`CitedAnswer.unknown_ids()` is empty). No chunks -> no claims, not a refusal error."""
+        """Answer `q` from `chunks`, each claim citing the ids it rests on.
+
+        No chunks yield no claims, not an error.
+
+        Invariants:
+            - Every claim's `evidence_ids` is a subset of `{c.id for c in chunks}`, so
+              `CitedAnswer.unknown_ids()` is empty. A citation is a chunk id, never a URL the
+              model typed.
+        """
         ...
 
 
 @runtime_checkable
 class Grounder(Protocol):
+    """Groundedness: one claim checked against the spans it cites."""
+
     def verdict(self, claim: Claim, spans: Sequence[Chunk]) -> GroundingVerdict:
-        """Pure. `spans` are the chunks the claim cites (already resolved by the caller).
-        A claim with NO spans is never `supported`."""
+        """Return whether `claim` is supported by `spans`.
+
+        Pure.
+
+        Args:
+            claim: The claim to check.
+            spans: The chunks the claim cites, already resolved by the caller.
+
+        Invariants:
+            - A claim with no spans is never `supported`.
+        """
         ...
 
 
+#: A grader reads one row and returns `(passed, reason)`.
 Grader = Callable[[dict[str, Any]], tuple[bool, str]]
 
 
 @runtime_checkable
 class Evaluator(Protocol):
+    """The eval harness: rows and graders to one board."""
+
     def run(
         self,
         surface: str,
@@ -280,30 +435,56 @@ class Evaluator(Protocol):
         id_field: str = "id",
         monitors: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """One board with the keys `surface`, `n`, `rows_failed`, `by_grader` (per grader name:
-        `pass`, `fail`, `examples` -- at most three `{id, reason}` wounds) and `monitors` -- the
-        gauntlet shape, which every adapter must emit so the golden-set test, the on-box job and
-        an ad-hoc read never disagree. `monitors` is the surface's own rates over ALL rows
-        (narrator: speak_items, mean_retries, ...), carried VERBATIM; the key is always present
-        and `{}` when the caller passed none (step 7', D-1)."""
+        """Grade every row with every grader and return one board.
+
+        Args:
+            surface: The name of the surface under evaluation, echoed on the board.
+            rows: The rows to grade.
+            graders: Grader name to grader.
+            id_field: The row key that names a row in `examples`.
+            monitors: Computes the surface's own rates over all rows; None for none.
+
+        Returns:
+            A board with the keys `surface`, `n`, `rows_failed`, `by_grader` and `monitors`.
+            `by_grader` maps each grader name to `pass`, `fail` and `examples` (at most three
+            `{id, reason}` failures). `monitors` holds the callable's result verbatim, or `{}`
+            when none was passed.
+
+        Invariants:
+            - Every adapter emits exactly this shape, and every key is always present.
+        """
         ...
 
 
 @runtime_checkable
 class PromptSource(Protocol):
+    """Prompt management: a name and a label to a source template and its provenance.
+
+    Rendering is the caller's; the port never compiles a template.
+    """
+
     def get(self, name: str, *, label: str = "production") -> Prompt:
-        """SYNC (the v2 Langfuse SDK is; async callers use `asyncio.to_thread`, as for Grounder).
-        Never raises for 'the managed store is down' -- that is a `Prompt` with `source == "repo"`.
-        `text` is never empty: an adapter with no seed for `name` has nothing to serve and RAISES."""
+        """Return the prompt `name` as served under `label`.
+
+        Synchronous, because the v2 Langfuse SDK is; an async caller uses `asyncio.to_thread`.
+        A managed store that is down is not an error: the result is the repo seed, with
+        `source == "repo"`. An adapter with no seed for `name` has nothing to serve and raises.
+
+        Invariants:
+            - `text` is never empty.
+        """
         ...
 
 
 @runtime_checkable
 class Generation(Protocol):
-    """One open observation. `usage` is the RAW pair as the provider reported it --
-    `{"input": int|None, "output": int|None}` -- or None when it reported neither (the caller
-    decides what "unmeasured" means; the adapter decides the sink's key names). Neither method
-    ever raises: telemetry must not break the call it describes."""
+    """One open generation observation.
+
+    Invariants:
+        - Neither method raises.
+
+    Rationale: ADR-0007.
+    """
 
     def end(
         self,
@@ -314,17 +495,35 @@ class Generation(Protocol):
         status_message: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Close the observation. `level == "ERROR"` carries `status_message`; a None field is
-        OMITTED from what the sink receives, never sent as null."""
+        """Close the observation.
+
+        Args:
+            output: What the call produced.
+            usage: The raw pair `{"input": int | None, "output": int | None}` as the provider
+                reported it, or None when it reported neither. The caller decides what unmeasured
+                means; the adapter decides the sink's key names.
+            level: "DEFAULT", or "ERROR" for a failed call.
+            status_message: The error line carried with `level == "ERROR"`.
+            metadata: Extra fields for the sink.
+
+        Invariants:
+            - A None field is omitted from what the sink receives, never sent as null.
+        """
         ...
 
     def score(self, name: str, value: float, comment: str | None = None) -> None:
-        """A NUMERIC score on this observation. Never raises."""
+        """Attach a numeric score to this observation. Never raises."""
         ...
 
 
 @runtime_checkable
 class Tracer(Protocol):
+    """LLM observability: one generation observation per model call.
+
+    Synchronous, because the v2 Langfuse SDK is; the async wrapper around a model call is the
+    facade's (`observation.observe`). Fail-open.
+    """
+
     def start_generation(
         self,
         *,
@@ -336,15 +535,26 @@ class Tracer(Protocol):
         session_id: str | None,
         prompt_name: str | None,
     ) -> Generation:
-        """SYNC (the v2 Langfuse SDK is; the async wrapper around a model call is the facade's).
-        `name` is the category the cost surface groups by -- the adapter stores it verbatim.
-        `session_id` set = group under a session; `prompt_name` set = link the managed prompt.
-        Never raises: a sink that is down or refusing returns a no-op `Generation`."""
+        """Open one generation observation.
+
+        Never raises: a sink that is down or refusing returns a no-op `Generation`.
+
+        Args:
+            name: The category a cost view groups by; the adapter stores it verbatim.
+            model: The model id.
+            provider: The provider name.
+            input: What the model was sent.
+            metadata: Extra fields for the sink.
+            session_id: When set, groups the generation under that session.
+            prompt_name: When set, links the managed prompt of that name.
+        """
         ...
 
 
 @runtime_checkable
 class Generator(Protocol):
+    """Typed structured generation: a prompt and an output type to a value or a named outcome."""
+
     async def generate[T](
         self,
         req: GenRequest,
@@ -353,41 +563,80 @@ class Generator(Protocol):
         validate: Callable[[T], Sequence[Any]] | None = None,
         retry_message: Callable[[Sequence[Any]], str] | None = None,
     ) -> Generated[T]:
-        """One call into `output` (a pydantic model, or `str` for prose). `validate` lists the
-        problems with a parsed value; a non-empty list earns `req.output_retries` re-asks carrying
-        `retry_message(problems)`, after which the value is KEPT with its problems. Never raises
-        for a model, wire or gate failure: those are the `outcome`, with a one-line `reason`."""
+        """Run one call and parse the reply into `output`.
+
+        Never raises for a model, wire or gate failure: the failure is the `outcome`, with a
+        one-line `reason`.
+
+        Args:
+            req: The resolved call.
+            output: A pydantic model, a `JsonOutput` subclass, or `str` for prose.
+            validate: Lists the problems with a parsed value. A non-empty list earns
+                `req.output_retries` re-asks, after which the value is kept with its problems.
+            retry_message: Builds a re-ask's message from the problems.
+
+        Rationale: ADR-0001.
+        """
         ...
 
 
 @runtime_checkable
 class Embedder(Protocol):
+    """Text embeddings: texts to one vector each, all in one named space."""
+
     @property
     def stamp(self) -> str:
-        """The vector space this embedder writes: model identity + dims (e.g.
-        `Qwen3-Embedding-0.6B-Q8_0@1024`). Constant for the embedder's life."""
+        """The vector space this embedder writes: model id and dims (e.g. `example-embed-v1@1024`).
+
+        Constant for the embedder's life.
+        """
         ...
 
     async def embed(self, texts: Sequence[str], *, input_type: EmbedInput = "document") -> Embedded:
-        """One vector per text, same order. `input_type="query"` lets an asymmetric model treat a
-        search query differently from a stored document (the adapter owns any instruct prefix).
-        Never raises for a model, wire or gate failure: those are the `outcome`."""
+        """Embed `texts`, one vector per text, in input order.
+
+        Never raises for a model, wire or gate failure: the failure is the `outcome`. A wrong
+        count or a wrong dimension is `invalid`, never a partial result.
+
+        Args:
+            texts: The texts to embed.
+            input_type: "query" lets an asymmetric model treat a search query differently from a
+                stored document; the adapter owns any instruction prefix.
+
+        Rationale: ADR-0001.
+        """
         ...
 
 
 @runtime_checkable
 class Reranker(Protocol):
+    """Cross-encoder reranking: a query and documents to one order-only score per document."""
+
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
-        """One score per document, same order. No documents -> an `ok` with no scores. Never
-        raises for a model, wire or gate failure: those are the `outcome`."""
+        """Score each document against `query`, in input order.
+
+        No documents return an `ok` with no scores. Never raises for a model, wire or gate
+        failure: the failure is the `outcome`, and the caller keeps the order it already had. A
+        reply that does not score every document exactly once is `invalid`, never a partial
+        ranking.
+
+        Rationale: ADR-0001.
+        """
         ...
 
 
 @runtime_checkable
 class Judge(Protocol):
+    """LLM-as-a-judge: a prompt, the reply it drew and a rubric to a graded verdict."""
+
     async def judge(self, *, prompt: str, output: Any, rubric: str) -> JudgeVerdict:
-        """Grade `output` (the reply to `prompt`) against `rubric`. Raises when the judging model
-        could not answer -- the caller decides what an unjudged sample means."""
+        """Grade `output`, the reply to `prompt`, against `rubric`.
+
+        Raises when the judging model could not answer; the caller decides what an unjudged
+        sample means.
+
+        Rationale: ADR-0001.
+        """
         ...
 
 
