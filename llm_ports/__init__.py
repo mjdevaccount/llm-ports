@@ -11,6 +11,7 @@ Frameworks live behind the ports. `pydantic_ai_generator.PydanticAIGenerator` is
 """
 
 from llm_ports.call import Hooks, generate, json_output, request_for, require_ok, tracer_trace
+from llm_ports.content import Activity, ContentItem, DataClass, GateVerdict, print_gate
 from llm_ports.failure import GenerationFailed
 from llm_ports.ports import (
     Chunk,
@@ -29,12 +30,16 @@ from llm_ports.ports import (
 )
 from llm_ports.roles import Role, Tier, TierTable, load_tiers
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
+    "Activity",
     "Chunk",
     "CitedAnswer",
     "Claim",
+    "ContentItem",
+    "DataClass",
+    "GateVerdict",
     "GenRequest",
     "Generated",
     "Generation",
@@ -54,6 +59,7 @@ __all__ = [
     "generate",
     "json_output",
     "load_tiers",
+    "print_gate",
     "request_for",
     "require_ok",
     "tracer_trace",

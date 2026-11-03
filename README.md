@@ -5,7 +5,7 @@ ports are ours and tiny; structured output, output retries and validation come f
 [pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
 
 ```
-pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.5.0/llm_ports-0.5.0-py3-none-any.whl"
+pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.7.0/llm_ports-0.7.0-py3-none-any.whl"
 ```
 
 ## What is in it
@@ -20,6 +20,7 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `pydantic_ai_generator` | the first `Generator` adapter (`PydanticAIGenerator`, `openai_compatible(base_url, key)` for any OpenAI-wire endpoint, e.g. a LiteLLM gateway) |
 | `grounding` | the shapes a grounded generator shares: `Problem(path, reason, detail)`, `retry_message` (the ONE retry text), `loose` (the figures no input rendered, NAMED, so a verifier can refuse one by name), `belt` (`loose` counted; 0 by construction) and `allowed_numbers` |
 | `slots` | grounded prose BY CONSTRUCTION: code renders each value under a digit-free id, the model writes `{id}` under a grammar with no digit token (`slot_pattern` / `prose_pattern`), code `fill`s it, and `belt` over the filled text is 0. Use it for any prose a reader takes numbers from |
+| `content` | the OUTPUT shape in W3C PROV-O words: `ContentItem` (prov:Entity), `Activity` (prov:Activity), `uses` (prov:used); `DataClass{rights, private, link_required}` with `join` (most restrictive wins) and an audience `CEILING`; `print_gate(item, audience)` -> ok or ONE named refusal (`rights \| unclaimed \| uncited \| unsourced \| link`) |
 | `testing` | `StubGenerator`, `RecordingTracer` for consumers' tests |
 | `numbers` | THE number law: `loose(text, allowed, words_ok)` names every digit run (by value) and spelled number no input licensed; every belt, grader and validator in the package reads a number through it |
 | `failure`, `context`, `json_schema`, `claim_refute` | small EDGE-free helpers the call path and graders use |
