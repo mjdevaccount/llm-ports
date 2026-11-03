@@ -176,6 +176,25 @@ GRADERS: dict[str, CallGrader] = {
 }
 
 
+#: Graders whose verdict is only true when the prompt TEXT is the call's whole input. Every grader
+#: is `(prompt, value, role)`: an image sent beside the prompt is invisible to it, and so are the
+#: pages a web-fetching tier read. `numbers_from_inputs` asks "did the reply write a number no input
+#: rendered" -- a chart read's figures come off the IMAGE, a research reply's off the PAGES -- so on
+#: such a call every honest reply fails it, and a guard that always fails carries as little
+#: information as one that never fires. `call.generate` drops these for any call with an image
+#: (`images=`) or a web tier (`web=True`); a text-only call keeps every grader its role names.
+TEXT_ONLY_GRADERS: frozenset[str] = frozenset({"numbers_from_inputs"})
+
+
+def graders_for_inputs(graders: tuple[str, ...], *, has_images: bool,
+                       has_web: bool = False) -> tuple[str, ...]:
+    """Pure. The graders that can see this call's inputs: all of them for text, minus
+    TEXT_ONLY_GRADERS when an image rides beside the prompt or the tier fetches the web. Order kept."""
+    if has_images or has_web:
+        return tuple(g for g in graders if g not in TEXT_ONLY_GRADERS)
+    return graders
+
+
 def score_one(name: str, prompt: str, value: Any, role: Role,
               table: Mapping[str, CallGrader] | None = None) -> CallScore:
     """One grader by name (from `table`, default `GRADERS`); an unknown name or a raise is a
@@ -210,6 +229,6 @@ def board_graders(role: Role, table: Mapping[str, CallGrader] | None = None,
     return {n: bind(n) for n in role.graders}
 
 
-__all__ = ["CRASHED", "ECHO_MAX_SHARE", "GRADERS", "CallGrader", "CallScore", "board_graders",
-           "echo", "leaves", "nullable_paths", "numbers_from_inputs", "prose", "schema_complete",
-           "score_all", "score_one"]
+__all__ = ["CRASHED", "ECHO_MAX_SHARE", "ECHO_MIN_CHARS", "GRADERS", "TEXT_ONLY_GRADERS", "CallGrader",
+           "CallScore", "board_graders", "echo", "graders_for_inputs", "leaves", "nullable_paths",
+           "numbers_from_inputs", "prose", "schema_complete", "score_all", "score_one"]

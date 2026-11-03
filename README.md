@@ -5,7 +5,7 @@ ports are ours and tiny; structured output, output retries and validation come f
 [pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
 
 ```
-pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.7.0/llm_ports-0.7.0-py3-none-any.whl"
+pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.9.0/llm_ports-0.9.0-py3-none-any.whl"
 ```
 
 ## What is in it
@@ -16,13 +16,17 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `roles` | `Role` (one generation surface, `feature.action`) resolved against a **consumer-owned TOML tier table** (`load_tiers`) |
 | `packs` | prompt packs: `<root>/<id>/pack.yaml` + jinja templates, with a frozen **content sha** (sha256[:16] of the sources) |
 | `call` | `generate(role, prompt=, output=, generator=, hooks=)` -- the one call path; outcome is always NAMED: `ok \| gated \| unavailable \| request_fault \| truncated \| invalid` |
-| `call_graders` | per-call graders (`schema_complete` -- a None on a pydantic field whose annotation admits None is an honest answer, not a miss; `numbers_from_inputs` -- digits by value AND spelled numbers, `echo`); a grader result is a recorded score, a crashed grader scores `-1.0` |
+| `call_graders` | per-call graders (`schema_complete` -- a None on a pydantic field whose annotation admits None is an honest answer, not a miss; `numbers_from_inputs` -- digits by value AND spelled numbers, `echo`); a grader result is a recorded score, a crashed grader scores `-1.0`; `graders_for_inputs` drops `TEXT_ONLY_GRADERS` for a call with an image or a web tier (`call.generate(images=, web=True)` applies it) |
 | `pydantic_ai_generator` | the first `Generator` adapter (`PydanticAIGenerator`, `openai_compatible(base_url, key)` for any OpenAI-wire endpoint, e.g. a LiteLLM gateway) |
 | `grounding` | the shapes a grounded generator shares: `Problem(path, reason, detail)`, `retry_message` (the ONE retry text), `loose` (the figures no input rendered, NAMED, so a verifier can refuse one by name), `belt` (`loose` counted; 0 by construction) and `allowed_numbers` |
 | `slots` | grounded prose BY CONSTRUCTION: code renders each value under a digit-free id, the model writes `{id}` under a grammar with no digit token (`slot_pattern` / `prose_pattern`), code `fill`s it, and `belt` over the filled text is 0. Use it for any prose a reader takes numbers from |
 | `content` | the OUTPUT shape in W3C PROV-O words: `ContentItem` (prov:Entity), `Activity` (prov:Activity), `uses` (prov:used); `DataClass{rights, private, link_required}` with `join` (most restrictive wins) and an audience `CEILING`; `print_gate(item, audience)` -> ok or ONE named refusal (`rights \| unclaimed \| uncited \| unsourced \| link`) |
 | `pydantic_ai_embedder` | the first `Embedder` adapter (`PydanticAIEmbedder` on pydantic-ai's `embeddings`, `openai_compatible_embeddings(base_url, model)`): a `stamp` per space, count + dims laws, index order (`IndexOrderedTransport`), batching, the asymmetric query prefix, named outcomes |
-| `testing` | `StubGenerator`, `StubEmbedder`, `RecordingTracer` for consumers' tests |
+| `testing` | `StubGenerator`, `StubEmbedder`, `RecordingTracer`, `StubCiter`, `StubPromptSource` for consumers' tests |
+| `reference` | the framework-free impl behind a port: `GauntletEvaluator` (rows + graders -> ONE board), `NumberLawGrounder` (the number law; numbers only), `RepoPromptSource` (every name its repo `Seed`), `NoopTracer` (no sink; also `call.generate`'s null trace -- one null sink) |
+| `chunking` | `chunk_text` (paragraph > line > sentence breaks in the window's tail third, overlap, a per-chunk header), `max_chars_for_chunks` (the TIGHT worst-case char bound for n chunks, derived from the same floor), `content_hash` + `should_ingest` (skip-unchanged) |
+| `retrieval_metrics` | `first_rank`, `hit_at_k`, `reciprocal_rank` over an ANY-OF relevant set, `agree_at_k` (top-k Jaccard), `mean`, `clears` (a parity gate's floor, rounded so a reported metric compares as written) |
+| `pydantic_ai_replay` | record a live model once, replay in CI: `Recorder` / `replay` keyed by the first prompt's sha + attempt (a changed prompt is `NotRecorded`), `Recording` (every attempt kept parsed) |
 | `numbers` | THE number law: `loose(text, allowed, words_ok)` names every digit run (by value) and spelled number no input licensed; every belt, grader and validator in the package reads a number through it |
 | `failure`, `context`, `json_schema`, `claim_refute` | small EDGE-free helpers the call path and graders use |
 

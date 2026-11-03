@@ -130,3 +130,22 @@ class TestBoardShape:
 
     def test_the_built_in_names_are_this_modules_functions(self) -> None:
         assert set(GRADERS) == set(cg.GRADERS)
+
+
+class TestGradersForInputs:
+    """Moved from trade-data's platform/call_graders (v0.9.0): the text-only exemption."""
+
+    STRUCTURED = ("schema_complete", "numbers_from_inputs", "echo")
+
+    def test_the_text_only_set_is_the_number_law(self) -> None:
+        assert {"numbers_from_inputs"} == cg.TEXT_ONLY_GRADERS
+
+    def test_an_image_or_a_web_tier_drops_it_and_keeps_order(self) -> None:
+        """MUST FIRE: a filter that ignored `has_web` (or `has_images`) fails one of these."""
+        assert cg.graders_for_inputs(self.STRUCTURED, has_images=True) == ("schema_complete", "echo")
+        assert cg.graders_for_inputs(self.STRUCTURED, has_images=False, has_web=True) == ("schema_complete", "echo")
+        assert cg.graders_for_inputs(("echo", "numbers_from_inputs"), has_images=True, has_web=True) == ("echo",)
+
+    def test_a_text_call_keeps_every_grader(self) -> None:
+        assert cg.graders_for_inputs(self.STRUCTURED, has_images=False) == self.STRUCTURED
+        assert cg.graders_for_inputs((), has_images=True) == ()
