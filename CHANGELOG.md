@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0rc1] - 2026-11-03
+
 ### Added
 
 - A documentation site (mkdocs-material + mkdocstrings, `mkdocs.yml`): concepts, a guide per
@@ -289,7 +291,8 @@ dependency floors.
   named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
   pydantic-ai `Generator` adapter, and test doubles.
 
-[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0rc1...HEAD
+[1.0.0rc1]: https://github.com/mjdevaccount/llm-ports/compare/v0.12.0...v1.0.0rc1
 [0.12.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.9.0...v0.10.0
