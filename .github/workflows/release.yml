@@ -106,9 +106,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A PEP 440 pre-release (vX.Y.ZaN / bN / rcN) is a GitHub pre-release, never "latest".
+          pre=()
+          case "$GITHUB_REF_NAME" in *a[0-9]* | *b[0-9]* | *rc[0-9]*) pre=(--prerelease --latest=false) ;; esac
           # no --clobber fallback: a published wheel's bytes are what consumers locked a hash of
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "$GITHUB_REF_NAME" --generate-notes
+            --title "$GITHUB_REF_NAME" --generate-notes "${pre[@]}"
 
   pages:
     name: docs site (GitHub Pages)
