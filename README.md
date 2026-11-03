@@ -10,7 +10,7 @@
 [![license](https://img.shields.io/pypi/l/llm-ports)](https://github.com/mjdevaccount/llm-ports/blob/main/LICENSE)
 
 ```
-pip install --pre "llm-ports[pydantic-ai]"
+pip install "llm-ports[pydantic-ai]"
 ```
 
 The core needs only pydantic, jinja2 and pyyaml. Each integration is an extra: `pydantic-ai`
