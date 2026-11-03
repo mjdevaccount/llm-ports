@@ -41,10 +41,12 @@ from pydantic import BaseModel
 
 from llm_ports.call.roles import Role
 from llm_ports.grounding.numbers import digits, loose
+from llm_ports.ports.outcomes import REASON_MAX
 
 ECHO_MAX_SHARE = 0.5  # `echo` fails at or above this share of copied sentences
 ECHO_MIN_CHARS = 40  # a sentence shorter than this is a label ("unclear", a key), not prose
 CRASHED = -1.0  # the value of a grader that raised; every honest value is >= 0
+_QUOTE_MAX = 60  # the copied sentence `echo` quotes in its reason
 _SENTENCE = re.compile(r"[.!?\n]+")
 _WS = re.compile(r"\s+")
 _INDEX = re.compile(r"\[\d+\]")  # `items[3].price` -> `items[].price`: the field, not the row
@@ -197,7 +199,7 @@ def echo(prompt: str, value: Any, _role: Role) -> CallScore:
         "echo",
         share,
         share < ECHO_MAX_SHARE,
-        f"{len(copied)}/{len(sents)} sentences copied from the prompt: {copied[0][:60]!r}"
+        f"{len(copied)}/{len(sents)} sentences copied from the prompt: {copied[0][:_QUOTE_MAX]!r}"
         if share >= ECHO_MAX_SHARE
         else "",
     )
@@ -243,7 +245,7 @@ def score_one(
     try:
         return fn(prompt, value, role)
     except Exception as exc:  # a crashed grader must not read as a pass
-        return CallScore(name, CRASHED, False, f"grader raised {type(exc).__name__}: {exc}"[:200])
+        return CallScore(name, CRASHED, False, f"grader raised {type(exc).__name__}: {exc}"[:REASON_MAX])
 
 
 def score_all(

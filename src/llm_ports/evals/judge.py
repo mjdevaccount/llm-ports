@@ -5,13 +5,14 @@
 - `judge_input`: the judge's Input text, each part under a heading the rubric names.
 - `reply_text`: the reply as the judge reads it.
 - `sample_key` / `selected`: a deterministic stamp of one generation and a 1-in-N draw on it.
-- `rubric`: the four laws the deterministic graders (`call_graders`) encode, stated for a model:
+- `rubric`: the four laws the deterministic graders (`call.graders`) encode, stated for a model:
   schema answered honestly, no number absent from the Input (`numbers.law_text`), no echo, grounded.
 - `verdict_label`: `pass`, `fail` or `could_not_run`.
 
 The consumer passes in, and this module never assumes: whether a role is eligible for judging,
-the role's grounding mode, the platform named in the rubric, and today's date with its clock
-label. Where a verdict is stored is the consumer's concern.
+the role's grounding mode, the platform named in the rubric, today's date with its clock label,
+and any domain words the number law should name (`numbers.LawExamples`). Where a verdict is stored
+is the consumer's concern.
 
 Invariants:
     - Pure: no model, no database, no clock.
@@ -32,8 +33,12 @@ from llm_ports.grounding import numbers
 from llm_ports.ports import JudgeVerdict
 from llm_ports.prompts import sha
 
-SYSTEM_CAP = 12000  # characters of the judged call's system prompt the judge reads
-SCHEMA_CAP = 6000  # characters of its output grammar
+#: Characters of the judged call's system prompt the judge reads.
+SYSTEM_CAP = 12000
+#: Characters of the judged call's output grammar the judge reads.
+SCHEMA_CAP = 6000
+#: Hex characters of a sample key that `selected` draws on (32 bits).
+_DRAW_HEX = 8
 
 
 @dataclass(frozen=True)
@@ -132,7 +137,7 @@ def selected(key: str, mod: int) -> bool:
     """
     if mod <= 0:
         return False
-    return int(key[:8], 16) % mod == 0
+    return int(key[:_DRAW_HEX], 16) % mod == 0
 
 
 def _placeholder_law(mode: str) -> str:
@@ -161,10 +166,19 @@ def _today_law(today: dt.date, tz_label: str) -> str:
     )
 
 
-def rubric(role: Role, seen: Seen | None = None, *, platform: str, mode: str, today: dt.date, tz_label: str) -> str:
+def rubric(
+    role: Role,
+    seen: Seen | None = None,
+    *,
+    platform: str,
+    mode: str,
+    today: dt.date,
+    tz_label: str,
+    examples: numbers.LawExamples | None = None,
+) -> str:
     """Return the judge's instruction for one reply from `role`.
 
-    The laws are the ones `call_graders` enforce, so the rule and the reader disagree only about
+    The laws are the ones `call.graders` enforce, so the rule and the reader disagree only about
     judgement. A convention the role's own instructions mandate is the law kept, not broken.
 
     Args:
@@ -174,6 +188,7 @@ def rubric(role: Role, seen: Seen | None = None, *, platform: str, mode: str, to
         mode: The role's grounding mode word. `"slots"` changes laws 1 and 2 (`numbers.law_text`).
         today: The judge's calendar date.
         tz_label: The label of the clock `today` was read on.
+        examples: Domain words the number law names as not figures; none by default.
 
     Returns:
         The rubric text.
@@ -192,7 +207,7 @@ def rubric(role: Role, seen: Seen | None = None, *, platform: str, mode: str, to
         "Judge the Output against these laws and nothing else:\n"
         + _today_law(today, tz_label)
         + _placeholder_law(mode)
-        + numbers.law_text(mode, web=seen.web)
+        + numbers.law_text(mode, web=seen.web, examples=examples)
         + "3. NO ECHO: the Output analyses the Input; it does not hand the Input back. A reply that is "
         "mostly sentences copied from the prompt fails. A field the Input asks to hold a quote (a source "
         "quote, an evidence span) is not echo.\n"

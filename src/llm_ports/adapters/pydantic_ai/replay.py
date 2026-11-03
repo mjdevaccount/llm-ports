@@ -14,9 +14,9 @@ the model's replies are replayed.
 
 `Recording` keeps every raw reply parsed in `attempts` (an agent returns only the last attempt; a
 grader wants every one); an unparsable reply is kept as `{"_unparsed": head}`, never dropped.
-Either wrapper plugs into `pydantic_ai_generator.PydanticAIGenerator` as its `wrap=` model wrapper.
+Either wrapper plugs into `PydanticAIGenerator` as its `wrap=` model wrapper.
 
-The module depends on pydantic-ai, so it is imported explicitly, like `pydantic_ai_generator`.
+The module depends on pydantic-ai, so it is imported by its path and needs the `pydantic-ai` extra.
 """
 
 from __future__ import annotations
@@ -24,13 +24,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.settings import ModelSettings
-
+from llm_ports._extras import extra
 from llm_ports.prompts import sha
+
+with extra("pydantic-ai"):
+    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.models.wrapper import WrapperModel
+    from pydantic_ai.settings import ModelSettings
 
 #: Characters of an unparsable reply that `Recording` keeps.
 UNPARSED_HEAD = 2000

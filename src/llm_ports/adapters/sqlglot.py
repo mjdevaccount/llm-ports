@@ -33,8 +33,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import sqlglot
-from sqlglot import expressions as exp
+from llm_ports._extras import extra
+
+with extra("sql"):
+    import sqlglot
+    from sqlglot import expressions as exp
+
 
 #: Node types that never appear anywhere in an admitted tree. `exp.Command` is sqlglot's catch-all
 #: for a raw or unmodelled statement, so failing closed forbids it too.

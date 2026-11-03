@@ -14,7 +14,7 @@ from llm_ports.ports import GenRequest
 from llm_ports.testing import StubGenerator
 from tests.conftest import PACKS, Role
 
-REFUTE = Role("test.refute", tier="box")
+REFUTE = Role("test.refute", tier="local")
 PACK = packs.load("demo.refute", PACKS)
 NOUNS = {"noun": "claims", "subject": "one decision", "evidence_label": "EVIDENCE"}
 

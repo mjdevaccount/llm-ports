@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from llm_ports import ports
-from llm_ports.adapters.http.index_order import IndexOrderedTransport
+from llm_ports.adapters.http import IndexOrderedTransport
 from llm_ports.adapters.http.reranker import HttpReranker, payload, scores_from
 from llm_ports.testing import StubReranker
 

@@ -1,6 +1,8 @@
-"""Strict JSON schemas, JSON-object extraction, and the research grammar.
+"""JSON-object extraction and the research grammar.
 
-- `strict_json_schema`: the strict-schema shape both OpenAI and llama.cpp accept.
+The strict-schema transform (`strict_json_schema`) wraps pydantic-ai's, so it lives with that
+adapter: `llm_ports.adapters.pydantic_ai`.
+
 - `extract_json_object`: the JSON-object substring of a model response that is fenced, or
   prefixed or suffixed by prose.
 - `research_schema`, `research`: a free-text `analysis` scratchpad first, every property required,
@@ -13,9 +15,6 @@ import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from typing import Any
-
-from pydantic import BaseModel
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from llm_ports.call.roles import Role
 from llm_ports.ports import Generated, json_output
@@ -70,17 +69,6 @@ async def research(
     return without_analysis(res)
 
 
-def strict_json_schema(model: type[BaseModel]) -> dict[str, Any]:
-    """Return a `response_format: json_schema, strict: true` schema that OpenAI and llama.cpp accept.
-
-    OpenAI's strict mode refuses what pydantic's `model_json_schema()` emits: every object needs
-    `additionalProperties: false` and every property listed in `required` (nullable via `anyOf`
-    null). llama.cpp's grammar compiler accepts the strict form too, so one shape serves both. The
-    transform is pydantic-ai's `OpenAIJsonSchemaTransformer`.
-    """
-    return OpenAIJsonSchemaTransformer(model.model_json_schema(), strict=True).walk()
-
-
 def extract_json_object(text: str) -> str:
     """Return the JSON-object substring of a model response.
 
@@ -105,6 +93,5 @@ __all__ = [
     "extract_json_object",
     "research",
     "research_schema",
-    "strict_json_schema",
     "without_analysis",
 ]

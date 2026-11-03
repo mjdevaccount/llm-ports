@@ -27,7 +27,7 @@ caller builds it, so this module imports no SDK.
 Invariants:
     - Fails soft: an unreachable store, a refused push or a malformed reply each serves the seed
       as `source == "repo"` and emits a warning event through `on_event` (default: the stdlib
-      logger `llm_ports.langfuse_prompt_source`); none of them raises.
+      logger `llm_ports.adapters.langfuse.prompt_source`); none of them raises.
     - The SDK never caches a fallback reply, so the down verdict is held per name for one TTL
       here: a store that is down costs one round-trip per TTL, not one per call.
 
@@ -38,41 +38,36 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 
-from llm_ports.call import EventHook
+from llm_ports.observability import EventHook, log_events
 from llm_ports.ports import Prompt, Seed
 
 DEFAULT_CACHE_TTL_S = 300
 EVENT = "langfuse_prompt_source"
 _ERR_CAP = 200
-_log = logging.getLogger("llm_ports.langfuse_prompt_source")
 
 
-def _log_event(level: int, event: str, fields: Mapping[str, Any]) -> None:
-    _log.log(level, "%s %s", event, dict(fields))
-
-
-def kind(seed: Seed) -> str:
+def _kind(seed: Seed) -> str:
     """Return "chat" or "text": the seed's forced `kind`, else "chat" exactly when it has a system message."""
     return seed.kind or ("chat" if seed.system else "text")
 
 
-def wire(seed: Seed) -> str | list[dict[str, str]]:
+def _wire(seed: Seed) -> str | list[dict[str, str]]:
     """Return what the store holds for a seed: the text, or the chat message list.
 
     The list has a system message only when the seed has one, so a system-less chat seed is a
     one-message list, never "".
     """
-    if kind(seed) == "text":
+    if _kind(seed) == "text":
         return seed.text
     msgs = [{"role": "system", "content": seed.system}] if seed.system else []
     return [*msgs, {"role": "user", "content": seed.text}]
 
 
-def served(p: Any) -> Any:
-    """Return a reply's prompt in `wire`'s shape.
+def _served(p: Any) -> Any:
+    """Return a reply's prompt in `_wire`'s shape.
 
     A chat reply is reduced to role and content per message (the SDK may carry more keys). A
     message that is not a mapping raises, and `LangfusePromptSource.get` then serves the seed.
@@ -97,7 +92,7 @@ class LangfusePromptSource:
         seed_for: Returns the repository seed for a prompt name.
         cache_ttl_s: The SDK cache TTL, and how long a down verdict is held per name.
         clock: A monotonic clock, injectable for tests.
-        on_event: The warning sink; defaults to the stdlib logger `llm_ports.langfuse_prompt_source`.
+        on_event: The warning sink; defaults to the stdlib logger `llm_ports.adapters.langfuse.prompt_source`.
     """
 
     def __init__(
@@ -113,14 +108,14 @@ class LangfusePromptSource:
         self._seed_for = seed_for
         self._ttl = cache_ttl_s
         self._clock = clock
-        self._on_event = on_event or _log_event
+        self._on_event = on_event or log_events(__name__)
         self._down_until: dict[str, float] = {}
 
     def _down(self, name: str) -> bool:
         return self._clock() < self._down_until.get(name, 0.0)
 
     def _fetch(self, name: str, label: str, seed: Seed, ttl: int) -> Any:
-        return self._client.get_prompt(name, label=label, type=kind(seed), fallback=wire(seed), cache_ttl_seconds=ttl)
+        return self._client.get_prompt(name, label=label, type=_kind(seed), fallback=_wire(seed), cache_ttl_seconds=ttl)
 
     def get(self, name: str, *, label: str = "production") -> Prompt:
         """Return prompt `name`, mirrored to the managed store under `label`.
@@ -132,20 +127,20 @@ class LangfusePromptSource:
         repo = Prompt(name, seed.text, None, "repo", config=dict(seed.config), system=seed.system)
         if self._down(name):
             return repo
-        want = wire(seed)
+        want = _wire(seed)
         try:
             p = self._fetch(name, label, seed, self._ttl)
             if _is_fallback(p) or (p.config or {}).get("content_sha") != seed.sha:
                 self._client.create_prompt(
                     name=name,
-                    type=kind(seed),
+                    type=_kind(seed),
                     prompt=want,
                     labels=[label],
                     tags=list(seed.tags),
                     config={**seed.config, "content_sha": seed.sha},
                 )
                 p = self._fetch(name, label, seed, 0)
-            got = served(p)
+            got = _served(p)
         except Exception as exc:  # down or refusing: the seed serves, visibly
             self._on_event(
                 logging.WARNING,
@@ -169,4 +164,4 @@ class LangfusePromptSource:
         )
 
 
-__all__ = ["DEFAULT_CACHE_TTL_S", "EVENT", "LangfusePromptSource", "kind", "served", "wire"]
+__all__ = ["DEFAULT_CACHE_TTL_S", "EVENT", "LangfusePromptSource"]

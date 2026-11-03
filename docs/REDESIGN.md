@@ -162,8 +162,11 @@ ruff `D` (google convention).
 
 **One source for the number law:** `grounding/numbers.py` owns the check (`loose`) and its English
 statement (`law_text(mode, *, web)`); `evals.judge.rubric` composes `law_text(...)`. Trading
-example words become `rubric(..., examples: Sequence[str] = ())`, passed by trade-data. A golden
-test pins `rubric()` with trade-data's arguments byte-identical to 0.11 for every `(mode, web)`.
+example words become `rubric(..., examples=numbers.LawExamples(paraphrase=..., fact_names=...))`,
+passed by trade-data. A golden test pins `rubric()` with trade-data's arguments byte-identical to
+0.11 for every `(mode, web)`. (Shipped in PR 5 as `LawExamples`, not one `Sequence[str]`: the law
+has two parentheticals, one of paraphrase words and one of fact names, and a flat list cannot
+reproduce both byte-identically.)
 
 ## 4. README outline
 

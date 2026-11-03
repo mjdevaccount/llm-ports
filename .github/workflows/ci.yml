@@ -1,11 +1,13 @@
 # llm-ports' own gate. Every job starts from `permissions: {}` and grants only what it needs.
 #
-#   lint         ruff check + ruff format --check, pre-commit (all files), actionlint + zizmor over
-#                the workflows
+#   lint         ruff check + ruff format --check, vulture (dead code), pre-commit (all files),
+#                actionlint + zizmor over the workflows
 #   pytest       the locked suite on 3.12 / 3.13 / 3.14 / 3.15 (ubuntu) and 3.13 (windows), with a
 #                coverage floor (pyproject `[tool.coverage.report] fail_under`, raised only); one leg
 #                uploads to Codecov over OIDC.
 #   test-lowest  every direct dependency at its declared lower bound (`--resolution lowest-direct`)
+#   core-only    `pip install llm-ports` with no extra imports its whole core and no vendor; each
+#                adapter names its install line; then `[http]` alone is enough for the HTTP adapters
 #   build        sdist + wheel, `twine check --strict`
 #   test         the one required check: green only when every job above is
 #   gitleaks / dup-code   ci-kit's reusable workflows, called the way every consumer calls them
@@ -43,6 +45,8 @@ jobs:
         run: uv run --no-sync ruff check --output-format=github .
       - name: ruff format
         run: uv run --no-sync ruff format --check .
+      - name: vulture
+        run: uv run --no-sync vulture
       - name: pre-commit
         run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
       - name: actionlint
@@ -97,12 +101,34 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
-      # Every extra CI can install (lettucedetect pulls torch; its tests run over a stub detector).
+      # `all` is every extra but lettucedetect, which pulls torch; its tests run over a stub detector.
       - run: uv venv
-      - run: uv pip install --resolution lowest-direct -e ".[evals,langfuse,otel,sql]" --group dev
+      - run: uv pip install --resolution lowest-direct -e ".[all]" --group dev
       - run: uv pip list
       - name: pytest
         run: .venv/bin/python -m pytest -q
+
+  core-only:
+    name: core-only (no extras, 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      # A plain (non-editable) install, so the test imports the wheel's package, not the checkout.
+      - run: uv venv
+      - run: uv pip install . pytest
+      - name: core imports, no extra
+        run: .venv/bin/python -m pytest -q -p no:cacheprovider tests/contract/test_core_imports.py
+      - run: uv pip install ".[http]"
+      - name: core imports, `http` only
+        run: .venv/bin/python -m pytest -q -p no:cacheprovider tests/contract/test_core_imports.py
 
   build:
     name: build
@@ -124,7 +150,7 @@ jobs:
   test:
     name: test
     if: always()
-    needs: [lint, pytest, test-lowest, build]
+    needs: [lint, pytest, test-lowest, core-only, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

@@ -1,6 +1,7 @@
-"""Named failure reasons for a failed model call.
+"""Named failure reasons for a failed model call, and the HTTP-status rule every adapter shares.
 
-`failure_reason` turns an exception into the one reason line a caller persists: the exception
+`outcome_for_status` names the outcome an HTTP error status maps to: a status in `REQUEST_FAULT`
+blames the request, any other the server. `failure_reason` turns an exception into the one reason line a caller persists: the exception
 class, the status code when there is one, and the head of the message. A provider's error payload
 belongs in a log line, not in a persisted reason, and a proxy error can embed a keyed URL.
 
@@ -16,7 +17,23 @@ from __future__ import annotations
 from collections.abc import Iterator
 from itertools import islice
 
+from llm_ports.ports._types import Outcome
+
+#: The longest persisted reason line, in characters.
 REASON_MAX = 200
+#: The deepest exception chain `exception_chain` walks.
+CHAIN_LIMIT = 12
+#: HTTP statuses that blame the request (the input) rather than the model server.
+REQUEST_FAULT = frozenset({400, 413, 422})
+
+
+def outcome_for_status(status: int) -> Outcome:
+    """Return the outcome an HTTP error status maps to.
+
+    Pure. A status in `REQUEST_FAULT` is `request_fault`: retrying the same input fails the same
+    way. Any other status is `unavailable`: the server, not the input, failed.
+    """
+    return "request_fault" if status in REQUEST_FAULT else "unavailable"
 
 
 class GenerationFailed(RuntimeError):
@@ -69,7 +86,7 @@ def _reason(exc: BaseException) -> str:
     return (f"{cls}: {head}" if head else cls)[:REASON_MAX]
 
 
-def exception_chain(exc: BaseException, limit: int = 12) -> Iterator[BaseException]:
+def exception_chain(exc: BaseException, limit: int = CHAIN_LIMIT) -> Iterator[BaseException]:
     """Yield `exc`, then its `__cause__` (else `__context__`), and so on down the chain.
 
     SDK layers (pydantic-ai, openai, httpx, a transport) each wrap the one below, so the root
@@ -87,4 +104,12 @@ def exception_chain(exc: BaseException, limit: int = 12) -> Iterator[BaseExcepti
         cur = cur.__cause__ or cur.__context__
 
 
-__all__ = ["REASON_MAX", "GenerationFailed", "exception_chain", "failure_reason"]
+__all__ = [
+    "CHAIN_LIMIT",
+    "REASON_MAX",
+    "REQUEST_FAULT",
+    "GenerationFailed",
+    "exception_chain",
+    "failure_reason",
+    "outcome_for_status",
+]

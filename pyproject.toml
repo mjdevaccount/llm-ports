@@ -21,12 +21,12 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
+# The core (ports, call path, grounding, prompts, evals, rag, provenance, testing stubs) needs only
+# these three. Every framework is an extra; `tests/contract/test_core_imports.py` holds the line.
 dependencies = [
     "pydantic>=2.12",
-    "pydantic-ai-slim[openai]>=2.57,<3",
     "jinja2>=3.1",
     "pyyaml>=6.0",
-    "httpx>=0.27",
 ]
 
 [project.urls]
@@ -37,8 +37,13 @@ Changelog = "https://github.com/mjdevaccount/llm-ports/blob/main/CHANGELOG.md"
 Decisions = "https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr"
 
 [project.optional-dependencies]
+# `adapters.pydantic_ai`: the Generator, the Embedder, output schemas and record/replay. httpx is
+# named, not inherited: the adapter builds its own client, and pydantic-ai and openai moved to httpx2.
+pydantic-ai = ["pydantic-ai-slim[openai]>=2.57,<3", "httpx>=0.27"]
+# `adapters.http`: the reranker, the grounder client and the index-ordered transport.
+http = ["httpx>=0.27"]
 # `adapters.pydantic_evals` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
-# pydantic-ai-slim to its own version, so it moves with the core dependency above.
+# pydantic-ai-slim to its own version, so it moves with the `pydantic-ai` extra.
 evals = ["pydantic-evals>=2.57,<3"]
 # `adapters.lettucedetect` with the REAL model (torch + transformers, hundreds of MB). The module
 # imports it lazily; without the extra it runs over an injected detector (`testing.StubDetector`).
@@ -50,6 +55,8 @@ langfuse = ["langfuse>=5.0.2,<6"]
 otel = ["opentelemetry-api>=1.30", "opentelemetry-semantic-conventions>=0.58b0"]
 # `adapters.sqlglot` (the read-only AST guard for agent-written SQL).
 sql = ["sqlglot>=30.22"]
+# Every extra but `lettucedetect`, whose model weighs hundreds of MB.
+all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql]"]
 
 [build-system]
 requires = ["hatchling"]
@@ -59,10 +66,12 @@ build-backend = "hatchling.build"
 packages = ["src/llm_ports"]
 
 [dependency-groups]
-# pydantic-evals: the judge adapter's tests run in CI (the `evals` extra's one package). lettucedetect
-# is NOT here: its tests run over `testing.StubDetector`, the real model is the consumer's lane.
-# langfuse / otel / sql: those adapters' tests run in CI (each extra's packages, all pure Python).
+# Every extra's packages but lettucedetect's, so every adapter's tests run in CI (all pure Python).
+# lettucedetect is NOT here: its tests run over `testing.StubDetector`; the real model is the
+# consumer's lane.
 dev = [
+    "pydantic-ai-slim[openai]>=2.57,<3",
+    "httpx>=0.27",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.15",
@@ -78,6 +87,7 @@ dev = [
 lint = [
     "actionlint-py==1.7.12.25",
     "twine>=7.0",
+    "vulture>=2.14",
     "zizmor==1.31.1",
 ]
 
@@ -130,13 +140,6 @@ modules = [
     "llm_ports.adapters.pydantic_evals",
     "llm_ports.adapters.sqlglot",
 ]
-# Two edges predate the layout and are removed by the 1.0 API cleanup (REDESIGN §9 row 5): the
-# reranker's REQUEST_FAULT moves to `ports.outcomes`, and the embedder's transport is the HTTP
-# adapter's index-ordered transport.
-ignore_imports = [
-    "llm_ports.adapters.http.reranker -> llm_ports.adapters.pydantic_ai",
-    "llm_ports.adapters.pydantic_ai._embedder -> llm_ports.adapters.http.index_order",
-]
 
 [[tool.importlinter.contracts]]
 id = "no-vendor-in-core"
@@ -161,12 +164,24 @@ forbidden_modules = [
     "pydantic_evals",
     "sqlglot",
 ]
-# `strict_json_schema` moves to `adapters.pydantic_ai` in the 1.0 API cleanup (REDESIGN §9 row 5).
-ignore_imports = ["llm_ports.call.schema -> pydantic_ai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+# Dead code: `vulture` runs in the `lint` job over the package and its tests (tests count as use).
+# What it cannot see used: pydantic validators, a Protocol's parameter names, dataclass fields read
+# by consumers, a fake client's attributes, and a pydantic-ai validator registered by decorator.
+[tool.vulture]
+paths = ["src", "tests"]
+min_confidence = 60
+ignore_decorators = ["@field_validator", "@model_validator", "@*.output_validator"]
+ignore_names = [
+    "date_from", "date_to", "question", "extras", "model_config", "output_schema", "langfuse_label", "create_score",
+    # fields of test models that exist to shape a schema
+    "confidence", "conviction", "entry_low", "hedge", "stop", "summary", "thesis", "ticker", "tickers",
+]
 
 [tool.coverage.run]
 # By import name: a stray `llm_ports/` directory in the checkout can never shadow the package.

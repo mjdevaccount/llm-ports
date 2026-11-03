@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from llm_ports import call
+from llm_ports.call import _generate
 from llm_ports.call import graders as call_graders
 from llm_ports.observability import current_feature
 from llm_ports.ports import Generated, GenRequest
@@ -22,9 +23,9 @@ from llm_ports.testing import RecordingTracer, StubGenerator
 from tests.conftest import Role
 
 GRADERS = ("schema_complete", "numbers_from_inputs", "echo")
-ROLE = Role("test.facade", tier="box", max_tokens=300, temperature=0.2, settings={"seed": 7}, pack="test.pack")
-WEB = Role("test.facade_web", tier="box-web")
-GRADED = Role("test.graded", tier="box", max_tokens=300, graders=GRADERS)
+ROLE = Role("test.facade", tier="local", max_tokens=300, temperature=0.2, settings={"seed": 7}, pack="test.pack")
+WEB = Role("test.facade_web", tier="local-web")
+GRADED = Role("test.graded", tier="local", max_tokens=300, graders=GRADERS)
 
 
 def _rig(result: Any) -> tuple[StubGenerator, RecordingTracer, call.Hooks, list[tuple[int, str, dict[str, Any]]]]:
@@ -44,7 +45,7 @@ def _rig(result: Any) -> tuple[StubGenerator, RecordingTracer, call.Hooks, list[
 
 def test_the_role_resolves_to_one_request() -> None:
     req = call.request_for(ROLE, prompt="p", system="s", settings={"seed": 9})
-    assert (req.model, req.timeout_s, req.box, req.label) == ("small-chat", 120.0, True, "test.facade")
+    assert (req.model, req.timeout_s, req.self_hosted, req.label) == ("small-chat", 120.0, True, "test.facade")
     assert req.settings["max_tokens"] == 300 and req.settings["temperature"] == 0.2
     assert req.settings["seed"] == 9, "a per-call override beats the role's default"
     assert req.settings["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
@@ -157,9 +158,9 @@ def test_trace_output_is_json_for_models_and_mappings_and_capped() -> None:
     class M(BaseModel):
         a: int
 
-    assert call.trace_output(None) == "" and call.trace_output(M(a=1)) == '{"a":1}'
-    assert call.trace_output({"k": 1}) == '{"k": 1}'
-    assert len(call.trace_output("x" * 9000)) == call.OUTPUT_TRACE_MAX
+    assert _generate._trace_output(None) == "" and _generate._trace_output(M(a=1)) == '{"a":1}'
+    assert _generate._trace_output({"k": 1}) == '{"k": 1}'
+    assert len(_generate._trace_output("x" * 9000)) == call.OUTPUT_TRACE_MAX
 
 
 def test_json_output_is_a_port_type_carrying_the_schema() -> None:
@@ -258,7 +259,7 @@ class TestBlindInputs:
         assert [e[2]["failed"] for e in events] == [["numbers_from_inputs"]]
 
     async def test_a_role_with_only_blind_graders_scores_nothing_on_an_image_call(self) -> None:
-        role = Role("test.numbers_only", tier="box", graders=("numbers_from_inputs",))
+        role = Role("test.numbers_only", tier="local", graders=("numbers_from_inputs",))
         gen, tracer, hooks, _e = _rig({"summary": "385"})
         res = await call.generate(role, prompt="x", generator=gen, hooks=hooks, images=[(b"png", "image/png")])
         assert "scores" not in res.stamp and tracer.generations[0].scores == []

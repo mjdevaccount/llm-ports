@@ -12,7 +12,7 @@ store needs and the framework does not promise:
   sent as an `Instruct: {task}` line before `Query: {text}`); documents embed plain.
 - Index order: pydantic-ai (2.59, `embeddings/openai.py`) reads a reply's `data` in listed order
   and drops each item's `index`, so a server that answers out of order would put vectors on the
-  wrong rows while the count check still passes. `IndexOrderedTransport` (`llm_ports.index_order`,
+  wrong rows while the count check still passes. `IndexOrderedTransport` (`llm_ports.adapters.http`,
   shared with the rerank wire) re-sorts `data` by `index` beneath the SDK.
   `openai_compatible_embeddings` always installs it; a caller that builds its own provider wraps
   its transport the same way.
@@ -37,15 +37,21 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
-import httpx
-from pydantic_ai.embeddings import EmbeddingModel
-
-from llm_ports.adapters.http.index_order import IndexOrderedTransport
+from llm_ports._extras import extra
 from llm_ports.adapters.pydantic_ai._generator import classify
 from llm_ports.ports import Embedded, EmbedInput
 from llm_ports.ports.outcomes import exception_chain, failure_reason
 
+with extra("pydantic-ai"):
+    import httpx
+    from pydantic_ai.embeddings import EmbeddingModel
+
+    from llm_ports.adapters._index_order import IndexOrderedTransport
+
 EmbedModelFor = Callable[[], AbstractAsyncContextManager[EmbeddingModel]]
+
+#: The cap on an `unavailable` reason that carries the wrapper's reason and the chain root's.
+_CHAINED_REASON_MAX = 240
 
 
 def openai_compatible_embeddings(
@@ -197,7 +203,7 @@ class PydanticAIEmbedder:
             if outcome == "unavailable" and root is not exc:
                 # pydantic-ai -> openai -> httpx: the wrappers say "Connection error."; the root
                 # of the chain names the cause (refused, timed out, DNS).
-                reason = f"{reason} <- {failure_reason(root)}"[:240]
+                reason = f"{reason} <- {failure_reason(root)}"[:_CHAINED_REASON_MAX]
             return Embedded(vectors=(), outcome=outcome, stamp=self._stamp, reason=reason)
         return Embedded(vectors=tuple(vecs), outcome="ok", stamp=self._stamp, input_tokens=tokens)
 

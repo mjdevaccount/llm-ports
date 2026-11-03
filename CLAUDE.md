@@ -18,12 +18,15 @@ uv sync                                   # locked dev environment
 uv run pytest -q --cov                    # suite + coverage floor (fail_under in pyproject.toml)
 uv run ruff check . && uv run ruff format --check .
 uv run pre-commit run --all-files         # docstring-vocabulary hook
+uv run vulture                            # dead code (whitelist: [tool.vulture] in pyproject.toml)
 ```
 
 The import-linter contracts run inside pytest (`tests/contract/test_layers.py`), so a green suite
 means the layers hold. CI also runs the suite at every dependency's declared **lower** bound
 (`test-lowest`): a floor in `pyproject.toml` is a claim CI proves, so raise it when you use a newer
-API, never to silence a resolver.
+API, never to silence a resolver. The `core-only` job installs the package with no extra (then
+with `http` only) and runs `tests/contract/test_core_imports.py`: a bare install imports the whole
+core and no vendor module.
 
 ## Layering (enforced, `[tool.importlinter]` in `pyproject.toml`)
 
@@ -31,12 +34,14 @@ API, never to silence a resolver.
   < `adapters | testing`. A lower layer never imports a higher one.
 - **Only `adapters/` and `testing/` import a vendor library** (`pydantic_ai`, `httpx`, `langfuse`,
   `opentelemetry`, `sqlglot`, ...). Core code depends on a port; the adapter implements it.
-- Adapters do not import each other. Two grandfathered edges are listed in `ignore_imports`; the
-  list only shrinks.
+- Adapters do not import each other, with no `ignore_imports` exception. Code two adapters share
+  is a private module directly under `adapters/` (`adapters/_index_order.py`), outside the
+  independence contract.
 - Every public module defines `__all__`; a test checks every name resolves. Private helpers are
   `_`-prefixed modules or names.
 - A new vendor integration = a new `adapters/<vendor>/` package + an optional extra in
-  `[project.optional-dependencies]` + its own entry in the independence contract.
+  `[project.optional-dependencies]` (and in `all`, unless it is heavy) + its own entry in the
+  independence contract + its row in `ADAPTERS` in `tests/contract/test_core_imports.py`.
 
 ## Code rules
 
@@ -51,8 +56,8 @@ API, never to silence a resolver.
   keeps a one-line `Rationale: ADR-NNNN.` pointer.
 - Tests mirror `src/` layout. Use the doubles in `llm_ports.testing` rather than ad-hoc mocks of
   vendor clients.
-- Optional-extra code imports its vendor lazily or only inside its adapter package, so
-  `import llm_ports` works on a bare install.
+- A vendor import sits inside its adapter, in a `with extra("<extra>"):` block (`llm_ports._extras`),
+  so a missing extra fails with its install line and `import llm_ports` works on a bare install.
 
 ## Dependencies
 

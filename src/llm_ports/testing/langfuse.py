@@ -22,7 +22,11 @@ import uuid
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
+from llm_ports._extras import extra
+
+with extra("langfuse"):
+    import httpx
+
 
 OBS = "langfuse.observation."
 _HTTP: httpx.Client | None = None
@@ -81,10 +85,11 @@ class LangfuseRig:
     """
 
     def __init__(self) -> None:
-        from langfuse import Langfuse  # type: ignore[import-untyped]
-        from langfuse.span_filter import is_langfuse_span  # type: ignore[import-untyped]
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+        with extra("langfuse"):
+            from langfuse import Langfuse  # type: ignore[import-untyped]
+            from langfuse.span_filter import is_langfuse_span  # type: ignore[import-untyped]
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
         self.exporter = InMemorySpanExporter()
         self.client = Langfuse(

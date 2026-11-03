@@ -8,8 +8,23 @@ ports are ours and tiny; structured output, output retries and validation come f
 [pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
 
 ```
-pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/v0.12.0/llm_ports-0.12.0-py3-none-any.whl"
+pip install --pre "llm-ports[pydantic-ai]"     # pre-releases until 1.0
 ```
+
+The core (ports, the call path, grounding, prompts, evals, rag, provenance, the test stubs) needs
+only pydantic, jinja2 and pyyaml. Each adapter is an extra, and importing one without it fails
+with the install line:
+
+| extra | installs | for |
+|---|---|---|
+| `pydantic-ai` | pydantic-ai-slim[openai], httpx | `adapters.pydantic_ai` |
+| `http` | httpx | `adapters.http` |
+| `evals` | pydantic-evals | `adapters.pydantic_evals` |
+| `langfuse` | langfuse | `adapters.langfuse`, `testing.langfuse` |
+| `otel` | opentelemetry-api | `adapters.otel` |
+| `sql` | sqlglot | `adapters.sqlglot` |
+| `lettucedetect` | lettucedetect (torch) | `adapters.lettucedetect` |
+| `all` | every extra but `lettucedetect` | |
 
 ## What is in it
 
@@ -20,14 +35,14 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `prompts` | prompt packs: `<root>/<id>/pack.yaml` + jinja templates, with a frozen **content sha** (sha256[:16] of the sources) |
 | `call` | `generate(role, prompt=, output=, generator=, hooks=)` -- the one call path; outcome is always NAMED: `ok \| gated \| unavailable \| request_fault \| truncated \| invalid` |
 | `call.graders` | per-call graders (`schema_complete` -- a None on a pydantic field whose annotation admits None is an honest answer, not a miss; `numbers_from_inputs` -- digits by value AND spelled numbers, `echo`); a grader result is a recorded score, a crashed grader scores `-1.0`; `graders_for_inputs` drops `TEXT_ONLY_GRADERS` for a call with an image or a web tier (`call.generate(images=, web=True)` applies it) |
-| `adapters.pydantic_ai` | the first `Generator` adapter (`PydanticAIGenerator`, `openai_compatible(base_url, key)` for any OpenAI-wire endpoint, e.g. a LiteLLM gateway) |
+| `adapters.pydantic_ai` | the first `Generator` adapter (`PydanticAIGenerator`, `openai_compatible(base_url, key)` for any OpenAI-wire endpoint, e.g. a LiteLLM gateway); `strict_json_schema`, `structured_dict` |
 | `grounding` | the shapes a grounded generator shares: `Problem(path, reason, detail)`, `retry_message` (the ONE retry text), `loose` (the figures no input rendered, NAMED, so a verifier can refuse one by name), `belt` (`loose` counted; 0 by construction) and `allowed_numbers` |
 | `grounding.slots` | grounded prose BY CONSTRUCTION: code renders each value under a digit-free id, the model writes `{id}` under a grammar with no digit token (`slot_pattern` / `prose_pattern`), code `fill`s it, and `belt` over the filled text is 0. Use it for any prose a reader takes numbers from |
 | `provenance` | the OUTPUT shape in W3C PROV-O words: `ContentItem` (prov:Entity), `Activity` (prov:Activity), `uses` (prov:used); `DataClass{rights, private, link_required}` with `join` (most restrictive wins) and an audience `CEILING`; `print_gate(item, audience)` -> ok or ONE named refusal (`rights \| unclaimed \| uncited \| unsourced \| link`) |
 | `adapters.pydantic_ai` | the first `Embedder` adapter (`PydanticAIEmbedder` on pydantic-ai's `embeddings`, `openai_compatible_embeddings(base_url, model)`): a `stamp` per space, count + dims laws, index order (`IndexOrderedTransport`), batching, the asymmetric query prefix, named outcomes |
 | `testing` | `StubGenerator`, `StubEmbedder`, `StubReranker`, `RecordingTracer`, `StubCiter`, `StubPromptSource`, `StubDetector` for consumers' tests; `testing.langfuse` (extra `[langfuse]`): `LangfuseRig` (a real SDK 5 client exporting to memory), `FakeLangfusePrompts`, `RefusingLangfuse` |
-| `adapters.http` | the first `Reranker` adapter (`HttpReranker` over the Cohere/Jina `/rerank` wire): scores in input order via `index_order.IndexOrderedTransport` (shared with the embeddings wire), every document scored exactly once and finite or `invalid`, named outcomes |
-| `observability` | `observe(tracer, ...)`: one generation around a block, ended once (ERROR + latency on an exception); `PortObservation` (`usage_counts()`); `opt_int`; unmeasured usage is flagged `tokens_unmeasured`, never zero tokens |
+| `adapters.http` | the first `Reranker` adapter (`HttpReranker` over the Cohere/Jina `/rerank` wire): scores in input order via `IndexOrderedTransport` (shared with the embeddings wire), every document scored exactly once and finite or `invalid`, named outcomes |
+| `observability` | `observe(tracer, ...)`: one generation around a block, ended once (ERROR + latency on an exception); `PortObservation` (`usage_counts()`); `opt_int`; unmeasured usage is flagged `tokens_unmeasured`, never zero tokens; `EventHook` + `log_events(logger)` (the structured-event sink every adapter takes) |
 | `adapters.langfuse.tracer` | the `Tracer` on the Langfuse SDK 5 (extra `[langfuse]`): a root generation in the current OTel trace, usage honesty, NUMERIC scores, the labelled prompt link; fails open with one held warning |
 | `adapters.langfuse.prompt_source` | the `PromptSource` on Langfuse prompt management: the repo seed leads, the label mirrors (pushed when absent/stale, served when the store is down or disagrees); text and chat prompts |
 | `adapters.otel` | OpenTelemetry GenAI spans (extra `[otel]`): `gen_ai_span` (a child of the ambient span), `record_gen_ai` (back-dated by the measured latency), none-is-not-zero usage; no prompt bodies, ever |
@@ -42,8 +57,8 @@ pip install "llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/down
 | `adapters.pydantic_ai.replay` | record a live model once, replay in CI: `Recorder` / `replay` keyed by the first prompt's sha + attempt (a changed prompt is `NotRecorded`), `Recording` (every attempt kept parsed) |
 | `grounding.numbers` | THE number law: `loose(text, allowed, words_ok)` names every digit run (by value) and spelled number no input licensed; every belt, grader and validator in the package reads a number through it |
 | `evals.refute` | the adversarial pass: `verdicts_schema` (capped grammar), `refute_slots` / `refute_prompt(pack, ...)` (each claim idx-numbered, the consumer's pack rendered), `refute(generate, role, ...)` through the consumer's `generate`, `match_verdicts` (by idx), `refutation` (a cut reason flagged) |
-| `call.schema` | `strict_json_schema`, `extract_json_object`; the research grammar `research_schema` (an `analysis` scratchpad first, every field required) + `research(generate, role, ...)` / `without_analysis` (scratchpad popped) |
-| `ports.outcomes`, `observability` | small EDGE-free helpers the call path and graders use |
+| `call.schema` | `extract_json_object`; the research grammar `research_schema` (an `analysis` scratchpad first, every field required) + `research(generate, role, ...)` / `without_analysis` (scratchpad popped) |
+| `ports.outcomes` | `GenerationFailed`, `failure_reason` / `exception_chain` (the capped one-line reason), `outcome_for_status` + `REQUEST_FAULT` (an HTTP status as a named outcome) |
 
 The package root imports no framework; import an adapter by its path (`llm_ports.adapters.pydantic_ai`).
 
@@ -60,7 +75,7 @@ cheap = "gpt-5-nano"
 [tiers.gateway]
 model = "cheap"
 timeout = "gateway_s"
-box = false          # cloud tier: no self-hosted thinking switch
+self_hosted = false  # cloud tier: no self-hosted thinking switch (default true)
 ```
 
 ```python
@@ -83,6 +98,10 @@ res = await generate(CATEGORIZE, prompt=text, output=MyOutput, generator=gen)
 if res.outcome != "ok":
     ...  # gated / unavailable / request_fault / truncated / invalid -- never an exception
 ```
+
+`load_tiers` also takes the parsed table as a mapping (from your own config loader); errors and
+the `check_ladder` hook then name the source `<mapping>`. The pre-1.0 key `box` still loads, with a
+`DeprecationWarning`; setting both `box` and `self_hosted` is refused.
 
 `Generator.generate` never raises for a model, wire or gate failure; it returns a named outcome
 with a short reason (exception class, status code or the first message line cut before any `body:`
@@ -113,15 +132,20 @@ dimension is `invalid` (nothing to store), never a partial batch.
 - `admit(role) -> None | reason` -- a cap / kill switch; a reason makes the outcome `gated`.
 - `trace(role, req, prompt, meta)` -- async CM yielding an `Observation`; `tracer_trace(tracer)`
   builds one over any `Tracer` port adapter (Langfuse, OTel, `testing.RecordingTracer`).
-- `graders` -- the grader table (default `call_graders.GRADERS`); add your own.
+- `graders` -- the grader table (default `call.graders.GRADERS`); add your own.
 - `on_scores(role, scores)` -- persist / count grader scores.
 - `on_ok(role, prompt, res)` -- e.g. sample for an LLM judge.
 - `on_event(level, event, fields)` -- default is the stdlib logger `llm_ports.call`.
 
 ## Known
 
-- pydantic-ai 2.59 emits a deprecation warning for `httpx.AsyncClient` on OpenAI providers
-  (`httpx2` in v3). The `<3` pin holds it; revisit at pydantic-ai 3.
-- Version is locked to the pydantic-ai range of its first consumer (`>=2.57,<3`).
+- Dependency ranges are the widest range CI proves. Every floor is installed and tested by the
+  `test-lowest` job (`--resolution lowest-direct`); an upper bound is a major-version guard only
+  (`pydantic-ai-slim<3`, `langfuse<6`); `uv.lock` tracks the latest releases (Renovate refreshes
+  it) and the `pytest` matrix runs on it.
+- pydantic-ai (2.57 through 2.65) emits a `PydanticAIDeprecationWarning` when an OpenAI-compatible
+  provider is given an `httpx.AsyncClient`; it takes `httpx2.AsyncClient` and drops httpx in v3.
+  The adapters build an httpx client because a consumer's `transport=` is an httpx transport, so
+  moving to httpx2 changes that argument's type.
 
 MIT.
