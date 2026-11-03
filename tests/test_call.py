@@ -212,3 +212,45 @@ async def test_an_ok_reply_is_offered_to_on_ok_with_its_observation() -> None:
     res = await call.generate(ROLE, prompt="say it", generator=gen, hooks=hooks)
     assert offered and offered[0][0] is ROLE and offered[0][1] == "say it"
     assert offered[0][2].stamp["generation"] is res.stamp["generation"]
+
+
+class TestBlindInputs:
+    """An image beside the prompt, or a web tier's fetched pages, is an input no text grader sees:
+    `numbers_from_inputs` would fail every honest reply (a chart's '2027', a page's '1.47'). The
+    call drops `TEXT_ONLY_GRADERS` for THAT call; the role itself is untouched."""
+
+    async def test_an_image_call_drops_the_text_only_graders(self) -> None:
+        gen, tracer, hooks, events = _rig({"summary": "resistance near 385 into 2027"})
+        res = await call.generate(GRADED, prompt="read the chart", generator=gen, hooks=hooks,
+                                  images=[(b"png", "image/png")])
+        assert [s.name for s in res.stamp["scores"]] == ["schema_complete", "echo"]
+        assert "test.graded.numbers_from_inputs" not in {s[0] for s in tracer.generations[0].scores}
+        assert events == [] and GRADED.graders == GRADERS
+
+    async def test_a_web_call_drops_them_too(self) -> None:
+        gen, _t, hooks, _e = _rig({"summary": "the 2y moved 1.47 to 1.52 on the print"})
+        res = await call.generate(GRADED, prompt="what moved rates today", generator=gen, hooks=hooks, web=True)
+        assert [s.name for s in res.stamp["scores"]] == ["schema_complete", "echo"]
+
+    async def test_a_text_call_keeps_every_grader_and_still_fails_the_number_law(self) -> None:
+        """BOTH DIRECTIONS: the same reply, text-only, is still caught."""
+        gen, _t, hooks, events = _rig({"summary": "resistance near 385 into 2027"})
+        res = await call.generate(GRADED, prompt="read the chart", generator=gen, hooks=hooks)
+        assert [s.name for s in res.stamp["scores"]] == list(GRADERS)
+        assert [e[2]["failed"] for e in events] == [["numbers_from_inputs"]]
+
+    async def test_a_role_with_only_blind_graders_scores_nothing_on_an_image_call(self) -> None:
+        role = Role("test.numbers_only", tier="box", graders=("numbers_from_inputs",))
+        gen, tracer, hooks, _e = _rig({"summary": "385"})
+        res = await call.generate(role, prompt="x", generator=gen, hooks=hooks, images=[(b"png", "image/png")])
+        assert "scores" not in res.stamp and tracer.generations[0].scores == []
+
+
+async def test_no_trace_hook_observes_into_the_one_null_sink() -> None:
+    """The null trace is `tracer_trace(NoopTracer())`: a graded call with no hooks still scores and
+    returns, and the package has ONE null sink (`reference.NoopGeneration`)."""
+    from llm_ports.reference import NoopGeneration
+    gen = StubGenerator({"summary": "fine"})
+    res = await call.generate(GRADED, prompt="say it", generator=gen)
+    assert res.outcome == "ok" and [s.name for s in res.stamp["scores"]] == list(GRADERS)
+    assert isinstance(res.stamp["generation"]._gen, NoopGeneration)

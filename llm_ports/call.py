@@ -31,10 +31,11 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from llm_ports import ports
-from llm_ports.call_graders import CallGrader, CallScore, score_all
+from llm_ports.call_graders import CallGrader, CallScore, graders_for_inputs, score_all
 from llm_ports.context import llm_feature
 from llm_ports.failure import GenerationFailed
 from llm_ports.ports import Generated, Generator, GenRequest, Tracer
+from llm_ports.reference import NoopTracer
 from llm_ports.roles import Role
 
 OUTPUT_TRACE_MAX = 4000
@@ -67,20 +68,6 @@ class Hooks:
     on_scores: Callable[[Role, tuple[CallScore, ...]], Awaitable[Any]] | None = None
     on_ok: Callable[[Role, str, Generated[Any]], Any] | None = None
     on_event: EventHook | None = None
-
-
-class _NullObservation:
-    def update(self, **_kw: Any) -> None:
-        return None
-
-    def score(self, **_kw: Any) -> None:
-        return None
-
-
-@asynccontextmanager
-async def _null_trace(_role: Role, _req: GenRequest, _prompt: str,
-                      _meta: Mapping[str, Any]) -> AsyncIterator[Observation]:
-    yield _NullObservation()
 
 
 class _PortObservation:
@@ -135,6 +122,11 @@ def tracer_trace(tracer: Tracer, *, provider: str = "openai") -> TraceHook:
         obs._flush()
 
     return trace
+
+
+#: The trace when no hook is given: the port path over the sink-less tracer, so the package has ONE
+#: null sink (`reference.NoopGeneration`) at either layer.
+_null_trace = tracer_trace(NoopTracer())
 
 
 class _NotOk(Exception):
@@ -206,9 +198,14 @@ async def generate[T](role: Role, *, prompt: str, output: type[T] = str,  # type
                       validate: Callable[[T], Sequence[Any]] | None = None,
                       retry_message: Callable[[Sequence[Any]], str] | None = None,
                       settings: Mapping[str, Any] | None = None,
-                      metadata: Mapping[str, Any] | None = None) -> Generated[T]:
-    """One generation for `role` through `generator`. See the module docstring."""
+                      metadata: Mapping[str, Any] | None = None, web: bool = False) -> Generated[T]:
+    """One generation for `role` through `generator`. See the module docstring. `web=True` says the
+    role's tier fetches pages the prompt never rendered: like an image, an input no text grader
+    sees, so `call_graders.TEXT_ONLY_GRADERS` are dropped for THIS call (the role is untouched)."""
     h = hooks or Hooks()
+    seen = graders_for_inputs(tuple(role.graders), has_images=bool(images), has_web=web)
+    if seen != tuple(role.graders):
+        role = replace(role, graders=seen)
     req = request_for(role, prompt=prompt, system=system, images=images, settings=settings)
     with llm_feature(role.category):
         if h.admit is not None:

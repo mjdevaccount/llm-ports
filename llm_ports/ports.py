@@ -109,6 +109,21 @@ class Prompt:
     system: str = ""
 
 
+@dataclass(frozen=True)
+class Seed:
+    """What the REPO says a prompt is -- the copy a `PromptSource` serves as `Prompt(repo)` and a
+    managed store mirrors: its source text, the sha that names that text, the config carried
+    beside it (pack version, model role ...) and its tags. `system` non-empty = a CHAT prompt
+    (system + user); `kind` ("chat" | "text") forces the managed type, "" derives it from `system`."""
+
+    text: str
+    sha: str
+    config: Mapping[str, Any] = field(default_factory=dict)
+    tags: Sequence[str] = ()
+    system: str = ""
+    kind: str = ""
+
+
 #: Every way one generation can end. `gated` = the category switchboard refused it; `unavailable`
 #: = the box/gateway failed and no input is to blame; `request_fault` = the request was refused
 #: (400/413/422), so the input is to blame; `truncated` = the token ceiling cut the reply (a BUDGET
@@ -344,6 +359,7 @@ __all__ = [
     "Outcome",
     "Prompt",
     "PromptSource",
+    "Seed",
     "Retriever",
     "Tracer",
     "json_output",

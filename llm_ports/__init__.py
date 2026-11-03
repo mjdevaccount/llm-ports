@@ -30,11 +30,12 @@ from llm_ports.ports import (
     Outcome,
     Prompt,
     PromptSource,
+    Seed,
     Tracer,
 )
 from llm_ports.roles import Role, Tier, TierTable, load_tiers
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 
 __all__ = [
     "Activity",
@@ -59,6 +60,7 @@ __all__ = [
     "Prompt",
     "PromptSource",
     "Role",
+    "Seed",
     "Tier",
     "TierTable",
     "Tracer",

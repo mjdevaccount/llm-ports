@@ -11,8 +11,9 @@
 VALUE (wrapped `ok`), a `Generated` (returned as-is, any outcome), or raises (returned as
 `unavailable` -- the port never raises). `RecordingTracer` satisfies `Tracer` and keeps every
 generation, its end and its scores. `StubEmbedder` satisfies `Embedder` with deterministic
-unit vectors hashed from each text (same text -> same vector), and records every call. All three
-pass the ports' `isinstance` checks.
+unit vectors hashed from each text (same text -> same vector), and records every call.
+`StubCiter` and `StubPromptSource` prove the `Citer` / `PromptSource` seams' shape with no model
+and no store. All pass the ports' `isinstance` checks.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from llm_ports.failure import failure_reason
-from llm_ports.ports import Embedded, EmbedInput, Generated, GenRequest
+from llm_ports.ports import Chunk, CitedAnswer, Embedded, EmbedInput, Generated, GenRequest, Prompt
 
 Reply = Callable[[GenRequest, type[Any]], Any]
 
@@ -117,4 +118,26 @@ class StubEmbedder:
                         input_tokens=None)
 
 
-__all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubEmbedder", "StubGenerator"]
+class StubCiter:
+    """`Citer` that asserts nothing: every chunk id known, no claims (no chunks -> no claims).
+    `model` is '' by contract -- a stub has none."""
+
+    async def answer(self, q: str, chunks: Sequence[Chunk]) -> CitedAnswer:
+        return CitedAnswer(question=q, claims=(), chunks={c.id: c for c in chunks}, model="")
+
+
+class StubPromptSource:
+    """`PromptSource` with no managed store: every name serves its fixed in-memory text as the repo
+    seed (`version None`, `source "repo"`), the label asked for recorded in `config` so a test can
+    see it was passed through. A name it was not given RAISES (the port's law: no seed, nothing to
+    serve) -- it never invents text."""
+
+    def __init__(self, texts: Mapping[str, str]) -> None:
+        self._texts = dict(texts)
+
+    def get(self, name: str, *, label: str = "production") -> Prompt:
+        return Prompt(name, self._texts[name], None, "repo", config={"label": label})
+
+
+__all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubCiter", "StubEmbedder", "StubGenerator",
+           "StubPromptSource"]
