@@ -1,5 +1,13 @@
-# llm-ports' own gate: ruff + the test suite against the locked deps, and gitleaks over history
-# through ci-kit's reusable workflow, called the way every consumer calls it.
+# llm-ports' own gate. Every job starts from `permissions: {}` and grants only what it needs.
+#
+#   lint         ruff check + ruff format --check, zizmor over the workflows
+#   pytest       the locked suite on 3.12 / 3.13 / 3.14 (ubuntu) and 3.13 (windows), with a coverage
+#                floor (pyproject `[tool.coverage.report] fail_under`, raised only); one leg uploads
+#                to Codecov over OIDC. 3.15 runs but cannot fail the gate until its wheels exist.
+#   test-lowest  every direct dependency at its declared lower bound (`--resolution lowest-direct`)
+#   build        sdist + wheel, `twine check --strict`
+#   test         the one required check: green only when every job above is
+#   gitleaks / dup-code   ci-kit's reusable workflows, called the way every consumer calls them
 name: ci
 
 on:
@@ -8,22 +16,117 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    name: test
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --frozen --group lint
+      - name: ruff check
+        run: uv run --no-sync ruff check --output-format=github .
+      - name: ruff format
+        run: uv run --no-sync ruff format --check .
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }} # online audits (impostor commits, known-vulnerable actions)
+        run: uv run --no-sync zizmor --format=github .
+
+  pytest:
+    name: pytest (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    continue-on-error: ${{ matrix.experimental }}
+    permissions:
+      contents: read
+      id-token: write # Codecov OIDC upload, no stored token
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.12", "3.13", "3.14"]
+        experimental: [false]
+        include:
+          - { os: windows-latest, python: "3.13", experimental: false }
+          - { os: ubuntu-latest, python: "3.15", experimental: true }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python }}
       - run: uv sync --frozen
-      - name: ruff
-        run: uv run ruff check --output-format=github .
-      - name: tests
-        run: uv run pytest -q
+      - name: pytest
+        run: uv run --no-sync pytest -q --cov --cov-report=term --cov-report=xml
+      - name: codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: coverage.xml
+          fail_ci_if_error: true
+
+  test-lowest:
+    name: test-lowest (lowest-direct, 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      # Every extra CI can install (lettucedetect pulls torch; its tests run over a stub detector).
+      - run: uv venv
+      - run: uv pip install --resolution lowest-direct -e ".[evals,langfuse,otel,sql]" --group dev
+      - run: uv pip list
+      - name: pytest
+        run: .venv/bin/python -m pytest -q
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv build
+      - name: twine check
+        run: uv run --frozen --only-group lint twine check --strict dist/*
+
+  # The required status check is named `test`; it aggregates every job above so a new leg is
+  # covered without editing branch protection.
+  test:
+    name: test
+    if: always()
+    needs: [lint, pytest, test-lowest, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
 
   gitleaks:
     name: gitleaks (secret scan)
@@ -34,10 +137,11 @@ jobs:
     with:
       mode: history
 
-  # The same code written twice fails the PR: ci-kit's `ci-dup-code` (jscpd 5.4.2 behind a
-  # shrink-only fingerprint baseline, ci/jscpd-baseline.json -- 0 clone(s) frozen 2026-10-31, the
-  # backlog of "written again"). A NEW clone >= 70 tokens / 7 lines between two tracked files
-  # fails; a removed one may re-freeze smaller (`--write-baseline` refuses to grow). Reports as
-  # "dup-code / lint".
+  # The same code written twice fails the PR: ci-kit's `ci-dup-code` (jscpd behind a shrink-only
+  # fingerprint baseline, ci/jscpd-baseline.json). A NEW clone >= 70 tokens / 7 lines between two
+  # tracked files fails; a removed one may re-freeze smaller (`--write-baseline` refuses to grow).
+  # Reports as "dup-code / lint".
   dup-code:
+    permissions:
+      contents: read
     uses: mjdevaccount/ci-kit/.github/workflows/dup-code.yml@v1

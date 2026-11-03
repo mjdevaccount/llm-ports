@@ -1,5 +1,5 @@
 # A `v*` tag builds the wheel + sdist from the tagged commit and attaches them to a GitHub
-# release. Consumers pin the WHEEL URL (immutable bytes, no git CLI needed in a slim image):
+# release. Consumers pin the wheel URL (immutable bytes, no git CLI needed in a slim image):
 #   llm-ports @ https://github.com/mjdevaccount/llm-ports/releases/download/vX.Y.Z/llm_ports-X.Y.Z-py3-none-any.whl
 # The tag must match pyproject's version, or the release is refused before anything uploads.
 name: release
@@ -8,26 +8,33 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write # create the release and upload its assets
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false # a release builds from a clean resolve, never a shared cache
       - name: tag matches pyproject version
         run: |
           v=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
           [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME != pyproject v$v"; exit 1; }
       - run: uv sync --frozen
-      - run: uv run pytest -q
+      - run: uv run --no-sync pytest -q
       - run: uv build
+      - name: twine check
+        run: uv run --frozen --only-group lint twine check --strict dist/*
       - name: publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # no --clobber fallback: a published wheel's bytes are what consumers locked a hash of
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

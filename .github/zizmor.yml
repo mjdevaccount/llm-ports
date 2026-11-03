@@ -1,0 +1,9 @@
+# zizmor (run in ci.yml's lint job). Third-party actions are pinned by commit SHA; ci-kit's
+# reusable workflows are this owner's own and ship fixes by moving their `v1` tag, so a ref pin is
+# the contract there.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "mjdevaccount/*": ref-pin
+        "*": hash-pin
