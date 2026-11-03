@@ -1,13 +1,13 @@
 [project]
 name = "llm-ports"
-version = "1.0.0rc1"
+version = "1.0.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 keywords = ["llm", "ports-and-adapters", "hexagonal-architecture", "grounding", "pydantic", "pydantic-ai", "evals", "observability"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Framework :: Pydantic :: 2",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",

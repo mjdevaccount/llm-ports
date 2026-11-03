@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-03
+
+The first stable release: the API of 1.0.0rc1, unchanged. From here the public surface (every
+name without a leading underscore, `__all__` per package) is covered by semantic versioning.
+
+### Changed
+
+- Development status is Production/Stable; the README installs without `--pre`.
+- No change was needed here to adopt rc1 in its first consumer (mjdevaccount/trade-data#2755).
+
 ## [1.0.0rc1] - 2026-11-03
 
 ### Added
@@ -291,7 +301,8 @@ dependency floors.
   named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
   pydantic-ai `Generator` adapter, and test doubles.
 
-[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0rc1...HEAD
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0rc1...v1.0.0
 [1.0.0rc1]: https://github.com/mjdevaccount/llm-ports/compare/v0.12.0...v1.0.0rc1
 [0.12.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.10.0...v0.11.0
