@@ -15,7 +15,11 @@ import httpx
 import pytest
 
 from llm_ports import ports
-from llm_ports.pydantic_ai_embedder import PydanticAIEmbedder, openai_compatible_embeddings
+from llm_ports.pydantic_ai_embedder import (
+    IndexOrderedTransport,
+    PydanticAIEmbedder,
+    openai_compatible_embeddings,
+)
 from llm_ports.testing import StubEmbedder
 
 BASE = "http://gw.test/v1"
@@ -26,7 +30,7 @@ def _vec(seed: int, dims: int) -> list[float]:
 
 
 def _wire(calls: list[dict[str, Any]], *, dims: int = 4, status: int = 200, drop: int = 0,
-          usage: bool = True) -> httpx.MockTransport:
+          usage: bool = True, reverse: bool = False) -> httpx.MockTransport:
     """An OpenAI /embeddings server: vector i of a batch = _vec(<global input number>)."""
     seen = {"n": 0}
 
@@ -44,6 +48,8 @@ def _wire(calls: list[dict[str, Any]], *, dims: int = 4, status: int = 200, drop
                 emb = base64.b64encode(struct.pack(f"<{dims}f", *vec)).decode()
             data.append({"object": "embedding", "index": i, "embedding": emb})
         seen["n"] += len(inputs)
+        if reverse:  # a server that answers out of order; each item still carries its index
+            data.reverse()
         out: dict[str, Any] = {"object": "list", "data": data, "model": body["model"]}
         if usage:
             out["usage"] = {"prompt_tokens": 3 * len(inputs), "total_tokens": 3 * len(inputs)}
@@ -72,6 +78,25 @@ async def test_batches_keep_input_order_and_sum_usage() -> None:
     assert [round(v[0]) for v in res.vectors] == [0, 1, 2, 3, 4]
     assert res.input_tokens == 15
     assert {c["model"] for c in calls} == {"embeddings"}
+
+
+async def test_an_out_of_order_reply_lands_each_vector_on_its_own_input() -> None:
+    # MUST FIRE: without IndexOrderedTransport pydantic-ai keeps the listed order and this reads
+    # [1, 0, 3, 2, 4] -- every vector on its neighbour's row, the count law still satisfied.
+    res = await _embedder(_wire([], reverse=True), batch_size=2).embed(["a", "b", "c", "d", "e"])
+    assert res.ok
+    assert [round(v[0]) for v in res.vectors] == [0, 1, 2, 3, 4]
+
+
+async def test_the_index_transport_leaves_what_it_cannot_read_alone() -> None:
+    raw = b'{"data": "not a list"}'
+    inner = httpx.MockTransport(lambda _r: httpx.Response(200, content=raw))
+    async with httpx.AsyncClient(transport=IndexOrderedTransport(inner)) as client:
+        resp = await client.post(f"{BASE}/embeddings", json={})
+    assert resp.content == raw, "an unreadable reply passes through for the count law to judge"
+    inner = httpx.MockTransport(lambda _r: httpx.Response(500, content=raw))
+    async with httpx.AsyncClient(transport=IndexOrderedTransport(inner)) as client:
+        assert (await client.post(f"{BASE}/embeddings", json={})).status_code == 500
 
 
 async def test_query_carries_the_instruct_prefix_documents_stay_plain() -> None:
