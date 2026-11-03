@@ -13,13 +13,15 @@ VALUE (wrapped `ok`), a `Generated` (returned as-is, any outcome), or raises (re
 generation, its end and its scores. `StubEmbedder` satisfies `Embedder` with deterministic
 unit vectors hashed from each text (same text -> same vector), and records every call.
 `StubCiter` and `StubPromptSource` prove the `Citer` / `PromptSource` seams' shape with no model
-and no store. All pass the ports' `isinstance` checks.
+and no store. All pass the ports' `isinstance` checks. `StubDetector` stands in for the
+LettuceDetect model under `lettucedetect_grounder.LettuceDetectGrounder`.
 """
 
 from __future__ import annotations
 
 import hashlib
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -139,5 +141,23 @@ class StubPromptSource:
         return Prompt(name, self._texts[name], None, "repo", config={"label": label})
 
 
-__all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubCiter", "StubEmbedder", "StubGenerator",
-           "StubPromptSource"]
+class StubDetector:
+    """`lettucedetect_grounder.Detector` with no model: flags every digit run in the answer that no
+    context string holds (a number-law stand-in with LettuceDetect's span shape, confidence 0.9).
+    Records every call in `calls`."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def predict(self, *, context: list[str], answer: str, output_format: str) -> list[dict[str, Any]]:
+        self.calls.append({"context": context, "answer": answer, "output_format": output_format})
+        joined = " ".join(context)
+        return [{"start": m.start(), "end": m.end(), "text": m.group(0), "confidence": 0.9}
+                for m in _DIGITS.finditer(answer) if m.group(0) not in joined]
+
+
+_DIGITS = re.compile(r"\d+(?:\.\d+)?")
+
+
+__all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubCiter", "StubDetector", "StubEmbedder",
+           "StubGenerator", "StubPromptSource"]

@@ -35,7 +35,7 @@ from llm_ports.ports import (
 )
 from llm_ports.roles import Role, Tier, TierTable, load_tiers
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "Activity",
