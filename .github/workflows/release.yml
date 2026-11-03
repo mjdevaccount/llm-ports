@@ -2,6 +2,7 @@
 #
 #   push of a `v*` tag   ci (the whole gate, reused) -> build X.Y.Z -> PyPI
 #                                                              -> GitHub release with dist/* attached
+#                        ci's docs site (built strict)          -> GitHub Pages
 #   workflow_dispatch    ci -> build a PEP 440 dev release -> PyPI
 #
 # The dispatch build is `X.Y.Z.devN` (N = this workflow's run number): pyproject's version when it is
@@ -108,3 +109,19 @@ jobs:
           # no --clobber fallback: a published wheel's bytes are what consumers locked a hash of
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "$GITHUB_REF_NAME" --generate-notes
+
+  pages:
+    name: docs site (GitHub Pages)
+    if: github.event_name == 'push'
+    needs: ci # ci's `docs` job built the site strict and uploaded it on this tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write # deploy-pages proves the run to Pages over OIDC
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

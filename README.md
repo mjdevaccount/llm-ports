@@ -1,143 +1,130 @@
 # llm-ports
 
+**LLM calls that end in a named outcome, and prose whose numbers can't be invented.**
+
+[![PyPI](https://img.shields.io/pypi/v/llm-ports?include_prereleases)](https://pypi.org/project/llm-ports/)
+[![Python](https://img.shields.io/pypi/pyversions/llm-ports)](https://pypi.org/project/llm-ports/)
 [![ci](https://github.com/mjdevaccount/llm-ports/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mjdevaccount/llm-ports/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/mjdevaccount/llm-ports/graph/badge.svg)](https://codecov.io/gh/mjdevaccount/llm-ports)
-
-Thin Protocols for LLM work, and the one call path around them. **Our seam, their impl:** the
-ports are ours and tiny; structured output, output retries and validation come from
-[pydantic-ai](https://ai.pydantic.dev/) behind the `Generator` port, never hand-rolled here.
+[![docs](https://img.shields.io/badge/docs-mjdevaccount.github.io-blue)](https://mjdevaccount.github.io/llm-ports/)
+[![license](https://img.shields.io/pypi/l/llm-ports)](https://github.com/mjdevaccount/llm-ports/blob/main/LICENSE)
 
 ```
-pip install --pre "llm-ports[pydantic-ai]"     # pre-releases until 1.0
+pip install --pre "llm-ports[pydantic-ai]"
 ```
 
-The core (ports, the call path, grounding, prompts, evals, rag, provenance, the test stubs) needs
-only pydantic, jinja2 and pyyaml. Each adapter is an extra, and importing one without it fails
-with the install line:
+The core needs only pydantic, jinja2 and pyyaml. Each integration is an extra: `pydantic-ai`
+(generator, embedder, replay) · `http` (reranker, grounder client) · `langfuse` (tracer, prompt
+source, test rig) · `otel` (GenAI spans) · `evals` (pydantic-evals judge) · `sql` (SQL guard) ·
+`lettucedetect` (span grounder; large, pulls torch) · `all` (everything but `lettucedetect`).
+Importing an adapter without its extra fails with the line that installs it.
 
-| extra | installs | for |
-|---|---|---|
-| `pydantic-ai` | pydantic-ai-slim[openai], httpx | `adapters.pydantic_ai` |
-| `http` | httpx | `adapters.http` |
-| `evals` | pydantic-evals | `adapters.pydantic_evals` |
-| `langfuse` | langfuse | `adapters.langfuse`, `testing.langfuse` |
-| `otel` | opentelemetry-api | `adapters.otel` |
-| `sql` | sqlglot | `adapters.sqlglot` |
-| `lettucedetect` | lettucedetect (torch) | `adapters.lettucedetect` |
-| `all` | every extra but `lettucedetect` | |
+## Quickstart
 
-## What is in it
-
-| module | what |
-|---|---|
-| `ports` | zero-I/O Protocols: `Generator`, `Embedder`, `Reranker`, `Tracer`/`Generation`, `PromptSource`, `Judge`, `Retriever`, `Citer`, `Grounder`, `Evaluator`; value types `GenRequest`, `Generated[T]`, `Embedded`, `Reranked`, `Prompt`, `Chunk`, `Claim`, `CitedAnswer` |
-| `call.roles` | `Role` (one generation surface, `feature.action`) resolved against a **consumer-owned TOML tier table** (`load_tiers`) |
-| `prompts` | prompt packs: `<root>/<id>/pack.yaml` + jinja templates, with a frozen **content sha** (sha256[:16] of the sources) |
-| `call` | `generate(role, prompt=, output=, generator=, hooks=)` -- the one call path; outcome is always NAMED: `ok \| gated \| unavailable \| request_fault \| truncated \| invalid` |
-| `call.graders` | per-call graders (`schema_complete` -- a None on a pydantic field whose annotation admits None is an honest answer, not a miss; `numbers_from_inputs` -- digits by value AND spelled numbers, `echo`); a grader result is a recorded score, a crashed grader scores `-1.0`; `graders_for_inputs` drops `TEXT_ONLY_GRADERS` for a call with an image or a web tier (`call.generate(images=, web=True)` applies it) |
-| `adapters.pydantic_ai` | the first `Generator` adapter (`PydanticAIGenerator`, `openai_compatible(base_url, key)` for any OpenAI-wire endpoint, e.g. a LiteLLM gateway); `strict_json_schema`, `structured_dict` |
-| `grounding` | the shapes a grounded generator shares: `Problem(path, reason, detail)`, `retry_message` (the ONE retry text), `loose` (the figures no input rendered, NAMED, so a verifier can refuse one by name), `belt` (`loose` counted; 0 by construction) and `allowed_numbers` |
-| `grounding.slots` | grounded prose BY CONSTRUCTION: code renders each value under a digit-free id, the model writes `{id}` under a grammar with no digit token (`slot_pattern` / `prose_pattern`), code `fill`s it, and `belt` over the filled text is 0. Use it for any prose a reader takes numbers from |
-| `provenance` | the OUTPUT shape in W3C PROV-O words: `ContentItem` (prov:Entity), `Activity` (prov:Activity), `uses` (prov:used); `DataClass{rights, private, link_required}` with `join` (most restrictive wins) and an audience `CEILING`; `print_gate(item, audience)` -> ok or ONE named refusal (`rights \| unclaimed \| uncited \| unsourced \| link`) |
-| `adapters.pydantic_ai` | the first `Embedder` adapter (`PydanticAIEmbedder` on pydantic-ai's `embeddings`, `openai_compatible_embeddings(base_url, model)`): a `stamp` per space, count + dims laws, index order (`IndexOrderedTransport`), batching, the asymmetric query prefix, named outcomes |
-| `testing` | `StubGenerator`, `StubEmbedder`, `StubReranker`, `RecordingTracer`, `StubCiter`, `StubPromptSource`, `StubDetector` for consumers' tests; `testing.langfuse` (extra `[langfuse]`): `LangfuseRig` (a real SDK 5 client exporting to memory), `FakeLangfusePrompts`, `RefusingLangfuse` |
-| `adapters.http` | the first `Reranker` adapter (`HttpReranker` over the Cohere/Jina `/rerank` wire): scores in input order via `IndexOrderedTransport` (shared with the embeddings wire), every document scored exactly once and finite or `invalid`, named outcomes |
-| `observability` | `observe(tracer, ...)`: one generation around a block, ended once (ERROR + latency on an exception); `PortObservation` (`usage_counts()`); `opt_int`; unmeasured usage is flagged `tokens_unmeasured`, never zero tokens; `EventHook` + `log_events(logger)` (the structured-event sink every adapter takes) |
-| `adapters.langfuse.tracer` | the `Tracer` on the Langfuse SDK 5 (extra `[langfuse]`): a root generation in the current OTel trace, usage honesty, NUMERIC scores, the labelled prompt link; fails open with one held warning |
-| `adapters.langfuse.prompt_source` | the `PromptSource` on Langfuse prompt management: the repo seed leads, the label mirrors (pushed when absent/stale, served when the store is down or disagrees); text and chat prompts |
-| `adapters.otel` | OpenTelemetry GenAI spans (extra `[otel]`): `gen_ai_span` (a child of the ambient span), `record_gen_ai` (back-dated by the measured latency), none-is-not-zero usage; no prompt bodies, ever |
-| `adapters.sqlglot` | a read-only AST guard for agent-written SQL (extra `[sql]`, sqlglot): one SELECT, no write/utility node, schema allowlist, function denylist, LIMIT enforced, SQL regenerated from the tree; a policy may tighten, never loosen |
-| `adapters.pydantic_evals` | the first `Judge` adapter (`PydanticEvalsJudge(role, model_for=...)` on pydantic-evals' `LLMJudge`, extra `[evals]`): the grade on the NATIVE grammar (`JUDGE_PROFILE`), `clean_reason` refuses leaked tool-call markup or a contradicting leaked verdict, multimodal `images=`; raises, never a default verdict |
-| `evals.judge` | a sampled judge's pure half: `Seen` (what the judged call saw beside the prompt) + `judge_input`, a deterministic `sample_key` + `selected` (1-in-N), the four-law `rubric` (platform, grounding mode, calendar injected), `verdict_label` (`pass \| fail \| could_not_run`) |
-| `adapters.lettucedetect` | `LettuceDetectGrounder` (token-span hallucination detector behind `Grounder`, extra `[lettucedetect]`, lazy import, injectable detector); a context past the model's window is judged and NAMED `context_over_window` |
-| `adapters.http` | `HttpGrounder`: the `Grounder` port over HTTP to a grounder sidecar (`POST {url}/verdict`); every non-answer raises `GrounderUnavailable`, never a guessed verdict |
-| `evals` / `grounding` / `prompts` / `observability` | the framework-free impl behind a port: `GauntletEvaluator` (rows + graders -> ONE board), `NumberLawGrounder` (the number law; numbers only), `RepoPromptSource` (every name its repo `Seed`), `NoopTracer` (no sink; also `call.generate`'s null trace -- one null sink) |
-| `rag.chunking` | `chunk_text` (paragraph > line > sentence breaks in the window's tail third, overlap, a per-chunk header), `max_chars_for_chunks` (the TIGHT worst-case char bound for n chunks, derived from the same floor), `content_hash` + `should_ingest` (skip-unchanged) |
-| `rag.metrics` | `first_rank`, `hit_at_k`, `reciprocal_rank` over an ANY-OF relevant set, `agree_at_k` (top-k Jaccard), `mean`, `clears` (a parity gate's floor, rounded so a reported metric compares as written) |
-| `adapters.pydantic_ai.replay` | record a live model once, replay in CI: `Recorder` / `replay` keyed by the first prompt's sha + attempt (a changed prompt is `NotRecorded`), `Recording` (every attempt kept parsed) |
-| `grounding.numbers` | THE number law: `loose(text, allowed, words_ok)` names every digit run (by value) and spelled number no input licensed; every belt, grader and validator in the package reads a number through it |
-| `evals.refute` | the adversarial pass: `verdicts_schema` (capped grammar), `refute_slots` / `refute_prompt(pack, ...)` (each claim idx-numbered, the consumer's pack rendered), `refute(generate, role, ...)` through the consumer's `generate`, `match_verdicts` (by idx), `refutation` (a cut reason flagged) |
-| `call.schema` | `extract_json_object`; the research grammar `research_schema` (an `analysis` scratchpad first, every field required) + `research(generate, role, ...)` / `without_analysis` (scratchpad popped) |
-| `ports.outcomes` | `GenerationFailed`, `failure_reason` / `exception_chain` (the capped one-line reason), `outcome_for_status` + `REQUEST_FAULT` (an HTTP status as a named outcome) |
-
-The package root imports no framework; import an adapter by its path (`llm_ports.adapters.pydantic_ai`).
-
-## Use
-
-Bind your tier table to your roles once, by subclass (no process-global registry):
-
-```toml
-# llm_tiers.toml
-[ladder]
-gateway_s = 60.0
-[models]
-cheap = "gpt-5-nano"
-[tiers.gateway]
-model = "cheap"
-timeout = "gateway_s"
-self_hosted = false  # cloud tier: no self-hosted thinking switch (default true)
-```
+No network and no key: `StubGenerator` stands in for the model.
 
 ```python
-from pathlib import Path
-from llm_ports import Hooks, generate, load_tiers
-from llm_ports.call import roles
-from llm_ports.adapters.pydantic_ai import PydanticAIGenerator, openai_compatible
+import asyncio
 
-TABLE = load_tiers(Path(__file__).with_name("llm_tiers.toml"))
+from pydantic import BaseModel, Field
 
+from llm_ports import Role as BaseRole
+from llm_ports import generate, load_tiers
+from llm_ports.grounding import slots
+from llm_ports.testing import StubGenerator  # real use: adapters.pydantic_ai.PydanticAIGenerator
 
-class Role(roles.Role):
-    TIERS = TABLE.tiers
-
-
-CATEGORIZE = Role("categorize.batch", tier="gateway", temperature=0.0, graders=("schema_complete",))
-gen = PydanticAIGenerator(model_for=openai_compatible("http://litellm:4000/v1", api_key))
-
-res = await generate(CATEGORIZE, prompt=text, output=MyOutput, generator=gen)
-if res.outcome != "ok":
-    ...  # gated / unavailable / request_fault / truncated / invalid -- never an exception
-```
-
-`load_tiers` also takes the parsed table as a mapping (from your own config loader); errors and
-the `check_ladder` hook then name the source `<mapping>`. The pre-1.0 key `box` still loads, with a
-`DeprecationWarning`; setting both `box` and `self_hosted` is refused.
-
-`Generator.generate` never raises for a model, wire or gate failure; it returns a named outcome
-with a short reason (exception class, status code or the first message line cut before any `body:`
-payload, capped at 200 chars -- never a traceback). A consumer that wants the class name alone splits on `:`.
-
-Embeddings ride the same shape:
-
-```python
-from llm_ports.adapters.pydantic_ai import PydanticAIEmbedder, openai_compatible_embeddings
-
-emb = PydanticAIEmbedder(
-    model_for=openai_compatible_embeddings("http://litellm:4000/v1", "embeddings", api_key),
-    stamp="Qwen3-Embedding-0.6B-Q8_0@1024",
-    dims=1024,
-    query_instruct="Given a question, retrieve relevant passages",
+TIERS = load_tiers(
+    {
+        "models": {"small": "gpt-5-nano"},
+        "ladder": {"fast": 30.0},
+        "tiers": {"default": {"model": "small", "timeout": "fast"}},
+    }
 )
-res = await emb.embed(chunks)  # Embedded(vectors, outcome, stamp, reason, input_tokens)
-q = await emb.embed([question], input_type="query")
+
+
+class Role(BaseRole):
+    TIERS = TIERS.tiers
+
+
+SUMMARIZE = Role("orders.summarize", tier="default")
+facts = {"count": "3", "total": "$1,284.50"}  # code renders every value, once
+
+
+class Summary(BaseModel):  # the grammar has no digit token:
+    text: str = Field(pattern=slots.slot_pattern(facts, 200))  # the model can only cite {id}
+
+
+async def main() -> None:
+    model = StubGenerator(Summary(text="Your {count} items came to {total}."))
+    res = await generate(SUMMARIZE, prompt="Summarize the order.", output=Summary, generator=model)
+    if res.outcome == "ok":
+        prose = slots.fill(res.value.text, facts)
+        assert slots.belt(prose, facts) == 0  # zero invented figures, by construction
+        print(prose)  # Your 3 items came to $1,284.50.
+
+    down = StubGenerator(lambda req, out: 1 / 0)  # the wire fails ...
+    res = await generate(SUMMARIZE, prompt="Summarize the order.", output=Summary, generator=down)
+    print(res.outcome, res.reason)  # ... 'unavailable', never a traceback
+
+
+asyncio.run(main())
 ```
 
-Store `res.stamp` with every vector: two stamps are two spaces and never compare. A wrong count or
-dimension is `invalid` (nothing to store), never a partial batch.
+## Concepts
 
-## Hooks (the consumer's platform, plugged in)
+**Named outcomes.** A model call ends in one of `ok | gated | unavailable | request_fault |
+truncated | invalid`, with a short reason, and never raises for a model, wire or gate failure.
+A fallback policy is a `match` on the outcome, not a tower of `except` clauses.
+([ADR-0001](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0001-named-outcomes-never-raise.md))
 
-`Hooks(admit=, trace=, graders=, on_scores=, on_ok=, on_event=)`, all optional:
+**Grounded prose by construction.** Code renders every figure once, under a digit-free id. The
+output grammar has no digit token, so the model cites `{total}` and cannot write a number at all;
+code fills the slots, and a belt over the filled text counts the figures no source rendered. That
+count is zero by construction, so a non-zero count is an alarm, not an error rate.
+([ADR-0002](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0002-grounded-prose-by-construction.md),
+[ADR-0003](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0003-the-number-law-compares-by-value.md))
 
-- `admit(role) -> None | reason` -- a cap / kill switch; a reason makes the outcome `gated`.
-- `trace(role, req, prompt, meta)` -- async CM yielding an `Observation`; `tracer_trace(tracer)`
-  builds one over any `Tracer` port adapter (Langfuse, OTel, `testing.RecordingTracer`).
-- `graders` -- the grader table (default `call.graders.GRADERS`); add your own.
-- `on_scores(role, scores)` -- persist / count grader scores.
-- `on_ok(role, prompt, res)` -- e.g. sample for an LLM judge.
-- `on_event(level, event, fields)` -- default is the stdlib logger `llm_ports.call`.
+**Roles and tiers.** A `Role` names one generation surface (`feature.action`) and resolves to a
+tier in a table the consumer owns: which model, whether it is self-hosted, which timeout rung.
+Feature code carries no model or timeout literal.
 
-## Known
+**Prompt packs.** A prompt is a versioned directory of templates, named by the sha of its text, so
+an output row records exactly which prompt produced it and an edited prompt is never mistaken for
+the one that was evaluated.
+([ADR-0008](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0008-prompt-packs-named-by-content-sha.md))
+
+**Provenance and the print gate.** Every output is a PROV-O entity carrying its claims and the
+evidence each cites; `print_gate` answers whether it may be shown to an audience, with one named
+refusal when it may not.
+([ADR-0006](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0006-data-rights-in-prov-o-terms.md))
+
+**One observation per call.** A call is traced as one generation, opened once and ended once, with
+unmeasured usage flagged rather than recorded as zero.
+([ADR-0007](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0007-one-observation-lifecycle.md))
+
+## Design
+
+Hexagonal: the ports are ours and small, the adapters are thin wrappers over the libraries that
+already do the work (structured output, retries and validation come from pydantic-ai behind the
+`Generator` port). The layers, enforced by import-linter:
+
+```
+adapters | testing                      vendor SDKs live only here, one extra each
+evals | rag | provenance
+call                                    generate(): the one call path
+grounding | prompts | observability
+ports                                   Protocols and value types, zero I/O
+```
+
+## Links
+
+[Documentation](https://mjdevaccount.github.io/llm-ports/) ·
+[examples](https://github.com/mjdevaccount/llm-ports/tree/main/examples) ·
+[changelog](https://github.com/mjdevaccount/llm-ports/blob/main/CHANGELOG.md) ·
+[decision records](https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr) ·
+[contributing](https://github.com/mjdevaccount/llm-ports/blob/main/CONTRIBUTING.md)
+
+### Known
 
 - Dependency ranges are the widest range CI proves. Every floor is installed and tested by the
   `test-lowest` job (`--resolution lowest-direct`); an upper bound is a major-version guard only
@@ -148,4 +135,4 @@ dimension is `invalid` (nothing to store), never a partial batch.
   The adapters build an httpx client because a consumer's `transport=` is an httpx transport, so
   moving to httpx2 changes that argument's type.
 
-MIT.
+MIT licensed.

@@ -1,0 +1,101 @@
+site_name: llm-ports
+site_description: LLM calls that end in a named outcome, and prose whose numbers can't be invented.
+site_url: https://mjdevaccount.github.io/llm-ports/
+repo_url: https://github.com/mjdevaccount/llm-ports
+repo_name: mjdevaccount/llm-ports
+edit_uri: edit/main/docs/
+copyright: MIT licensed
+
+# Every warning fails the build: a broken link, a missing page, a docstring the API reference
+# cannot read. CI runs `mkdocs build --strict` on every PR.
+strict: true
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_section_style: list
+            filters: ["!^_"]
+            heading_level: 2
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: false
+            show_symbol_type_heading: true
+            signature_crossrefs: true
+
+nav:
+  - Home: index.md
+  - Concepts: concepts.md
+  - Guides:
+      - guides/named-outcomes.md
+      - guides/slots.md
+      - guides/prompt-packs.md
+      - guides/print-gate.md
+      - guides/judge-and-refute.md
+      - guides/rag.md
+      - guides/opentelemetry.md
+      - guides/openai-compatible.md
+  - API reference:
+      - api/ports.md
+      - api/call.md
+      - api/grounding.md
+      - api/prompts.md
+      - api/observability.md
+      - api/evals.md
+      - api/rag.md
+      - api/provenance.md
+      - api/testing.md
+      - api/adapters.md
+  - Decisions:
+      - adr/README.md
+      - adr/0001-named-outcomes-never-raise.md
+      - adr/0002-grounded-prose-by-construction.md
+      - adr/0003-the-number-law-compares-by-value.md
+      - adr/0004-digit-free-context.md
+      - adr/0005-character-whitelist-grammar.md
+      - adr/0006-data-rights-in-prov-o-terms.md
+      - adr/0007-one-observation-lifecycle.md
+      - adr/0008-prompt-packs-named-by-content-sha.md
+  - The 1.0 redesign: REDESIGN.md
+  - Changelog: changelog.md

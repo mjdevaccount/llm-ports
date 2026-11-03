@@ -1,0 +1,5 @@
+Summarize this order for the customer in one sentence.
+Cite each value as {id}; never write a number.
+{% for id, meaning in slots.items() %}
+- {{ "{" ~ id ~ "}" }}: {{ meaning }}
+{% endfor %}
