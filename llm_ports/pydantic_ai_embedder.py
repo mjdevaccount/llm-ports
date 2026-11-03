@@ -15,8 +15,9 @@ store needs and the framework does not promise:
   * INDEX ORDER (`IndexOrderedTransport`): pydantic-ai reads a reply's `data` as listed and drops
     each item's `index` (embeddings/openai.py, 2.59), so a server that answers out of order lands
     every vector on the wrong row with the count law still satisfied. The transport puts `data`
-    back in `index` order under the SDK; `openai_compatible_embeddings` always wraps with it, and a
-    consumer that builds its own provider wraps its transport the same way.
+    back in `index` order under the SDK (`llm_ports.index_order`, shared with the rerank wire);
+    `openai_compatible_embeddings` always wraps with it, and a consumer that builds its own
+    provider wraps its transport the same way.
 
 WHERE THE MODEL COMES FROM is the consumer's, as for the Generator:
   * `model=`      a fixed pydantic-ai `EmbeddingModel` (tests pass `TestEmbeddingModel`);
@@ -28,7 +29,6 @@ WHERE THE MODEL COMES FROM is the consumer's, as for the Generator:
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
@@ -36,41 +36,11 @@ import httpx
 from pydantic_ai.embeddings import EmbeddingModel
 
 from llm_ports.failure import exception_chain, failure_reason
+from llm_ports.index_order import IndexOrderedTransport
 from llm_ports.ports import Embedded, EmbedInput
 from llm_ports.pydantic_ai_generator import classify
 
 EmbedModelFor = Callable[[], AbstractAsyncContextManager[EmbeddingModel]]
-
-_HOP_HEADERS = ("content-length", "content-encoding", "transfer-encoding")
-
-
-class IndexOrderedTransport(httpx.AsyncBaseTransport):
-    """Re-sorts a 200 `/embeddings` reply's `data` by `index` (module docstring, INDEX ORDER).
-    Anything it cannot read passes through untouched -- the count law judges it. `inner` None =
-    httpx's own transport."""
-
-    def __init__(self, inner: httpx.AsyncBaseTransport | None = None) -> None:
-        self._inner = inner or httpx.AsyncHTTPTransport()
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        resp = await self._inner.handle_async_request(request)
-        if resp.status_code != 200 or not request.url.path.endswith("/embeddings"):
-            return resp
-        raw = await resp.aread()
-        try:
-            body = json.loads(raw)
-            data = body["data"]
-            ordered = sorted(data, key=lambda d: int(d["index"]))
-        except (ValueError, KeyError, TypeError):
-            return resp
-        if ordered == data:
-            return resp
-        body["data"] = ordered
-        headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in _HOP_HEADERS]
-        return httpx.Response(200, headers=headers, json=body, request=request)
-
-    async def aclose(self) -> None:
-        await self._inner.aclose()
 
 
 def openai_compatible_embeddings(base_url: str, model_name: str, api_key: str | None = None, *,

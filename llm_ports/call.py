@@ -25,30 +25,22 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any
 
 from llm_ports import ports
 from llm_ports.call_graders import CallGrader, CallScore, graders_for_inputs, score_all
 from llm_ports.context import llm_feature
 from llm_ports.failure import GenerationFailed
+from llm_ports.observation import Observation, observe
 from llm_ports.ports import Generated, Generator, GenRequest, Tracer
 from llm_ports.reference import NoopTracer
 from llm_ports.roles import Role
 
 OUTPUT_TRACE_MAX = 4000
 _log = logging.getLogger("llm_ports.call")
-
-
-class Observation(Protocol):
-    """What a `trace` hook yields: one open observation of one call. Neither method may raise."""
-
-    def update(self, *, output: Any = None, usage_details: Mapping[str, Any] | None = None,
-               metadata: Mapping[str, Any] | None = None) -> None: ...
-
-    def score(self, *, name: str, value: float, comment: str | None = None) -> None: ...
 
 
 #: `(role, request, prompt, metadata) -> async context manager yielding an Observation`. On an
@@ -70,56 +62,15 @@ class Hooks:
     on_event: EventHook | None = None
 
 
-class _PortObservation:
-    """An `Observation` over the `Tracer` port's `Generation`: holds the last update, flushes ONE
-    `end` on exit. Usage is the raw `{input, output}` pair; neither reported = no usage at all
-    (unmeasured is not free -- never booked as zero tokens)."""
-
-    def __init__(self, gen: ports.Generation) -> None:
-        self._gen = gen
-        self._output: Any = None
-        self._usage: Mapping[str, Any] | None = None
-        self._meta: Mapping[str, Any] | None = None
-
-    def update(self, *, output: Any = None, usage_details: Mapping[str, Any] | None = None,
-               metadata: Mapping[str, Any] | None = None) -> None:
-        if output is not None:
-            self._output = output
-        if usage_details is not None:
-            self._usage = usage_details
-        if metadata is not None:
-            self._meta = metadata
-
-    def score(self, *, name: str, value: float, comment: str | None = None) -> None:
-        self._gen.score(name, float(value), comment)
-
-    def _flush(self) -> None:
-        u = self._usage or {}
-        usage = None if u.get("input") is None and u.get("output") is None else {
-            "input": u.get("input"), "output": u.get("output")}
-        self._gen.end(output=self._output, usage=usage, metadata=self._meta)
-
-    def _fail(self, exc: BaseException) -> None:
-        self._gen.end(level="ERROR", status_message=f"{type(exc).__name__}: {exc}"[:500],
-                      metadata=self._meta)
-
-
 def tracer_trace(tracer: Tracer, *, provider: str = "openai") -> TraceHook:
     """A `trace` hook over any `Tracer` port adapter (Langfuse, OTel, a test recorder): one
-    generation per call, NAMED BY THE ROLE'S CATEGORY, ended in error on a non-ok outcome."""
+    generation per call (`observation.observe`), NAMED BY THE ROLE'S CATEGORY, ended in error on a
+    non-ok outcome."""
 
-    @asynccontextmanager
-    async def trace(role: Role, req: GenRequest, prompt: str,
-                    meta: Mapping[str, Any]) -> AsyncIterator[Observation]:
-        obs = _PortObservation(tracer.start_generation(
-            name=role.category, model=req.model, provider=provider, input=prompt,
-            metadata=dict(meta), session_id=None, prompt_name=role.pack))
-        try:
-            yield obs
-        except Exception as exc:
-            obs._fail(exc)
-            raise
-        obs._flush()
+    def trace(role: Role, req: GenRequest, prompt: str,
+              meta: Mapping[str, Any]) -> AbstractAsyncContextManager[Observation]:
+        return observe(tracer, name=role.category, model=req.model, provider=provider, input=prompt,
+                       metadata=meta, prompt_name=role.pack)
 
     return trace
 
