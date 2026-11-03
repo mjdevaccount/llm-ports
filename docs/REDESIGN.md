@@ -1,9 +1,8 @@
 # Redesign: llm-ports → 1.0
 
-Status: proposed · Date: 2026-11-03 · Baseline: v0.11.0 (`ecd91d0`)
+Status: accepted · Date: 2026-11-03 · Baseline: v0.11.0 (`ecd91d0`)
 
-> Names below assume the rename in §7 (`groundwire`). If the name stays `llm-ports`, read
-> `groundwire` as `llm_ports`; nothing else changes. **The name is an open operator decision.**
+> Name decided (§7): the distribution stays `llm-ports`, the import package stays `llm_ports`.
 
 ## 0. Why, and what the audit found
 
@@ -44,7 +43,7 @@ Further findings:
 `src/` layout. Layers bottom-up, enforced by import-linter (§8).
 
 ```
-src/groundwire/
+src/llm_ports/
   __init__.py          curated surface (same names as 0.11's root)
   py.typed
   ports/               L0  Protocols + frozen value types, zero I/O
@@ -61,14 +60,14 @@ src/groundwire/
 ```
 
 **Reviewable rule:** anything importing a vendor lives under `adapters/` or `testing/`. Plain
-`pip install groundwire` imports with only pydantic, jinja2, pyyaml. Each adapter package turns a
-missing-vendor `ImportError` into the install line (``install `groundwire[langfuse]` ``).
+`pip install llm-ports` imports with only pydantic, jinja2, pyyaml. Each adapter package turns a
+missing-vendor `ImportError` into the install line (``install `llm-ports[langfuse]` ``).
 
 ### Module map (0.11 → 1.0)
 
 | 0.11 | 1.0 | Note |
 |---|---|---|
-| `__init__` | `groundwire` | same 36 names; `__version__` from `importlib.metadata` |
+| `__init__` | `llm_ports` | same 36 names; `__version__` from `importlib.metadata` |
 | `ports` | `ports` (`_types`, `_protocols`) | |
 | `failure` | `ports.outcomes` | gains vendor-neutral `REQUEST_FAULT`, `outcome_for_status(code)` |
 | `call` | `call` (`_generate`) | |
@@ -108,12 +107,10 @@ prompts `kind`/`wire`/`served`). The floor is everything trade-data or finance-o
 **Recommendation: clean break**; trade-data adopts `1.0.0rc1` the same day, finance-ops within the week.
 
 1. Nothing breaks until a consumer bumps: both pin an immutable wheel URL with a lock hash; old
-   wheels keep resolving (through a rename redirect too).
+   wheels keep resolving.
 2. One active consumer, same owner; trade-data already funnels most imports through its own
    re-export layer (`service/platform/*.py`, `service/ai/ports.py`), so the change is mechanical.
-3. Shims for 33 modules are 33 clutter files in the tree being cleaned; with a rename, a second
-   top-level package.
-4. A rename rides free on a clean break: every path changes anyway.
+3. Shims for 33 modules are 33 clutter files in the tree being cleaned.
 
 **One allowance, in data not code:** `load_tiers` accepts TOML key `box` as an alias for
 `self_hosted` with a `DeprecationWarning` through 1.x.
@@ -130,13 +127,10 @@ grounder), identity asserts in `tests/platform/test_grounding.py` and
 
 **finance-ops** (`origin/master` `364365a`) pins **v0.6.0**. Sites:
 `src/finance_ops/clients/llm_categorizer.py:35` (root names, unchanged), `:36` `packs` →
-`groundwire.prompts`, `:37` `call_graders.CallScore` → `groundwire.call.graders`, `:205`
-`pydantic_ai_generator` → `groundwire.adapters.pydantic_ai`; `tests/test_llm_categorizer.py:18`.
+`llm_ports.prompts`, `:37` `call_graders.CallScore` → `llm_ports.call.graders`, `:205`
+`pydantic_ai_generator` → `llm_ports.adapters.pydantic_ai`; `tests/test_llm_categorizer.py:18`.
 Its `.github/workflows/pin-drift.yml` goes red when `v1.0.0` is tagged and stays red until it
 adopts — the forcing function.
-
-**Elsewhere** (text only, after a rename): `mcp/scripts/stack_registry.json`,
-`edge-host/scripts/edge-sweep.sh` (comment), `edge-ci/README.md`.
 
 ## 3. Docstring voice, and where history goes
 
@@ -175,15 +169,15 @@ test pins `rubric()` with trade-data's arguments byte-identical to 0.11 for ever
 
 1. One line: *"LLM calls that end in a named outcome, and prose whose numbers can't be invented."*
    Badges: PyPI, Python versions, CI, coverage, docs, license.
-2. `pip install groundwire`; extras on one line.
+2. `pip install llm-ports`; extras on one line.
 3. Quickstart, ~30 lines, no network or key, executed in CI by `pytest-examples`:
 
 ```python
 import asyncio
 from pydantic import BaseModel, Field
-from groundwire import Role as BaseRole, generate, load_tiers
-from groundwire.grounding import slots
-from groundwire.testing import StubGenerator  # real use: adapters.pydantic_ai.PydanticAIGenerator
+from llm_ports import Role as BaseRole, generate, load_tiers
+from llm_ports.grounding import slots
+from llm_ports.testing import StubGenerator  # real use: adapters.pydantic_ai.PydanticAIGenerator
 
 TIERS = load_tiers(
     {
@@ -237,7 +231,7 @@ asyncio.run(main())
 `mkdocs build --strict`. Material's maintainers announced Zensical as successor; it reads the same
 `mkdocs.yml`, so a later move is a build-command change. Rejected: Sphinx/Furo (RST rewrite).
 Nav: Home (README) · Concepts · Guides (one per example) · API reference (one
-`::: groundwire.<subpkg>` page per subpackage) · ADRs · Changelog.
+`::: llm_ports.<subpkg>` page per subpackage) · ADRs · Changelog.
 
 `examples/` (CI runs each; all network-free except the last): `quickstart.py` ·
 `named_outcomes.py` (fallback policy as a `match` on `res.outcome`) · `slots_grounded_prose.py` ·
@@ -248,7 +242,7 @@ Nav: Home (README) · Concepts · Guides (one per example) · API reference (one
 
 GitHub Actions OIDC, no stored token. One-time operator setup on PyPI and TestPyPI: a pending
 publisher (owner `mjdevaccount`, repo, workflow `release.yml`, environment `pypi` / `testpypi`).
-A pending publisher does **not** reserve the name — publish `1.0.0rc1` promptly after deciding.
+A pending publisher does **not** reserve the name — publish promptly once it exists.
 
 `release.yml` on a `v*` tag: reuse `ci.yml` via `workflow_call` → `build` (tag == version check,
 `uv build`, `twine check --strict`) → `publish` (`environment: pypi`, `id-token: write`,
@@ -256,38 +250,23 @@ A pending publisher does **not** reserve the name — publish `1.0.0rc1` promptl
 (`dist/*` attached; existing release assets untouched). `workflow_dispatch` publishes a `.devN`
 to TestPyPI as the dry run.
 
-PyPI availability (`https://pypi.org/pypi/<name>/json`, 2026-11-03; 404 = unclaimed, not
-guaranteed registrable — re-check before committing):
+`llm-ports` was unclaimed on PyPI on 2026-11-03 (`https://pypi.org/pypi/llm-ports/json` → 404;
+unclaimed is not guaranteed registrable — the TestPyPI dry run proves it).
 
-| Name | PyPI | GitHub repos of that name | Note |
-|---|---|---|---|
-| `llm-ports` | free | 10 | |
-| **`groundwire`** | **free** | 59 | TestPyPI and npm also free |
-| `groundcall` | free | 5 | |
-| `figureproof` | free | 0 | |
-| `honest-llm` | free | 19 | |
-| `veracity` | free | 533 | generic, crowded |
-| `tether` | free | — | rejected: stablecoin, finance-adjacent portfolio |
-| `vouch`, `attest`, `warrant`, `candor`, `groundwork`, `plumbline` | taken | | |
+## 7. Name decision
 
-## 7. Name decision (operator)
-
-**Recommendation: `groundwire`.** A ground wire keeps a fault from hurting anyone — the pitch:
-named outcomes, gates, figures the model cannot invent. One word, free on PyPI, TestPyPI, npm.
-Runner-up `groundcall` (fewer same-named repos). Keeping `llm-ports` is defensible ("ports" signals
-hexagonal architecture to engineers) but names the pattern, not the value.
-
-Rename cost: a GitHub repo rename redirects web, git and API URLs including old release assets
-(breaks only if a new repo later takes the old name — don't); the import rename rides on the 1.0
-path rewrite; ~6 text references across the estate; `project.urls` and the docs URL must use the
-new name from the first upload, so **rename before the first publish**.
+**Decided (operator, 2026-11-03): keep `llm-ports`** (import `llm_ports`). "Ports" names the
+ports-and-adapters design engineers recognise; the README's first line carries the value. No repo
+rename, no estate reference changes, and no import-prefix change beyond the 1.0 subpackage paths.
+Rejected: renames such as `groundwire` and `grounded-llm` — a metaphor that needs explaining, or
+a rename cost bought for a marginal gain.
 
 ## 8. CI hardening
 
 | Job | What |
 |---|---|
 | `lint` | `ruff check` + `ruff format --check` (E,F,W,I,B,UP,RUF with RUF022 on, + D google, PT, SIM, TID252); `pre-commit run --all-files`; `lint-imports`; `zizmor` |
-| `types` | `mypy --strict src/`; `pyright --verifytypes groundwire --ignoreexternal` at 100% or a recorded floor that only ratchets up |
+| `types` | `mypy --strict src/`; `pyright --verifytypes llm_ports --ignoreexternal` at 100% or a recorded floor that only ratchets up |
 | `test` | 3.12, 3.13, 3.14, 3.15 on ubuntu + 3.13 on windows; `uv sync --frozen --all-extras`; `pytest --cov`. 3.12 floor (PEP 695). 3.15 required once its wheels exist |
 | `test-lowest` | 3.12, `uv pip install --resolution lowest-direct -e '.[all]'` — proves lower bounds |
 | `core-only` | `uv pip install .` (no extras); `tests/test_core_imports.py` imports every non-adapter module in a subprocess and asserts no vendor module is loaded |
@@ -309,12 +288,12 @@ version classifiers, `Production/Stable` at 1.0, `project.urls`; add `SECURITY.m
 | 0 | this document | operator approves; name decision recorded in §7 |
 | 1 | CI hardening, no API change: matrix, `test-lowest`, coverage + Codecov, `ruff format`, `twine check`, `zizmor` | every leg green on `main`; coverage badge renders; floor recorded |
 | 2 | Voice and history → **0.12.0**: contract-only docstrings, ADR 0001–0008, Keep-a-Changelog backfill, `pygrep` hook + ruff `D`, `numbers.law_text` single source | hook passes; `rubric()` golden byte-identical to 0.11 for all `(mode, web)`; tests green; tag `v0.12.0`, cut `release/0.x` |
-| 3 | Name + publishing plumbing (operator first: repo rename, PyPI/TestPyPI pending publishers, `pypi`/`testpypi` environments): pyproject name/urls/classifiers, new `release.yml`; reference PRs in mcp, finance-ops, edge-ci | old v0.11.0 wheel URL resolves `200` through the redirect; `workflow_dispatch` publishes `1.0.0.dev1` to TestPyPI with no secret; installing it from TestPyPI works |
-| 4 | Layout (breaking; `main` = `1.0.0.dev0`, unreleased): `src/groundwire/` via `git mv` + import rewrites only; tests mirrored; `__all__` everywhere; import-linter contracts | every moved file a ≥90% rename in `git diff -M --summary`; test count unchanged and green; `lint-imports` green; a test asserts every public module defines `__all__` and every name resolves |
+| 3 | Publishing plumbing (operator first: PyPI/TestPyPI pending publishers; `pypi`/`testpypi` environments): pyproject urls/classifiers, new `release.yml` (trusted publishing; GitHub release assets kept for wheel-URL consumers) | `workflow_dispatch` publishes a `.devN` to TestPyPI with no secret; installing it from TestPyPI works; the next tag lands on PyPI with attestations |
+| 4 | Layout (breaking; `main` = `1.0.0.dev0`, unreleased): `src/llm_ports/` via `git mv` + import rewrites only; tests mirrored; `__all__` everywhere; import-linter contracts | every moved file a ≥90% rename in `git diff -M --summary`; test count unchanged and green; `lint-imports` green; a test asserts every public module defines `__all__` and every name resolves |
 | 5 | 1.0 API cleanup (breaking): extras split (core = pydantic, jinja2, pyyaml); `outcome_for_status`/`REQUEST_FAULT` → `ports.outcomes`; `strict_json_schema` → adapter; `EventHook` → `observability`; `box` → `self_hosted` (TOML alias + warning), label default `"chat"`; `rubric(examples=)`; `load_tiers` accepts a mapping; underscore private helpers | `core-only` green; rubric golden with trade-data's examples; a `box` tier table loads with `DeprecationWarning`; `HttpReranker` imports with only `http` installed |
 | 6 | Strict typing | `mypy --strict` green; `pyright --verifytypes` at the gate |
 | 7 | Docs, examples, README | `mkdocs build --strict`; `examples` green; README quickstart runs under `pytest-examples`; Pages live |
-| 8 | Release + adoption: tag `v1.0.0rc1` → PyPI; trade-data PR (dependency `groundwire[pydantic-ai,http,langfuse,otel,sql,evals]==1.0.0rc1`, drop `[tool.uv.sources]`, rewrite the 95 lines per Appendix A, import-linter names, `Dockerfile.grounder`, `box` sites, rubric `examples=`); then `v1.0.0` from rc1's commit, trade-data lock-only bump; finance-ops PR (5 lines + dependency) | trade-data full CI green incl. `test_import_contracts`; grounder image builds; nightly eval board matches the last 0.11 run; finance-ops CI and pin-drift green |
+| 8 | Release + adoption: tag `v1.0.0rc1` → PyPI; trade-data PR (dependency `llm-ports[pydantic-ai,http,langfuse,otel,sql,evals]==1.0.0rc1`, drop `[tool.uv.sources]`, rewrite the 95 lines per Appendix A, import-linter names, `Dockerfile.grounder`, `box` sites, rubric `examples=`); then `v1.0.0` from rc1's commit, trade-data lock-only bump; finance-ops PR (5 lines + dependency) | trade-data full CI green incl. `test_import_contracts`; grounder image builds; nightly eval board matches the last 0.11 run; finance-ops CI and pin-drift green |
 
 ## Appendix A — trade-data import sites by 0.11 module (`origin/main` `6afcef33`)
 
