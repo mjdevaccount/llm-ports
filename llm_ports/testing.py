@@ -10,17 +10,21 @@
 `StubGenerator` satisfies the `Generator` port without a framework: its reply function returns a
 VALUE (wrapped `ok`), a `Generated` (returned as-is, any outcome), or raises (returned as
 `unavailable` -- the port never raises). `RecordingTracer` satisfies `Tracer` and keeps every
-generation, its end and its scores. Both pass the ports' `isinstance` checks.
+generation, its end and its scores. `StubEmbedder` satisfies `Embedder` with deterministic
+unit vectors hashed from each text (same text -> same vector), and records every call. All three
+pass the ports' `isinstance` checks.
 """
 
 from __future__ import annotations
 
+import hashlib
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from llm_ports.failure import failure_reason
-from llm_ports.ports import Generated, GenRequest
+from llm_ports.ports import Embedded, EmbedInput, Generated, GenRequest
 
 Reply = Callable[[GenRequest, type[Any]], Any]
 
@@ -83,4 +87,34 @@ class RecordingTracer:
         return g
 
 
-__all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubGenerator"]
+class StubEmbedder:
+    """The `Embedder` port with no wire: each text hashes to a deterministic unit vector of `dims`.
+    `fail` (an Outcome other than ok) makes every call fail that way. `calls` keeps
+    (texts, input_type) per call."""
+
+    def __init__(self, *, dims: int = 8, stamp: str = "stub@8", fail: str | None = None) -> None:
+        self.dims = dims
+        self._stamp = stamp
+        self._fail = fail
+        self.calls: list[tuple[tuple[str, ...], EmbedInput]] = []
+
+    @property
+    def stamp(self) -> str:
+        return self._stamp
+
+    def vector(self, text: str) -> tuple[float, ...]:
+        raw = hashlib.sha256(text.encode()).digest()
+        vals = [(raw[i % len(raw)] - 127.5) for i in range(self.dims)]
+        norm = math.sqrt(sum(v * v for v in vals)) or 1.0
+        return tuple(v / norm for v in vals)
+
+    async def embed(self, texts: Sequence[str], *, input_type: EmbedInput = "document") -> Embedded:
+        self.calls.append((tuple(texts), input_type))
+        if self._fail:
+            return Embedded(vectors=(), outcome=self._fail, stamp=self._stamp,  # type: ignore[arg-type]
+                            reason=f"stub {self._fail}")
+        return Embedded(vectors=tuple(self.vector(t) for t in texts), outcome="ok", stamp=self._stamp,
+                        input_tokens=None)
+
+
+__all__ = ["RecordedGeneration", "RecordingTracer", "Reply", "StubEmbedder", "StubGenerator"]
