@@ -59,8 +59,13 @@ class TestResearch:
     caller reads carries no scratchpad."""
 
     def test_analysis_leads_and_every_property_is_required(self) -> None:
-        got = research_schema({"type": "object", "properties": {"note": {"type": "string"}, "n": {"type": "integer"}},
-                               "required": ["note"]})
+        got = research_schema(
+            {
+                "type": "object",
+                "properties": {"note": {"type": "string"}, "n": {"type": "integer"}},
+                "required": ["note"],
+            }
+        )
         assert list(got["properties"]) == ["analysis", "note", "n"]
         assert got["required"] == ["analysis", "note", "n"]
         assert got["properties"]["analysis"] is RESEARCH_ANALYSIS and got["type"] == "object"
@@ -77,8 +82,9 @@ class TestResearch:
             calls.append(kw)
             return Generated(value={"analysis": "thinking", "note": "x"}, outcome="ok")
 
-        res = await research(generate, "role", prompt="p", schema={"properties": {"note": {}}}, name="note",
-                             metadata={"m": 1})
+        res = await research(
+            generate, "role", prompt="p", schema={"properties": {"note": {}}}, name="note", metadata={"m": 1}
+        )
         assert res.value == {"note": "x"} and res.outcome == "ok"
         assert calls[0]["metadata"] == {"m": 1} and calls[0]["output"].__name__ == "note"
         assert list(calls[0]["output"].json_schema["properties"]) == ["analysis", "note"]

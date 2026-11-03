@@ -43,8 +43,7 @@ def max_chars_for_chunks(n: int, *, size: int = CHUNK_CHARS, overlap: int = CHUN
     return size + (n - 1) * (break_floor(size) + 1 - overlap)
 
 
-def chunk_text(text: str, *, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP,
-               header: str = "") -> list[str]:
+def chunk_text(text: str, *, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP, header: str = "") -> list[str]:
     """Split into ~`size`-char chunks with `overlap` chars of continuity, preferring paragraph
     boundaries (\\n\\n), then line breaks, then sentence ends, inside the tail third of the window.
     A text <= size is a single chunk; a blank one is no chunks. `header` is prepended to EVERY
@@ -77,5 +76,12 @@ def chunk_text(text: str, *, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERL
     return chunks
 
 
-__all__ = ["CHUNK_CHARS", "CHUNK_OVERLAP", "break_floor", "chunk_text", "content_hash",
-           "max_chars_for_chunks", "should_ingest"]
+__all__ = [
+    "CHUNK_CHARS",
+    "CHUNK_OVERLAP",
+    "break_floor",
+    "chunk_text",
+    "content_hash",
+    "max_chars_for_chunks",
+    "should_ingest",
+]

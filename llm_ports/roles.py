@@ -64,8 +64,10 @@ def load_tiers(path: Path, *, check_ladder: LadderCheck | None = None) -> TierTa
     tiers: dict[str, Tier] = {}
     for name, t in raw["tiers"].items():
         if t.get("model") not in models or t.get("timeout") not in ladder:
-            raise ValueError(f"{path.name}: tier {name!r} names model {t.get('model')!r} / rung "
-                             f"{t.get('timeout')!r}; have models {sorted(models)}, rungs {sorted(ladder)}")
+            raise ValueError(
+                f"{path.name}: tier {name!r} names model {t.get('model')!r} / rung "
+                f"{t.get('timeout')!r}; have models {sorted(models)}, rungs {sorted(ladder)}"
+            )
         tiers[name] = Tier(name, models[t["model"]], ladder[t["timeout"]], bool(t.get("box", True)))
     return TierTable(ladder=ladder, models=models, tiers=tiers)
 

@@ -42,8 +42,13 @@ def opt_int(v: Any) -> int | None:
 class Observation(Protocol):
     """What a trace hook yields: one open observation of one call. Neither method may raise."""
 
-    def update(self, *, output: Any = None, usage_details: Mapping[str, Any] | None = None,
-               metadata: Mapping[str, Any] | None = None) -> None: ...
+    def update(
+        self,
+        *,
+        output: Any = None,
+        usage_details: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None: ...
 
     def score(self, *, name: str, value: float, comment: str | None = None) -> None: ...
 
@@ -59,8 +64,13 @@ class PortObservation:
         self._usage_given = False
         self._meta: Mapping[str, Any] | None = None
 
-    def update(self, *, output: Any = None, usage_details: Mapping[str, Any] | None = None,
-               metadata: Mapping[str, Any] | None = None) -> None:
+    def update(
+        self,
+        *,
+        output: Any = None,
+        usage_details: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         if output is not None:
             self._output = output
         if usage_details is not None:
@@ -93,22 +103,41 @@ class PortObservation:
     def fail(self, exc: BaseException, metadata: Mapping[str, Any] | None = None) -> None:
         """End the generation at level ERROR with the error line (capped). `metadata` None = the
         last update's."""
-        self._gen.end(level="ERROR", status_message=f"{type(exc).__name__}: {exc}"[:STATUS_MAX],
-                      metadata=self._meta if metadata is None else metadata)
+        self._gen.end(
+            level="ERROR",
+            status_message=f"{type(exc).__name__}: {exc}"[:STATUS_MAX],
+            metadata=self._meta if metadata is None else metadata,
+        )
 
 
 @asynccontextmanager
-async def observe(tracer: Tracer, *, name: str, model: str, provider: str, input: Any,
-                  metadata: Mapping[str, Any] | None = None, session_id: str | None = None,
-                  prompt_name: str | None = None,
-                  clock: Callable[[], float] = time.monotonic) -> AsyncIterator[PortObservation]:
+async def observe(
+    tracer: Tracer,
+    *,
+    name: str,
+    model: str,
+    provider: str,
+    input: Any,
+    metadata: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
+    prompt_name: str | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> AsyncIterator[PortObservation]:
     """One generation around the block (module docstring). On an exception the ERROR end carries
     the opening metadata, then the last update's, then `latency_ms`."""
     meta = dict(metadata or {})
     started = clock()
-    obs = PortObservation(tracer.start_generation(name=name, model=model, provider=provider, input=input,
-                                                  metadata=meta, session_id=session_id,
-                                                  prompt_name=prompt_name))
+    obs = PortObservation(
+        tracer.start_generation(
+            name=name,
+            model=model,
+            provider=provider,
+            input=input,
+            metadata=meta,
+            session_id=session_id,
+            prompt_name=prompt_name,
+        )
+    )
     try:
         yield obs
     except Exception as exc:

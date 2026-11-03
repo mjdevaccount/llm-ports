@@ -21,7 +21,9 @@ NUMBER_WORDS = re.compile(
     r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
     r"hundred|thousand|million|billion|trillion|percent|bps|"
     r"ight|ighteen|ighty|leven|welve|hirty|wenty|orty|ifty|ixty|eventy|inety|undred|housand|"
-    r"illion|illions|ills)\b", re.IGNORECASE)
+    r"illion|illions|ills)\b",
+    re.IGNORECASE,
+)
 
 # A digit run as the MODEL may read it: `25bp`, `14:00`, `3.1%` and `5,000` are each one hole, so
 # a masked clock or percentage does not leave half a number behind.

@@ -33,7 +33,7 @@ def test_loose_names_every_unlicensed_figure_in_order_with_repeats() -> None:
     words = "the level is 580.50\nnine voters"
     assert numbers.loose("held 580.5 then 581 and 581, nine then ten", allowed, words) == ["581", "581", "ten"]
     assert numbers.loose("an ighteen-year high", allowed, words) == ["ighteen"]
-    assert numbers.loose("peak 2.20", {"2.2"}) == []                       # by value, never by spelling
+    assert numbers.loose("peak 2.20", {"2.2"}) == []  # by value, never by spelling
     assert numbers.loose("", allowed, words) == [] and numbers.loose(None, set()) == []  # type: ignore[arg-type]
 
 
@@ -41,7 +41,7 @@ def test_a_percent_sign_in_the_inputs_licenses_the_word_and_a_newline_join_never
     assert numbers.loose("up three percent", {"3"}, "up 3%") == ["three"]
     assert numbers.loose("up three percent", {"3"}, "up 3 points") == ["three", "percent"]
     assert numbers.loose("ten", set(), "Bit\nen route") == ["ten"]
-    assert numbers.loose("ten", set(), "Biten route") == []               # glued, the join would lie
+    assert numbers.loose("ten", set(), "Biten route") == []  # glued, the join would lie
 
 
 def test_uncited_is_loose_in_the_cited_spans_shape() -> None:

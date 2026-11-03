@@ -21,7 +21,7 @@ from typing import Any
 from llm_ports import numbers
 from llm_ports.ports import Chunk, Claim, Grader, GroundingVerdict, Prompt, Seed
 
-BOARD_EXAMPLES = 3            # (id, reason) pairs kept per grader: the wound named, never the corpse
+BOARD_EXAMPLES = 3  # (id, reason) pairs kept per grader: the wound named, never the corpse
 
 
 class GauntletEvaluator:
@@ -36,12 +36,16 @@ class GauntletEvaluator:
     `examples` carries at most `BOARD_EXAMPLES` (id, reason) pairs per grader. A grader that RAISES
     is a bug in the consumer's code and raises out of here; where that lands is the caller's job."""
 
-    def run(self, surface: str, rows: list[dict[str, Any]], graders: Mapping[str, Grader],
-            *, id_field: str = "id",
-            monitors: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None) -> dict[str, Any]:
-        by_grader: dict[str, dict[str, Any]] = {
-            name: {"pass": 0, "fail": 0, "examples": []} for name in graders
-        }
+    def run(
+        self,
+        surface: str,
+        rows: list[dict[str, Any]],
+        graders: Mapping[str, Grader],
+        *,
+        id_field: str = "id",
+        monitors: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        by_grader: dict[str, dict[str, Any]] = {name: {"pass": 0, "fail": 0, "examples": []} for name in graders}
         failed_rows: set[Any] = set()
         for row in rows:
             for name, fn in graders.items():
@@ -77,11 +81,9 @@ class NumberLawGrounder:
             return GroundingVerdict(False, "no evidence spans", checker=self.checker)
         missing = numbers.uncited(claim.text, ((s.title, s.text) for s in spans))
         if missing:
-            return GroundingVerdict(False, "number_not_in_span: " + ", ".join(missing[:4]),
-                                    checker=self.checker)
+            return GroundingVerdict(False, "number_not_in_span: " + ", ".join(missing[:4]), checker=self.checker)
         if not (numbers.digits(claim.text) or numbers.spelled(claim.text)):
-            return GroundingVerdict(True, "no_numbers: nothing for number_law to judge",
-                                    checker=self.checker)
+            return GroundingVerdict(True, "no_numbers: nothing for number_law to judge", checker=self.checker)
         return GroundingVerdict(True, "every number cited", checker=self.checker)
 
 
@@ -119,5 +121,11 @@ class NoopTracer:
         return NoopGeneration()
 
 
-__all__ = ["BOARD_EXAMPLES", "GauntletEvaluator", "NoopGeneration", "NoopTracer", "NumberLawGrounder",
-           "RepoPromptSource"]
+__all__ = [
+    "BOARD_EXAMPLES",
+    "GauntletEvaluator",
+    "NoopGeneration",
+    "NoopTracer",
+    "NumberLawGrounder",
+    "RepoPromptSource",
+]

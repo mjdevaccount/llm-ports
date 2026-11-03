@@ -40,6 +40,7 @@ def _judge_model(grading: dict[str, Any], seen: list[str]) -> FunctionModel:
                 if isinstance(content, str):
                     seen.append(content)
         return ModelResponse(parts=[ToolCallPart(tool_name="final_result", args=grading)])
+
     return FunctionModel(fn)
 
 
@@ -59,14 +60,17 @@ async def test_the_judge_reads_rubric_input_and_output_and_returns_the_verdict()
 
 async def test_a_passing_verdict() -> None:
     v = await _judge(_judge_model({"reason": "clean", "pass": True, "score": 1.0}, [])).judge(
-        prompt="p", output="o", rubric="r")
+        prompt="p", output="o", rubric="r"
+    )
     assert v.passed is True and v.score == 1.0
 
 
 async def test_a_judge_that_answers_prose_instead_of_the_tool_raises() -> None:
     """The port's contract: no default verdict -- a judge that did not answer RAISES."""
+
     def fn(_m: list[ModelMessage], _i: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart("I refuse to grade")])
+
     with pytest.raises(UnexpectedModelBehavior, match="retries"):
         await _judge(FunctionModel(fn)).judge(prompt="p", output="o", rubric="r")
 
@@ -92,8 +96,11 @@ def test_exactly_one_model_source() -> None:
     with pytest.raises(ValueError, match="exactly one"):
         PydanticEvalsJudge(JUDGE_ROLE)
     with pytest.raises(ValueError, match="exactly one"):
-        PydanticEvalsJudge(JUDGE_ROLE, model=FunctionModel(lambda _m, _i: None),  # type: ignore[arg-type,return-value]
-                           model_for=lambda: None)  # type: ignore[arg-type,return-value]
+        PydanticEvalsJudge(
+            JUDGE_ROLE,
+            model=FunctionModel(lambda _m, _i: None),  # type: ignore[arg-type,return-value]
+            model_for=lambda: None,
+        )  # type: ignore[arg-type,return-value]
 
 
 def test_the_judge_satisfies_the_port() -> None:
@@ -115,10 +122,15 @@ class TestCleanReason:
         assert verdict_of({"score": 1.0, "pass": EvaluationReason(True, "clean reply")}).reason == "clean reply"
 
     def test_a_leaked_json_tail_that_agrees_is_cut(self) -> None:
-        r = ('The output invents Q3 revenue. This violates Law 2 (Numbers from the Input Only).", '
-             '"pass": false, "score": 0.0')
+        r = (
+            'The output invents Q3 revenue. This violates Law 2 (Numbers from the Input Only).", '
+            '"pass": false, "score": 0.0'
+        )
         v = verdict_of({"score": 0.0, "pass": EvaluationReason(False, r)})
-        assert v.passed is False and v.reason == "The output invents Q3 revenue. This violates Law 2 (Numbers from the Input Only)."
+        assert (
+            v.passed is False
+            and v.reason == "The output invents Q3 revenue. This violates Law 2 (Numbers from the Input Only)."
+        )
 
     def test_a_leaked_verdict_that_contradicts_the_parsed_one_is_refused(self) -> None:
         r = 'The output is clean.", "pass": true, "score": 1.0'
@@ -130,8 +142,10 @@ class TestCleanReason:
         """A fail row and a PASS whose reason was a second transcript: neither verdict is readable,
         so neither becomes a pass or a fail -- the caller records could-not-run."""
         fail_row = "The output invents the 'magnitude'.\",\n<parameter=pass>\nfalse"
-        pass_row = ("The output invents the number 'geo_threat',\n  \"pass\": true\n}\n<tool_call>\n"
-                    "<function=final_result>\n<parameter=reason>\nThe output correctly classifies")
+        pass_row = (
+            "The output invents the number 'geo_threat',\n  \"pass\": true\n}\n<tool_call>\n"
+            "<function=final_result>\n<parameter=reason>\nThe output correctly classifies"
+        )
         for passed, r in ((False, fail_row), (True, pass_row)):
             with pytest.raises(ValueError, match="markup"):
                 verdict_of({"score": float(passed), "pass": EvaluationReason(passed, r)})
@@ -156,6 +170,7 @@ async def test_the_grade_rides_the_native_grammar_not_a_tool_call() -> None:
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         modes.append(info.model_request_parameters.output_mode)
         return ModelResponse(parts=[TextPart('{"reason": "clean", "pass": true, "score": 1.0}')])
+
     v = await _judge(FunctionModel(fn, profile=JUDGE_PROFILE)).judge(prompt="p", output="o", rubric="r")
     assert (v.passed, v.score, v.reason) == (True, 1.0, "clean") and modes == ["native"]
 
@@ -171,10 +186,17 @@ async def test_images_reach_the_judge_model_beside_the_text() -> None:
                 c = getattr(part, "content", None)
                 if isinstance(c, list):
                     got.extend(c)
-        return ModelResponse(parts=[ToolCallPart(tool_name="final_result",
-                                                 args={"reason": "levels match the chart", "pass": True, "score": 1.0})])
-    v = await _judge(FunctionModel(fn)).judge(prompt="read the chart", output='{"support": 580.0}', rubric="r",
-                                              images=[(b"\x89PNG-bytes", "image/png")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result", args={"reason": "levels match the chart", "pass": True, "score": 1.0}
+                )
+            ]
+        )
+
+    v = await _judge(FunctionModel(fn)).judge(
+        prompt="read the chart", output='{"support": 580.0}', rubric="r", images=[(b"\x89PNG-bytes", "image/png")]
+    )
     assert v.passed is True
     imgs = [c for c in got if isinstance(c, BinaryContent)]
     assert len(imgs) == 1 and imgs[0].data == b"\x89PNG-bytes" and imgs[0].media_type == "image/png"

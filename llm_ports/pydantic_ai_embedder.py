@@ -43,9 +43,15 @@ from llm_ports.pydantic_ai_generator import classify
 EmbedModelFor = Callable[[], AbstractAsyncContextManager[EmbeddingModel]]
 
 
-def openai_compatible_embeddings(base_url: str, model_name: str, api_key: str | None = None, *,
-                                 timeout_s: float = 120.0, max_retries: int = 0,
-                                 transport: httpx.AsyncBaseTransport | None = None) -> EmbedModelFor:
+def openai_compatible_embeddings(
+    base_url: str,
+    model_name: str,
+    api_key: str | None = None,
+    *,
+    timeout_s: float = 120.0,
+    max_retries: int = 0,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> EmbedModelFor:
     """A `model_for` over any OpenAI-wire `/embeddings` endpoint (`base_url` ends where
     `/embeddings` starts, e.g. `http://litellm:4000/v1`). One httpx client per call. The SDK's
     own retries default OFF: a gateway in front retries, and two stacked policies multiply.
@@ -68,9 +74,17 @@ def openai_compatible_embeddings(base_url: str, model_name: str, api_key: str | 
 class PydanticAIEmbedder:
     """The `Embedder` port. `stamp` names the space; `dims` (when given) is enforced per vector."""
 
-    def __init__(self, model: EmbeddingModel | None = None, *, stamp: str, dims: int | None = None,
-                 model_for: EmbedModelFor | None = None, batch_size: int = 16,
-                 query_instruct: str = "", gated: tuple[type[BaseException], ...] = ()) -> None:
+    def __init__(
+        self,
+        model: EmbeddingModel | None = None,
+        *,
+        stamp: str,
+        dims: int | None = None,
+        model_for: EmbedModelFor | None = None,
+        batch_size: int = 16,
+        query_instruct: str = "",
+        gated: tuple[type[BaseException], ...] = (),
+    ) -> None:
         if (model is None) == (model_for is None):
             raise ValueError("PydanticAIEmbedder: pass exactly one of model= or model_for=")
         if not stamp:
@@ -94,15 +108,16 @@ class PydanticAIEmbedder:
             return [f"Instruct: {self._instruct}\nQuery: {t}" for t in texts]
         return list(texts)
 
-    async def _embed_on(self, model: EmbeddingModel, inputs: list[str],
-                        input_type: EmbedInput) -> tuple[list[tuple[float, ...]], int | None]:
+    async def _embed_on(
+        self, model: EmbeddingModel, inputs: list[str], input_type: EmbedInput
+    ) -> tuple[list[tuple[float, ...]], int | None]:
         from pydantic_ai.embeddings import Embedder as _PaiEmbedder
 
         embedder = _PaiEmbedder(model)
         out: list[tuple[float, ...]] = []
         tokens: int | None = 0
         for i in range(0, len(inputs), self._batch):
-            batch = inputs[i:i + self._batch]
+            batch = inputs[i : i + self._batch]
             res = await embedder.embed(batch, input_type=input_type)
             if len(res.embeddings) != len(batch):
                 raise _Invalid(f"sent {len(batch)} inputs, got {len(res.embeddings)} vectors")

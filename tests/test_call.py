@@ -57,14 +57,20 @@ def test_a_web_role_gets_the_web_rung_of_the_ladder() -> None:
 
 async def test_image_bytes_reach_the_generator_untouched() -> None:
     gen, _t, hooks, _e = _rig("a chart")
-    await call.generate(ROLE, prompt="read it", generator=gen, hooks=hooks,
-                        images=[(b"\x89PNG", "image/png"), (b"\xff\xd8", "image/jpeg")])
+    await call.generate(
+        ROLE,
+        prompt="read it",
+        generator=gen,
+        hooks=hooks,
+        images=[(b"\x89PNG", "image/png"), (b"\xff\xd8", "image/jpeg")],
+    )
     assert gen.requests[0].images == ((b"\x89PNG", "image/png"), (b"\xff\xd8", "image/jpeg"))
 
 
 async def test_ok_traces_one_generation_under_the_category() -> None:
-    gen, tracer, hooks, events = _rig(Generated(value="fine", outcome="ok", model="small-chat",
-                                                usage={"input": 3, "output": 4}))
+    gen, tracer, hooks, events = _rig(
+        Generated(value="fine", outcome="ok", model="small-chat", usage={"input": 3, "output": 4})
+    )
     res = await call.generate(ROLE, prompt="say it", generator=gen, hooks=hooks, metadata={"symbol": "SPY"})
     assert res.outcome == "ok" and res.value == "fine"
     assert gen.features == ["test.facade"], "the category is the feature for the whole call"  # type: ignore[attr-defined]
@@ -90,7 +96,9 @@ async def test_a_failed_outcome_is_an_error_observation_and_still_returns(outcom
     assert res.outcome == outcome and res.value is None
     ended = tracer.generations[0].ended
     assert ended is not None and ended["level"] == "ERROR" and outcome in ended["status_message"]
-    assert events == [(logging.WARNING, "llm_call_failed", {"role": "test.facade", "outcome": outcome, "reason": "why"})]
+    assert events == [
+        (logging.WARNING, "llm_call_failed", {"role": "test.facade", "outcome": outcome, "reason": "why"})
+    ]
 
 
 async def test_an_admit_refusal_opens_no_observation() -> None:
@@ -101,8 +109,9 @@ async def test_an_admit_refusal_opens_no_observation() -> None:
         refused.append(role.category)
         return f"category_disabled: {role.category} is switched off"
 
-    res = await call.generate(ROLE, prompt="x", generator=gen,
-                              hooks=call.Hooks(admit=admit, trace=call.tracer_trace(tracer)))
+    res = await call.generate(
+        ROLE, prompt="x", generator=gen, hooks=call.Hooks(admit=admit, trace=call.tracer_trace(tracer))
+    )
     assert res.outcome == "gated" and "switched off" in (res.reason or "") and res.model == "small-chat"
     assert gen.requests == [] and tracer.generations == [] and refused == ["test.facade"]
 
@@ -165,8 +174,12 @@ class TestGraders:
         async def on_scores(role: Role, scores: tuple[Any, ...]) -> None:
             noted.append((role.name, scores))
 
-        res = await call.generate(GRADED, prompt="say it", generator=gen,
-                                  hooks=call.Hooks(trace=call.tracer_trace(tracer), on_scores=on_scores))
+        res = await call.generate(
+            GRADED,
+            prompt="say it",
+            generator=gen,
+            hooks=call.Hooks(trace=call.tracer_trace(tracer), on_scores=on_scores),
+        )
         names = [f"test.graded.{g}" for g in GRADERS]
         assert [s[0] for s in tracer.generations[0].scores] == names
         assert [s.name for s in res.stamp["scores"]] == list(GRADERS) and all(s.passed for s in res.stamp["scores"])
@@ -183,7 +196,9 @@ class TestGraders:
         gen, _t, hooks, events = _rig({"summary": "", "n": "the number 4242 came from nowhere"})
         res = await call.generate(GRADED, prompt="say it", generator=gen, hooks=hooks)
         assert res.outcome == "ok"
-        assert [(e[1], e[2]["failed"]) for e in events] == [("llm_call_graded", ["schema_complete", "numbers_from_inputs"])]
+        assert [(e[1], e[2]["failed"]) for e in events] == [
+            ("llm_call_graded", ["schema_complete", "numbers_from_inputs"])
+        ]
 
     async def test_a_consumer_grader_table_is_used_and_a_raise_is_a_crashed_score(self) -> None:
         def boom(*_a: Any) -> Any:
@@ -196,8 +211,9 @@ class TestGraders:
         role = Role("test.vocab", tier="cloud", graders=("in_vocabulary", "echo"))
         gen, tracer, hooks, _e = _rig({"category": "rocket fuel"})
         table = {**call_graders.GRADERS, "in_vocabulary": in_vocab, "echo": boom}
-        res = await call.generate(role, prompt="x", generator=gen,
-                                  hooks=call.Hooks(trace=hooks.trace, on_event=hooks.on_event, graders=table))
+        res = await call.generate(
+            role, prompt="x", generator=gen, hooks=call.Hooks(trace=hooks.trace, on_event=hooks.on_event, graders=table)
+        )
         scores = {s.name: s for s in res.stamp["scores"]}
         assert scores["in_vocabulary"].passed is False and scores["in_vocabulary"].reason == "oov"
         assert scores["echo"].value == call_graders.CRASHED and "RuntimeError: grader bug" in scores["echo"].reason
@@ -221,8 +237,9 @@ class TestBlindInputs:
 
     async def test_an_image_call_drops_the_text_only_graders(self) -> None:
         gen, tracer, hooks, events = _rig({"summary": "resistance near 385 into 2027"})
-        res = await call.generate(GRADED, prompt="read the chart", generator=gen, hooks=hooks,
-                                  images=[(b"png", "image/png")])
+        res = await call.generate(
+            GRADED, prompt="read the chart", generator=gen, hooks=hooks, images=[(b"png", "image/png")]
+        )
         assert [s.name for s in res.stamp["scores"]] == ["schema_complete", "echo"]
         assert "test.graded.numbers_from_inputs" not in {s[0] for s in tracer.generations[0].scores}
         assert events == [] and GRADED.graders == GRADERS
@@ -250,6 +267,7 @@ async def test_no_trace_hook_observes_into_the_one_null_sink() -> None:
     """The null trace is `tracer_trace(NoopTracer())`: a graded call with no hooks still scores and
     returns, and the package has ONE null sink (`reference.NoopGeneration`)."""
     from llm_ports.reference import NoopGeneration
+
     gen = StubGenerator({"summary": "fine"})
     res = await call.generate(GRADED, prompt="say it", generator=gen)
     assert res.outcome == "ok" and [s.name for s in res.stamp["scores"]] == list(GRADERS)

@@ -47,8 +47,9 @@ def _stored(text: str, sha: str, version: int = 1) -> SimpleNamespace:
 def test_an_absent_label_is_seeded_then_served_as_langfuse_v1() -> None:
     c = FakeClient()
     p = lp.LangfusePromptSource(c, seed_for).get("demo.note")
-    assert p == Prompt("demo.note", TEXT, 1, "langfuse:v1",
-                       config={"pack_version": "1.0.0", "model": "cheap", "content_sha": SHA})
+    assert p == Prompt(
+        "demo.note", TEXT, 1, "langfuse:v1", config={"pack_version": "1.0.0", "model": "cheap", "content_sha": SHA}
+    )
     kw = c.created[0]
     assert kw["name"] == "demo.note" and kw["type"] == "text" and kw["labels"] == ["production"]
     assert kw["tags"] == ["demo"] and kw["config"]["content_sha"] == SHA and kw["prompt"] == TEXT
@@ -93,6 +94,7 @@ def test_langfuse_down_serves_the_repo_seed_not_a_raise() -> None:
 def test_a_down_verdict_is_held_for_one_ttl_then_retried() -> None:
     """The SDK never caches a `fallback` reply, so the adapter holds the down-verdict itself: inside
     the ttl no network call, past it one retry -- and a success clears the hold."""
+
     class Flaky:
         def __init__(self) -> None:
             self.calls = 0
@@ -112,7 +114,7 @@ def test_a_down_verdict_is_held_for_one_ttl_then_retried() -> None:
     src = lp.LangfusePromptSource(client, seed_for, cache_ttl_s=300, clock=lambda: now[0])
     assert src.get("demo.note").source == "repo" and client.calls == 1
     now[0] += 299
-    assert src.get("demo.note").source == "repo" and client.calls == 1   # held: no round-trip
+    assert src.get("demo.note").source == "repo" and client.calls == 1  # held: no round-trip
     now[0] += 2
     client.up = True
     assert src.get("demo.note").source == "langfuse:v1" and client.calls == 2
@@ -133,8 +135,14 @@ def test_a_mirror_whose_text_disagrees_after_the_push_is_not_trusted() -> None:
 def test_a_chat_seed_is_pushed_and_fetched_as_a_two_message_chat_prompt() -> None:
     c = FakeClient()
     p = lp.LangfusePromptSource(c, chat_seed_for).get("demo.chat")
-    assert p == Prompt("demo.chat", TEXT, 1, "langfuse:v1",
-                       config={"model": "small", "version": 2, "content_sha": CHAT_SHA}, system=SYSTEM)
+    assert p == Prompt(
+        "demo.chat",
+        TEXT,
+        1,
+        "langfuse:v1",
+        config={"model": "small", "version": 2, "content_sha": CHAT_SHA},
+        system=SYSTEM,
+    )
     kw = c.created[0]
     assert kw["type"] == "chat" and kw["prompt"] == CHAT_WIRE and kw["tags"] == ["demo"]
     assert all(f[2] == "chat" for f in c.fetches), c.fetches
@@ -155,18 +163,23 @@ def test_a_system_less_seed_forced_to_chat_is_a_one_message_chat_prompt() -> Non
 def test_a_chat_copy_pushed_without_the_system_message_is_re_pushed() -> None:
     """A one-message chat with no `content_sha` (pushed by some other tool, without the system
     message): the sha mismatch re-pushes the seed; no migration step."""
-    old = SimpleNamespace(is_fallback=False, prompt=[{"role": "user", "content": TEXT}],
-                          config={"model": "small"}, version=3)
+    old = SimpleNamespace(
+        is_fallback=False, prompt=[{"role": "user", "content": TEXT}], config={"model": "small"}, version=3
+    )
     c = FakeClient(old)
     p = lp.LangfusePromptSource(c, chat_seed_for).get("demo.chat")
     assert p.source == "langfuse:v4" and p.system == SYSTEM and c.created[0]["prompt"] == CHAT_WIRE
 
 
-@pytest.mark.parametrize("messages", [
-    [{"role": "system", "content": "edited in the UI\n"}, {"role": "user", "content": TEXT}],
-    [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "edited in the UI\n"}],
-    [{"role": "system", "content": SYSTEM}],
-], ids=["system_differs", "user_differs", "user_missing"])
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [{"role": "system", "content": "edited in the UI\n"}, {"role": "user", "content": TEXT}],
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "edited in the UI\n"}],
+        [{"role": "system", "content": SYSTEM}],
+    ],
+    ids=["system_differs", "user_differs", "user_missing"],
+)
 def test_a_chat_copy_whose_sha_is_current_but_text_differs_in_either_message_serves_repo(messages) -> None:
     c = FakeClient(SimpleNamespace(is_fallback=False, prompt=messages, config={"content_sha": CHAT_SHA}, version=2))
     p = lp.LangfusePromptSource(c, chat_seed_for).get("demo.chat")
@@ -174,14 +187,16 @@ def test_a_chat_copy_whose_sha_is_current_but_text_differs_in_either_message_ser
 
 
 def test_a_current_chat_copy_is_left_alone_and_compared_on_role_and_content_only() -> None:
-    extra = [{**m, "type": "chatmessage"} for m in CHAT_WIRE]       # SDK-side extra keys are not drift
+    extra = [{**m, "type": "chatmessage"} for m in CHAT_WIRE]  # SDK-side extra keys are not drift
     c = FakeClient(SimpleNamespace(is_fallback=False, prompt=extra, config={"content_sha": CHAT_SHA}, version=5))
     p = lp.LangfusePromptSource(c, chat_seed_for).get("demo.chat")
     assert p.source == "langfuse:v5" and p.text == TEXT and p.system == SYSTEM and not c.created
 
 
 def test_a_malformed_chat_reply_serves_repo_not_a_raise() -> None:
-    c = FakeClient(SimpleNamespace(is_fallback=False, prompt=["not a message"], config={"content_sha": CHAT_SHA}, version=2))
+    c = FakeClient(
+        SimpleNamespace(is_fallback=False, prompt=["not a message"], config={"content_sha": CHAT_SHA}, version=2)
+    )
     assert lp.LangfusePromptSource(c, chat_seed_for).get("demo.chat") == CHAT_REPO
 
 
@@ -194,5 +209,10 @@ def test_a_failed_mirror_is_one_warning_event_naming_the_prompt() -> None:
     lp.LangfusePromptSource(RefusingLangfuse(), seed_for, on_event=lambda *e: events.append(e)).get("demo.note")
     ((lvl, ev, f),) = events
     assert (lvl, ev, f["action"], f["name"], f["label"]) == (
-        logging.WARNING, lp.EVENT, "mirror_failed", "demo.note", "production")
+        logging.WARNING,
+        lp.EVENT,
+        "mirror_failed",
+        "demo.note",
+        "production",
+    )
     assert f["error"].startswith("ConnectionError")

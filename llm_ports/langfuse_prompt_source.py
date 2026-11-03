@@ -49,7 +49,7 @@ def _log_event(level: int, event: str, fields: Mapping[str, Any]) -> None:
 
 
 def kind(seed: Seed) -> str:
-    """"chat" or "text": the seed's forced `kind`, else chat exactly when it has a system message."""
+    """ "chat" or "text": the seed's forced `kind`, else chat exactly when it has a system message."""
     return seed.kind or ("chat" if seed.system else "text")
 
 
@@ -78,9 +78,15 @@ def _is_fallback(p: Any) -> bool:
 class LangfusePromptSource:
     """`PromptSource` whose managed store is Langfuse. One instance per client; the SDK caches."""
 
-    def __init__(self, client: Any, seed_for: Callable[[str], Seed], *,
-                 cache_ttl_s: int = DEFAULT_CACHE_TTL_S, clock: Callable[[], float] = time.monotonic,
-                 on_event: EventHook | None = None) -> None:
+    def __init__(
+        self,
+        client: Any,
+        seed_for: Callable[[str], Seed],
+        *,
+        cache_ttl_s: int = DEFAULT_CACHE_TTL_S,
+        clock: Callable[[], float] = time.monotonic,
+        on_event: EventHook | None = None,
+    ) -> None:
         self._client = client
         self._seed_for = seed_for
         self._ttl = cache_ttl_s
@@ -92,8 +98,7 @@ class LangfusePromptSource:
         return self._clock() < self._down_until.get(name, 0.0)
 
     def _fetch(self, name: str, label: str, seed: Seed, ttl: int) -> Any:
-        return self._client.get_prompt(name, label=label, type=kind(seed), fallback=wire(seed),
-                                       cache_ttl_seconds=ttl)
+        return self._client.get_prompt(name, label=label, type=kind(seed), fallback=wire(seed), cache_ttl_seconds=ttl)
 
     def get(self, name: str, *, label: str = "production") -> Prompt:
         seed = self._seed_for(name)
@@ -105,13 +110,26 @@ class LangfusePromptSource:
             p = self._fetch(name, label, seed, self._ttl)
             if _is_fallback(p) or (p.config or {}).get("content_sha") != seed.sha:
                 self._client.create_prompt(
-                    name=name, type=kind(seed), prompt=want, labels=[label], tags=list(seed.tags),
-                    config={**seed.config, "content_sha": seed.sha})
+                    name=name,
+                    type=kind(seed),
+                    prompt=want,
+                    labels=[label],
+                    tags=list(seed.tags),
+                    config={**seed.config, "content_sha": seed.sha},
+                )
                 p = self._fetch(name, label, seed, 0)
             got = served(p)
-        except Exception as exc:          # down or refusing: the seed serves, visibly
-            self._on_event(logging.WARNING, EVENT, {"action": "mirror_failed", "name": name, "label": label,
-                                                    "error": f"{type(exc).__name__}: {exc}"[:_ERR_CAP]})
+        except Exception as exc:  # down or refusing: the seed serves, visibly
+            self._on_event(
+                logging.WARNING,
+                EVENT,
+                {
+                    "action": "mirror_failed",
+                    "name": name,
+                    "label": label,
+                    "error": f"{type(exc).__name__}: {exc}"[:_ERR_CAP],
+                },
+            )
             self._down_until[name] = self._clock() + self._ttl
             return repo
         if _is_fallback(p) or got != want:
@@ -119,8 +137,9 @@ class LangfusePromptSource:
             return repo
         self._down_until.pop(name, None)
         # `got == want`, so the seed's text/system ARE the managed copy's: serve them with its version.
-        return Prompt(name, seed.text, int(p.version), f"langfuse:v{p.version}",
-                      config=dict(p.config or {}), system=seed.system)
+        return Prompt(
+            name, seed.text, int(p.version), f"langfuse:v{p.version}", config=dict(p.config or {}), system=seed.system
+        )
 
 
 __all__ = ["DEFAULT_CACHE_TTL_S", "EVENT", "LangfusePromptSource", "kind", "served", "wire"]

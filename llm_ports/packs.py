@@ -44,16 +44,21 @@ class PromptPackInvalid(ValueError):
 
 def _env(pack_dir: Path) -> Environment:
     # FROZEN knobs: a template moved into a pack must render byte-equal to where it came from.
-    return Environment(loader=FileSystemLoader(str(pack_dir)), autoescape=False,
-                       undefined=StrictUndefined, trim_blocks=True, lstrip_blocks=True,
-                       keep_trailing_newline=False)
+    return Environment(
+        loader=FileSystemLoader(str(pack_dir)),
+        autoescape=False,
+        undefined=StrictUndefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=False,
+    )
 
 
 @dataclass(frozen=True)
 class Pack:
     manifest: PackManifest
     dir: Path
-    sources: dict[str, str]        # template name -> source text, manifest order
+    sources: dict[str, str]  # template name -> source text, manifest order
     content_sha: str
 
     @property

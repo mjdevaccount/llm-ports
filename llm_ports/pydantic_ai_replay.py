@@ -40,8 +40,10 @@ class NotRecorded(RuntimeError):
 
 def key(messages: list[ModelMessage]) -> str:
     """`<sha of the first user prompt>:<attempt>` -- the recording's lookup key."""
-    first = next((p.content for m in messages if isinstance(m, ModelRequest)
-                  for p in m.parts if isinstance(p, UserPromptPart)), "")
+    first = next(
+        (p.content for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, UserPromptPart)),
+        "",
+    )
     attempt = sum(isinstance(m, ModelResponse) for m in messages)
     return f"{sha(str(first))}:{attempt}"
 
@@ -57,8 +59,12 @@ class Recorder(WrapperModel):
         super().__init__(wrapped)
         self.replies: dict[str, str] = replies if replies is not None else {}
 
-    async def request(self, messages: list[ModelMessage], model_settings: ModelSettings | None,
-                      model_request_parameters: ModelRequestParameters) -> ModelResponse:
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         resp = await super().request(messages, model_settings, model_request_parameters)
         self.replies[key(messages)] = _text(resp)
         return resp
@@ -66,6 +72,7 @@ class Recorder(WrapperModel):
 
 def replay(recorded: dict[str, str]) -> FunctionModel:
     """A model answering from a `Recorder`'s dict; a prompt it never saw raises `NotRecorded`."""
+
     def fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         k = key(messages)
         if k not in recorded:
@@ -83,8 +90,12 @@ class Recording(WrapperModel):
         super().__init__(wrapped)
         self.attempts: list[Any] = attempts if attempts is not None else []
 
-    async def request(self, messages: list[ModelMessage], model_settings: ModelSettings | None,
-                      model_request_parameters: ModelRequestParameters) -> ModelResponse:
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         resp = await super().request(messages, model_settings, model_request_parameters)
         text = _text(resp)
         try:

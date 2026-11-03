@@ -37,7 +37,9 @@ def test_with_cause_names_the_wrapper_and_its_cause_by_the_same_cut() -> None:
     except RuntimeError as exc:
         r = failure_reason(exc, with_cause=True)
         assert failure_reason(exc) == "RuntimeError: Exceeded maximum output retries (1)"
-    assert r == "RuntimeError: Exceeded maximum output retries (1) <- ValueError: Invalid JSON: EOF while parsing a string"
+    assert (
+        r == "RuntimeError: Exceeded maximum output retries (1) <- ValueError: Invalid JSON: EOF while parsing a string"
+    )
 
 
 def test_with_cause_never_carries_the_cause_body_and_stays_within_the_cap() -> None:

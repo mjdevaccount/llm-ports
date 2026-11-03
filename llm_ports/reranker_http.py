@@ -64,8 +64,15 @@ class HttpReranker:
     httpx's own (a consumer's counting transport, or `httpx.MockTransport` in a test) and always
     sits under `IndexOrderedTransport`."""
 
-    def __init__(self, url: str, model: str, *, api_key: str | None = None, timeout_s: float = 30.0,
-                 transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        model: str,
+        *,
+        api_key: str | None = None,
+        timeout_s: float = 30.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         if not url or not model:
             raise ValueError("HttpReranker: url and model are required")
         self.url = url
@@ -81,14 +88,14 @@ class HttpReranker:
         if not documents:
             return Reranked(scores=(), outcome="ok", model=self.model)
         try:
-            async with httpx.AsyncClient(timeout=self._timeout_s,
-                                         transport=IndexOrderedTransport(self._transport)) as client:
-                r = await client.post(self.url, json=payload(self.model, query, documents),
-                                      headers=self._headers)
+            async with httpx.AsyncClient(
+                timeout=self._timeout_s, transport=IndexOrderedTransport(self._transport)
+            ) as client:
+                r = await client.post(self.url, json=payload(self.model, query, documents), headers=self._headers)
                 body = r.json() if r.status_code == 200 else None
         except httpx.HTTPError as exc:
             return self._failed("unavailable", f"rerank transport: {failure_reason(exc)}")
-        except ValueError as exc:             # a 200 whose body is not JSON
+        except ValueError as exc:  # a 200 whose body is not JSON
             return self._failed("invalid", f"rerank reply is not JSON: {failure_reason(exc)}")
         if r.status_code != 200:
             outcome = "request_fault" if r.status_code in REQUEST_FAULT else "unavailable"

@@ -76,9 +76,15 @@ class LangfuseGeneration:
         self._gen = gen
         self._warn = warn
 
-    def end(self, *, output: Any = None, usage: Mapping[str, int | None] | None = None,
-            level: str = "DEFAULT", status_message: str | None = None,
-            metadata: Mapping[str, Any] | None = None) -> None:
+    def end(
+        self,
+        *,
+        output: Any = None,
+        usage: Mapping[str, int | None] | None = None,
+        level: str = "DEFAULT",
+        status_message: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         kw: dict[str, Any] = {}
         if output is not None:
             kw["output"] = output
@@ -108,11 +114,16 @@ class LangfuseGeneration:
 class LangfuseTracer:
     """`Tracer` whose sink is Langfuse. Build one per client (the SDK client is per process)."""
 
-    def __init__(self, client: Any, *, prompt_label: str = DEFAULT_PROMPT_LABEL,
-                 prompt_cache_ttl_s: int = DEFAULT_PROMPT_CACHE_TTL_S,
-                 warn_hold_s: float = DEFAULT_WARN_HOLD_S,
-                 clock: Callable[[], float] = time.monotonic,
-                 on_event: EventHook | None = None) -> None:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        prompt_label: str = DEFAULT_PROMPT_LABEL,
+        prompt_cache_ttl_s: int = DEFAULT_PROMPT_CACHE_TTL_S,
+        warn_hold_s: float = DEFAULT_WARN_HOLD_S,
+        clock: Callable[[], float] = time.monotonic,
+        on_event: EventHook | None = None,
+    ) -> None:
         self._client = client
         self._label = prompt_label
         self._ttl = prompt_cache_ttl_s
@@ -127,26 +138,34 @@ class LangfuseTracer:
         if now < self._quiet_until:
             return
         self._quiet_until = now + self._hold
-        self._on_event(logging.WARNING, EVENT, {"action": action,
-                                                "error": f"{type(exc).__name__}: {exc}"[:_ERR_CAP],
-                                                "held_s": self._hold})
+        self._on_event(
+            logging.WARNING,
+            EVENT,
+            {"action": action, "error": f"{type(exc).__name__}: {exc}"[:_ERR_CAP], "held_s": self._hold},
+        )
 
-    def start_generation(self, *, name: str, model: str, provider: str, input: Any,
-                         metadata: Mapping[str, Any], session_id: str | None,
-                         prompt_name: str | None) -> Generation:
+    def start_generation(
+        self,
+        *,
+        name: str,
+        model: str,
+        provider: str,
+        input: Any,
+        metadata: Mapping[str, Any],
+        session_id: str | None,
+        prompt_name: str | None,
+    ) -> Generation:
         # The link is to the LABELLED version (a cached fetch), so the generation count follows
         # the live version across prompt re-syncs.
         lf_prompt = None
         if prompt_name:
             with contextlib.suppress(Exception):
-                lf_prompt = self._client.get_prompt(prompt_name, label=self._label,
-                                                    cache_ttl_seconds=self._ttl)
+                lf_prompt = self._client.get_prompt(prompt_name, label=self._label, cache_ttl_seconds=self._ttl)
         # Langfuse has no provider field: it rides the metadata (unless the caller already set one).
         meta = {"provider": provider, **metadata} if provider else dict(metadata)
-        gkw: dict[str, Any] = {"name": name, "as_type": "generation", "model": model,
-                               "input": input, "metadata": meta}
+        gkw: dict[str, Any] = {"name": name, "as_type": "generation", "model": model, "input": input, "metadata": meta}
         if lf_prompt is not None:
-            gkw["prompt"] = lf_prompt        # increments the prompt's generation count
+            gkw["prompt"] = lf_prompt  # increments the prompt's generation count
         try:
             gkw["trace_context"] = {"trace_id": trace_id(self._client)}
             with propagate_attributes(session_id=session_id, trace_name=name, tags=[name]):
@@ -156,5 +175,13 @@ class LangfuseTracer:
             return NoopGeneration()
 
 
-__all__ = ["DEFAULT_PROMPT_CACHE_TTL_S", "DEFAULT_PROMPT_LABEL", "DEFAULT_WARN_HOLD_S", "EVENT",
-           "LangfuseGeneration", "LangfuseTracer", "trace_id", "usage_details"]
+__all__ = [
+    "DEFAULT_PROMPT_CACHE_TTL_S",
+    "DEFAULT_PROMPT_LABEL",
+    "DEFAULT_WARN_HOLD_S",
+    "EVENT",
+    "LangfuseGeneration",
+    "LangfuseTracer",
+    "trace_id",
+    "usage_details",
+]

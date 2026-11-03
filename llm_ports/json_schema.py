@@ -1,6 +1,7 @@
 """json_schema -- the strict-schema shape both OpenAI and llama.cpp accept, the JSON-object
 substring of an LLM response (fenced, prefixed or suffixed by prose), and the RESEARCH grammar:
 a free-text `analysis` scratchpad first, every property required, the scratchpad popped after."""
+
 from __future__ import annotations
 
 import re
@@ -17,9 +18,11 @@ from llm_ports.roles import Role
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.S)
 
 ANALYSIS_KEY = "analysis"
-RESEARCH_ANALYSIS = {"type": "string",
-                     "description": "your full reasoning -- mechanism, who moves and why. Think HERE first; "
-                                    "then fill every other field from this analysis."}
+RESEARCH_ANALYSIS = {
+    "type": "string",
+    "description": "your full reasoning -- mechanism, who moves and why. Think HERE first; "
+    "then fill every other field from this analysis.",
+}
 
 
 def research_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -42,8 +45,15 @@ def without_analysis[T](res: Generated[T]) -> Generated[T]:
     return res
 
 
-async def research(generate: Callable[..., Awaitable[Generated[Any]]], role: Role, *, prompt: str,
-                   schema: Mapping[str, Any], name: str, **kwargs: Any) -> Generated[dict[str, Any]]:
+async def research(
+    generate: Callable[..., Awaitable[Generated[Any]]],
+    role: Role,
+    *,
+    prompt: str,
+    schema: Mapping[str, Any],
+    name: str,
+    **kwargs: Any,
+) -> Generated[dict[str, Any]]:
     """Research -> grammar-enforced dict through the consumer's `generate` (its hooks bound):
     `research_schema` as the grammar (`json_output(..., name)`), the scratchpad popped from the
     value. `kwargs` pass through to `generate` untouched."""

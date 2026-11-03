@@ -50,9 +50,9 @@ class Chunk:
     id: str
     text: str
     title: str = ""
-    source: str = ""              # corpus/feed name (e.g. 'mnco', 'tear_feed', 'web')
+    source: str = ""  # corpus/feed name (e.g. 'mnco', 'tear_feed', 'web')
     url: str = ""
-    as_of: date | None = None     # the date the content speaks FOR; None = undated
+    as_of: date | None = None  # the date the content speaks FOR; None = undated
     score: float | None = None
     meta: Mapping[str, Any] = field(default_factory=dict)
 
@@ -63,7 +63,7 @@ class Claim:
 
     text: str
     evidence_ids: tuple[str, ...] = ()
-    meta: Mapping[str, Any] = field(default_factory=dict)   # adapter extras per claim (e.g. tickers)
+    meta: Mapping[str, Any] = field(default_factory=dict)  # adapter extras per claim (e.g. tickers)
 
 
 @dataclass(frozen=True)
@@ -74,8 +74,8 @@ class CitedAnswer:
 
     question: str
     claims: tuple[Claim, ...]
-    chunks: Mapping[str, Chunk]   # id -> chunk, the universe the claims may cite
-    model: str = ""               # adapter-reported; '' when the adapter has no model (stub)
+    chunks: Mapping[str, Chunk]  # id -> chunk, the universe the claims may cite
+    model: str = ""  # adapter-reported; '' when the adapter has no model (stub)
     extras: Mapping[str, Any] = field(default_factory=dict)
 
     def unknown_ids(self) -> tuple[str, ...]:
@@ -91,7 +91,7 @@ class GroundingVerdict:
     supported: bool
     reason: str = ""
     score: float | None = None
-    checker: str = ""             # which adapter spoke (number_law | hhem | lettucedetect | ...)
+    checker: str = ""  # which adapter spoke (number_law | hhem | lettucedetect | ...)
 
 
 @dataclass(frozen=True)
@@ -235,7 +235,7 @@ class JudgeVerdict:
     passed: bool
     score: float
     reason: str = ""
-    judge: str = ""               # which adapter spoke (pydantic_evals | stub ...)
+    judge: str = ""  # which adapter spoke (pydantic_evals | stub ...)
 
 
 # ── ports ───────────────────────────────────────────────────────────────────────────────────────
@@ -243,8 +243,9 @@ class JudgeVerdict:
 
 @runtime_checkable
 class Retriever(Protocol):
-    async def search(self, q: str, *, k: int = 8, date_from: date | None = None,
-                     date_to: date | None = None) -> list[Chunk]:
+    async def search(
+        self, q: str, *, k: int = 8, date_from: date | None = None, date_to: date | None = None
+    ) -> list[Chunk]:
         """Best first. An empty/blank `q` returns []. Never raises for 'nothing found'."""
         ...
 
@@ -270,9 +271,15 @@ Grader = Callable[[dict[str, Any]], tuple[bool, str]]
 
 @runtime_checkable
 class Evaluator(Protocol):
-    def run(self, surface: str, rows: list[dict[str, Any]], graders: Mapping[str, Grader],
-            *, id_field: str = "id",
-            monitors: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        surface: str,
+        rows: list[dict[str, Any]],
+        graders: Mapping[str, Grader],
+        *,
+        id_field: str = "id",
+        monitors: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """One board with the keys `surface`, `n`, `rows_failed`, `by_grader` (per grader name:
         `pass`, `fail`, `examples` -- at most three `{id, reason}` wounds) and `monitors` -- the
         gauntlet shape, which every adapter must emit so the golden-set test, the on-box job and
@@ -298,9 +305,15 @@ class Generation(Protocol):
     decides what "unmeasured" means; the adapter decides the sink's key names). Neither method
     ever raises: telemetry must not break the call it describes."""
 
-    def end(self, *, output: Any = None, usage: Mapping[str, int | None] | None = None,
-            level: str = "DEFAULT", status_message: str | None = None,
-            metadata: Mapping[str, Any] | None = None) -> None:
+    def end(
+        self,
+        *,
+        output: Any = None,
+        usage: Mapping[str, int | None] | None = None,
+        level: str = "DEFAULT",
+        status_message: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         """Close the observation. `level == "ERROR"` carries `status_message`; a None field is
         OMITTED from what the sink receives, never sent as null."""
         ...
@@ -312,9 +325,17 @@ class Generation(Protocol):
 
 @runtime_checkable
 class Tracer(Protocol):
-    def start_generation(self, *, name: str, model: str, provider: str, input: Any,
-                         metadata: Mapping[str, Any], session_id: str | None,
-                         prompt_name: str | None) -> Generation:
+    def start_generation(
+        self,
+        *,
+        name: str,
+        model: str,
+        provider: str,
+        input: Any,
+        metadata: Mapping[str, Any],
+        session_id: str | None,
+        prompt_name: str | None,
+    ) -> Generation:
         """SYNC (the v2 Langfuse SDK is; the async wrapper around a model call is the facade's).
         `name` is the category the cost surface groups by -- the adapter stores it verbatim.
         `session_id` set = group under a session; `prompt_name` set = link the managed prompt.
@@ -324,9 +345,14 @@ class Tracer(Protocol):
 
 @runtime_checkable
 class Generator(Protocol):
-    async def generate[T](self, req: GenRequest, output: type[T], *,
-                       validate: Callable[[T], Sequence[Any]] | None = None,
-                       retry_message: Callable[[Sequence[Any]], str] | None = None) -> Generated[T]:
+    async def generate[T](
+        self,
+        req: GenRequest,
+        output: type[T],
+        *,
+        validate: Callable[[T], Sequence[Any]] | None = None,
+        retry_message: Callable[[Sequence[Any]], str] | None = None,
+    ) -> Generated[T]:
         """One call into `output` (a pydantic model, or `str` for prose). `validate` lists the
         problems with a parsed value; a non-empty list earns `req.output_retries` re-asks carrying
         `retry_message(problems)`, after which the value is KEPT with its problems. Never raises

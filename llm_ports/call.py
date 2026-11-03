@@ -56,7 +56,7 @@ EventHook = Callable[[int, str, Mapping[str, Any]], None]
 class Hooks:
     admit: AdmitHook | None = None
     trace: TraceHook | None = None
-    graders: Mapping[str, CallGrader] | None = None          # None = call_graders.GRADERS
+    graders: Mapping[str, CallGrader] | None = None  # None = call_graders.GRADERS
     on_scores: Callable[[Role, tuple[CallScore, ...]], Awaitable[Any]] | None = None
     on_ok: Callable[[Role, str, Generated[Any]], Any] | None = None
     on_event: EventHook | None = None
@@ -67,10 +67,18 @@ def tracer_trace(tracer: Tracer, *, provider: str = "openai") -> TraceHook:
     generation per call (`observation.observe`), NAMED BY THE ROLE'S CATEGORY, ended in error on a
     non-ok outcome."""
 
-    def trace(role: Role, req: GenRequest, prompt: str,
-              meta: Mapping[str, Any]) -> AbstractAsyncContextManager[Observation]:
-        return observe(tracer, name=role.category, model=req.model, provider=provider, input=prompt,
-                       metadata=meta, prompt_name=role.pack)
+    def trace(
+        role: Role, req: GenRequest, prompt: str, meta: Mapping[str, Any]
+    ) -> AbstractAsyncContextManager[Observation]:
+        return observe(
+            tracer,
+            name=role.category,
+            model=req.model,
+            provider=provider,
+            input=prompt,
+            metadata=meta,
+            prompt_name=role.pack,
+        )
 
     return trace
 
@@ -84,15 +92,28 @@ class _NotOk(Exception):
     """Raised INSIDE the trace block only, so the observation ends in error; never escapes."""
 
 
-def request_for(role: Role, *, prompt: str, system: str = "", images: Sequence[tuple[bytes, str]] = (),
-                settings: Mapping[str, Any] | None = None) -> GenRequest:
+def request_for(
+    role: Role,
+    *,
+    prompt: str,
+    system: str = "",
+    images: Sequence[tuple[bytes, str]] = (),
+    settings: Mapping[str, Any] | None = None,
+) -> GenRequest:
     """Pure. The role resolved into one wire request. `settings` override the role's per call
     (a seed for a vote, a tighter max_tokens) -- the role stays the default, never a literal."""
     tier = role.resolved_tier
-    return GenRequest(model=role.resolved_model, prompt=prompt, system=system, images=tuple(images),
-                      settings={**role.model_settings(), **(settings or {})}, box=tier.box,
-                      timeout_s=role.resolved_timeout_s, output_retries=role.output_retries,
-                      label=role.name)
+    return GenRequest(
+        model=role.resolved_model,
+        prompt=prompt,
+        system=system,
+        images=tuple(images),
+        settings={**role.model_settings(), **(settings or {})},
+        box=tier.box,
+        timeout_s=role.resolved_timeout_s,
+        output_retries=role.output_retries,
+        label=role.name,
+    )
 
 
 def json_output(schema: Mapping[str, Any], name: str) -> type[dict[str, Any]]:
@@ -138,18 +159,32 @@ def _grade(role: Role, prompt: str, res: Generated[Any], obs: Observation, h: Ho
         obs.score(name=f"{role.name}.{s.name}", value=s.value, comment=s.reason or None)
     failed = [s.name for s in scores if not s.passed]
     if failed:
-        _event(h, logging.INFO, "llm_call_graded", role=role.name, failed=failed,
-               reasons={s.name: s.reason for s in scores if not s.passed})
+        _event(
+            h,
+            logging.INFO,
+            "llm_call_graded",
+            role=role.name,
+            failed=failed,
+            reasons={s.name: s.reason for s in scores if not s.passed},
+        )
     return replace(res, stamp={**res.stamp, "scores": scores})
 
 
-async def generate[T](role: Role, *, prompt: str, output: type[T] = str,  # type: ignore[assignment]
-                      generator: Generator, hooks: Hooks | None = None, system: str = "",
-                      images: Sequence[tuple[bytes, str]] = (),
-                      validate: Callable[[T], Sequence[Any]] | None = None,
-                      retry_message: Callable[[Sequence[Any]], str] | None = None,
-                      settings: Mapping[str, Any] | None = None,
-                      metadata: Mapping[str, Any] | None = None, web: bool = False) -> Generated[T]:
+async def generate[T](
+    role: Role,
+    *,
+    prompt: str,
+    output: type[T] = str,  # type: ignore[assignment]
+    generator: Generator,
+    hooks: Hooks | None = None,
+    system: str = "",
+    images: Sequence[tuple[bytes, str]] = (),
+    validate: Callable[[T], Sequence[Any]] | None = None,
+    retry_message: Callable[[Sequence[Any]], str] | None = None,
+    settings: Mapping[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    web: bool = False,
+) -> Generated[T]:
     """One generation for `role` through `generator`. See the module docstring. `web=True` says the
     role's tier fetches pages the prompt never rendered: like an image, an input no text grader
     sees, so `call_graders.TEXT_ONLY_GRADERS` are dropped for THIS call (the role is untouched)."""
@@ -168,18 +203,32 @@ async def generate[T](role: Role, *, prompt: str, output: type[T] = str,  # type
         try:
             async with trace(role, req, prompt, {"role": role.name, **(metadata or {})}) as obs:
                 res = await generator.generate(req, output, validate=validate, retry_message=retry_message)
-                obs.update(output=trace_output(res.value), usage_details=dict(res.usage or {}),
-                           metadata={"role": role.name, "outcome": res.outcome, "retries": res.retries,
-                                     "finish_reason": res.finish_reason, "problems": len(res.problems)})
+                obs.update(
+                    output=trace_output(res.value),
+                    usage_details=dict(res.usage or {}),
+                    metadata={
+                        "role": role.name,
+                        "outcome": res.outcome,
+                        "retries": res.retries,
+                        "finish_reason": res.finish_reason,
+                        "problems": len(res.problems),
+                    },
+                )
                 res = replace(res, stamp={**res.stamp, "generation": obs})
                 if res.outcome == "ok" and role.graders:
                     res = _grade(role, prompt, res, obs, h)
                 if res.outcome not in ("ok", "gated"):
                     raise _NotOk(f"{res.outcome}: {res.reason}")
         except _NotOk:
-            _event(h, logging.WARNING, "llm_call_failed", role=role.name,
-                   outcome=res.outcome if res else None, reason=res.reason if res else None)
-        if res is None:          # only reachable if a trace hook swallowed a generator crash
+            _event(
+                h,
+                logging.WARNING,
+                "llm_call_failed",
+                role=role.name,
+                outcome=res.outcome if res else None,
+                reason=res.reason if res else None,
+            )
+        if res is None:  # only reachable if a trace hook swallowed a generator crash
             raise RuntimeError(f"llm_call {role.name}: the generator returned nothing")
         if res.stamp.get("scores") and h.on_scores is not None:
             await h.on_scores(role, res.stamp["scores"])
@@ -188,5 +237,17 @@ async def generate[T](role: Role, *, prompt: str, output: type[T] = str,  # type
         return res
 
 
-__all__ = ["OUTPUT_TRACE_MAX", "AdmitHook", "EventHook", "Hooks", "Observation", "TraceHook",
-           "generate", "json_output", "request_for", "require_ok", "trace_output", "tracer_trace"]
+__all__ = [
+    "OUTPUT_TRACE_MAX",
+    "AdmitHook",
+    "EventHook",
+    "Hooks",
+    "Observation",
+    "TraceHook",
+    "generate",
+    "json_output",
+    "request_for",
+    "require_ok",
+    "trace_output",
+    "tracer_trace",
+]

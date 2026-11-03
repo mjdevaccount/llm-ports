@@ -61,8 +61,8 @@ class DataClass:
     """Rights tier + privacy + attribution duty. Order-comparable on rights through `rank`."""
 
     rights: str
-    private: bool = False          # PII / the operator's personal data: never leaves the operator
-    link_required: bool = False    # the licence owes a link back to the original (an ODRL duty)
+    private: bool = False  # PII / the operator's personal data: never leaves the operator
+    link_required: bool = False  # the licence owes a link back to the original (an ODRL duty)
 
     def __post_init__(self) -> None:
         if self.rights not in RIGHTS:
@@ -75,9 +75,11 @@ class DataClass:
     def join(self, *others: DataClass) -> DataClass:
         """The most restrictive of self and others: max rights, any private, any link owed."""
         every = (self, *others)
-        return DataClass(rights=max(every, key=lambda c: c.rank).rights,
-                         private=any(c.private for c in every),
-                         link_required=any(c.link_required for c in every))
+        return DataClass(
+            rights=max(every, key=lambda c: c.rank).rights,
+            private=any(c.private for c in every),
+            link_required=any(c.link_required for c in every),
+        )
 
     def allows(self, audience: str) -> bool:
         if audience not in CEILING:
@@ -102,12 +104,12 @@ class Activity:
     """prov:Activity -- one generation. Every field is optional: a deterministic writer has no
     model or pack, and an empty string says 'not recorded', never 'none'."""
 
-    id: str = ""                   # the trace / audit id that names this generation
-    role: str = ""                 # feature.action
+    id: str = ""  # the trace / audit id that names this generation
+    role: str = ""  # feature.action
     pack: str = ""
     pack_sha: str = ""
     model: str = ""
-    git_sha: str = ""              # the code that ran it
+    git_sha: str = ""  # the code that ran it
     started_at: datetime | None = None
     ended_at: datetime | None = None
 
@@ -119,8 +121,17 @@ class Activity:
             out["prov:startedAtTime"] = self.started_at.isoformat()
         if self.ended_at:
             out["prov:endedAtTime"] = self.ended_at.isoformat()
-        assoc = {k: v for k, v in (("role", self.role), ("pack", self.pack), ("pack_sha", self.pack_sha),
-                                   ("model", self.model), ("git_sha", self.git_sha)) if v}
+        assoc = {
+            k: v
+            for k, v in (
+                ("role", self.role),
+                ("pack", self.pack),
+                ("pack_sha", self.pack_sha),
+                ("model", self.model),
+                ("git_sha", self.git_sha),
+            )
+            if v
+        }
         if assoc:
             out["prov:qualifiedAssociation"] = assoc
         return out
@@ -152,9 +163,13 @@ class ContentItem:
 
     def prov(self) -> dict[str, Any]:
         """The PROV-JSON-shaped view of this item (vocabulary only: no namespace document)."""
-        out: dict[str, Any] = {"@id": f"{self.kind}:{self.id}", "prov:type": "prov:Entity",
-                               "kind": self.kind, "data_class": self.data_class.rights,
-                               "prov:used": list(self.uses)}
+        out: dict[str, Any] = {
+            "@id": f"{self.kind}:{self.id}",
+            "prov:type": "prov:Entity",
+            "kind": self.kind,
+            "data_class": self.data_class.rights,
+            "prov:used": list(self.uses),
+        }
         if self.as_of is not None:
             out["prov:generatedAtTime"] = self.as_of.isoformat()
         if self.activity is not None:
@@ -165,7 +180,7 @@ class ContentItem:
 @dataclass(frozen=True)
 class GateVerdict:
     ok: bool
-    reason: str | None = None      # one of REFUSALS when not ok
+    reason: str | None = None  # one of REFUSALS when not ok
     detail: str = ""
 
 

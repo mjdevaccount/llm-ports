@@ -29,8 +29,15 @@ def _vec(seed: int, dims: int) -> list[float]:
     return [float(seed) + i / 1000 for i in range(dims)]
 
 
-def _wire(calls: list[dict[str, Any]], *, dims: int = 4, status: int = 200, drop: int = 0,
-          usage: bool = True, reverse: bool = False) -> httpx.MockTransport:
+def _wire(
+    calls: list[dict[str, Any]],
+    *,
+    dims: int = 4,
+    status: int = 200,
+    drop: int = 0,
+    usage: bool = True,
+    reverse: bool = False,
+) -> httpx.MockTransport:
     """An OpenAI /embeddings server: vector i of a batch = _vec(<global input number>)."""
     seen = {"n": 0}
 
@@ -61,8 +68,9 @@ def _wire(calls: list[dict[str, Any]], *, dims: int = 4, status: int = 200, drop
 def _embedder(transport: httpx.MockTransport, **kw: Any) -> PydanticAIEmbedder:
     kw.setdefault("stamp", "box-embed@4")
     kw.setdefault("dims", 4)
-    return PydanticAIEmbedder(model_for=openai_compatible_embeddings(BASE, "embeddings", "k",
-                                                                     transport=transport), **kw)
+    return PydanticAIEmbedder(
+        model_for=openai_compatible_embeddings(BASE, "embeddings", "k", transport=transport), **kw
+    )
 
 
 def test_the_shipped_embedders_satisfy_the_port() -> None:
@@ -119,8 +127,9 @@ async def test_a_short_batch_is_invalid_not_a_shifted_store() -> None:
     assert res.outcome == "invalid" and res.vectors == ()
 
 
-@pytest.mark.parametrize(("status", "outcome"), [(400, "request_fault"), (413, "request_fault"),
-                                                 (500, "unavailable"), (503, "unavailable")])
+@pytest.mark.parametrize(
+    ("status", "outcome"), [(400, "request_fault"), (413, "request_fault"), (500, "unavailable"), (503, "unavailable")]
+)
 async def test_status_maps_to_a_named_outcome_never_a_raise(status: int, outcome: str) -> None:
     res = await _embedder(_wire([], status=status)).embed(["a"])
     assert res.outcome == outcome and res.vectors == () and res.reason

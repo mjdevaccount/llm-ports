@@ -27,8 +27,16 @@ def rig() -> LangfuseRig:
 
 
 def _start(client, **over):
-    kw = {"name": "demo.cat", "model": "m", "provider": "openai", "input": "hi", "metadata": META,
-          "session_id": None, "prompt_name": None, **over}
+    kw = {
+        "name": "demo.cat",
+        "model": "m",
+        "provider": "openai",
+        "input": "hi",
+        "metadata": META,
+        "session_id": None,
+        "prompt_name": None,
+        **over,
+    }
     return tp.LangfuseTracer(client).start_generation(**kw)
 
 
@@ -73,8 +81,9 @@ def test_a_prompt_name_links_the_labelled_managed_prompt(rig) -> None:
 
     def get_prompt(name, **kw):
         fetched.append((name, kw))
-        return TextPromptClient(Prompt_Text(prompt="t", name=name, version=7, config={},
-                                            labels=["production"], tags=[]))
+        return TextPromptClient(
+            Prompt_Text(prompt="t", name=name, version=7, config={}, labels=["production"], tags=[])
+        )
 
     rig.client.get_prompt = get_prompt
     _start(rig.client, prompt_name="classify").end()
@@ -117,8 +126,7 @@ def test_a_half_reported_pair_keeps_the_measured_side_and_books_the_other_as_zer
 
 
 def test_an_error_end_sets_level_and_status_message(rig) -> None:
-    _start(rig.client).end(level="ERROR", status_message="RuntimeError: upstream 500",
-                           metadata={"latency_ms": 3})
+    _start(rig.client).end(level="ERROR", status_message="RuntimeError: upstream 500", metadata={"latency_ms": 3})
     a = rig.attrs()
     assert a[OBS + "level"] == "ERROR" and a[OBS + "status_message"] == "RuntimeError: upstream 500"
 
@@ -144,18 +152,25 @@ async def test_observe_over_the_real_sdk_flags_an_unmeasured_call(rig) -> None:
 def test_a_client_that_raises_yields_a_noop_generation_and_one_held_warning() -> None:
     now = [1000.0]
     events: list = []
-    t = tp.LangfuseTracer(RefusingLangfuse(), warn_hold_s=300, clock=lambda: now[0],
-                          on_event=lambda lvl, ev, f: events.append((lvl, ev, dict(f))))
+    t = tp.LangfuseTracer(
+        RefusingLangfuse(),
+        warn_hold_s=300,
+        clock=lambda: now[0],
+        on_event=lambda lvl, ev, f: events.append((lvl, ev, dict(f))),
+    )
     for _ in range(3):
-        g = t.start_generation(name="n", model="m", provider="p", input="i", metadata={},
-                               session_id=None, prompt_name=None)
+        g = t.start_generation(
+            name="n", model="m", provider="p", input="i", metadata={}, session_id=None, prompt_name=None
+        )
         assert isinstance(g, NoopGeneration)
         g.end(output="x")
         g.score("s", 1.0)
     now[0] += 301
     t.start_generation(name="n", model="m", provider="p", input="i", metadata={}, session_id="s", prompt_name="p")
     assert [(lvl, ev, f["action"]) for lvl, ev, f in events] == [
-        (logging.WARNING, tp.EVENT, "open_failed"), (logging.WARNING, tp.EVENT, "open_failed")]  # held, then once more
+        (logging.WARNING, tp.EVENT, "open_failed"),
+        (logging.WARNING, tp.EVENT, "open_failed"),
+    ]  # held, then once more
     assert "ConnectionError" in events[0][2]["error"] and events[0][2]["held_s"] == 300
 
 
@@ -166,15 +181,17 @@ def test_end_and_score_failures_warn_and_never_raise(rig) -> None:
     events: list = []
     rig.client.create_score = boom
     g = tp.LangfuseTracer(rig.client, on_event=lambda lvl, ev, f: events.append(f["action"])).start_generation(
-        name="n", model="m", provider="p", input="i", metadata={}, session_id=None, prompt_name=None)
+        name="n", model="m", provider="p", input="i", metadata={}, session_id=None, prompt_name=None
+    )
     g.score("s", 1.0)
     g._gen.update = boom
     g.end(output="x")
-    assert events == ["score_failed"]    # the end failure is inside the hold
+    assert events == ["score_failed"]  # the end failure is inside the hold
 
 
 def test_the_default_event_sink_is_the_stdlib_logger(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="llm_ports.langfuse_tracer"):
-        tp.LangfuseTracer(RefusingLangfuse()).start_generation(name="n", model="m", provider="p", input="i",
-                                                       metadata={}, session_id=None, prompt_name=None)
+        tp.LangfuseTracer(RefusingLangfuse()).start_generation(
+            name="n", model="m", provider="p", input="i", metadata={}, session_id=None, prompt_name=None
+        )
     assert "open_failed" in caplog.text

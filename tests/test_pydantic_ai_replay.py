@@ -46,12 +46,14 @@ def test_the_key_is_the_first_user_prompt_sha_and_the_attempt() -> None:
 
 async def test_record_then_replay_round_trips_both_attempts() -> None:
     rec = Recorder(_live(json.dumps({"headline": ""}), json.dumps({"headline": "recorded"})))
-    live = await PydanticAIGenerator(rec).generate(REQ, _Note, validate=_not_empty,
-                                                   retry_message=lambda p: "; ".join(p))
+    live = await PydanticAIGenerator(rec).generate(
+        REQ, _Note, validate=_not_empty, retry_message=lambda p: "; ".join(p)
+    )
     assert live.outcome == "ok" and live.retries == 1
     assert sorted(k.rsplit(":", 1)[1] for k in rec.replies) == ["0", "1"]
-    again = await PydanticAIGenerator(replay(rec.replies)).generate(REQ, _Note, validate=_not_empty,
-                                                                    retry_message=lambda p: "; ".join(p))
+    again = await PydanticAIGenerator(replay(rec.replies)).generate(
+        REQ, _Note, validate=_not_empty, retry_message=lambda p: "; ".join(p)
+    )
     assert again.outcome == "ok" and again.value == live.value and again.retries == 1
 
 
@@ -62,7 +64,8 @@ async def test_a_changed_prompt_is_not_recorded() -> None:
     same = await PydanticAIGenerator(replay(rec.replies)).generate(REQ, _Note)
     assert same.outcome == "ok" and same.value == _Note(headline="h")
     changed = await PydanticAIGenerator(replay(rec.replies)).generate(
-        GenRequest(model="small-chat", prompt="a different prompt"), _Note)
+        GenRequest(model="small-chat", prompt="a different prompt"), _Note
+    )
     assert changed.outcome != "ok" and changed.value is None
     assert NotRecorded.__name__ in (changed.reason or ""), changed.reason
 

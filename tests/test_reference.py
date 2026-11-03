@@ -50,6 +50,7 @@ def test_the_evaluator_laws_fire_on_an_adapter_that_drops_monitors() -> None:
     class Dropping:
         def run(self, surface, rows, graders, *, id_field="id", monitors=None):
             return {**GauntletEvaluator().run(surface, rows, graders, id_field=id_field), "monitors": {}}
+
     with pytest.raises(AssertionError):
         _evaluator_laws(Dropping())
 
@@ -65,6 +66,7 @@ def test_the_board_names_at_most_three_wounds_and_counts_a_row_once() -> None:
 def test_a_grader_that_raises_raises_out_of_the_board() -> None:
     def boom(_row: dict[str, Any]) -> tuple[bool, str]:
         raise RuntimeError("grader bug")
+
     with pytest.raises(RuntimeError, match="grader bug"):
         GauntletEvaluator().run("s", [{"id": 1}], {"boom": boom})
 
@@ -104,8 +106,9 @@ def _prompt_laws(s: ports.PromptSource, name: str) -> Prompt:
 
 def test_the_repo_and_stub_sources_keep_the_prompt_source_laws() -> None:
     _prompt_laws(StubPromptSource({"demo": "You are {{ who }}."}), "demo")
-    p = _prompt_laws(RepoPromptSource(lambda n: Seed("You are {{ who }}.", "0123456789abcdef", {"model": "m"},
-                                                     system="sys")), "demo")
+    p = _prompt_laws(
+        RepoPromptSource(lambda n: Seed("You are {{ who }}.", "0123456789abcdef", {"model": "m"}, system="sys")), "demo"
+    )
     assert p.system == "sys" and p.config == {"model": "m"}
 
 
@@ -113,6 +116,7 @@ def test_the_prompt_source_laws_fire_on_a_versioned_repo_prompt() -> None:
     class Lying:
         def get(self, name: str, *, label: str = "production") -> Prompt:
             return Prompt(name, "t", 3, "repo")
+
     with pytest.raises(AssertionError, match="version None"):
         _prompt_laws(Lying(), "demo")
 
@@ -123,6 +127,7 @@ def test_a_name_without_a_seed_raises_never_invents_text() -> None:
 
     def no_seed(name: str) -> Seed:
         raise KeyError(name)
+
     with pytest.raises(KeyError):
         RepoPromptSource(no_seed).get("missing")
 
@@ -149,8 +154,7 @@ async def test_the_stub_citer_keeps_the_citer_laws() -> None:
 def test_the_noop_tracer_is_a_tracer_whose_generation_swallows_everything() -> None:
     t = NoopTracer()
     assert isinstance(t, ports.Tracer)
-    g = t.start_generation(name="n", model="m", provider="p", input="i", metadata={}, session_id=None,
-                           prompt_name=None)
+    g = t.start_generation(name="n", model="m", provider="p", input="i", metadata={}, session_id=None, prompt_name=None)
     assert isinstance(g, NoopGeneration) and isinstance(g, ports.Generation)
     assert g.end(output="o", usage=None, level="ERROR", status_message="x") is None
     assert g.score("s", 1.0, "c") is None

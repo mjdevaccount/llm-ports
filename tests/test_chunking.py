@@ -49,7 +49,7 @@ def test_no_separator_still_advances_and_covers() -> None:
 
 
 def test_a_separator_before_the_tail_third_is_not_a_break() -> None:
-    early = "a" * 100 + "\n\n" + "b" * 3000          # the only paragraph break is at offset 100
+    early = "a" * 100 + "\n\n" + "b" * 3000  # the only paragraph break is at offset 100
     chunks = chunk_text(early, size=2400, overlap=300)
     assert len(chunks[0]) == 2400, "a break before break_floor would have cut a 102-char chunk"
 
@@ -58,7 +58,7 @@ def test_the_header_prefixes_every_chunk_and_changes_no_split() -> None:
     header = "Daily feed, 2026-06-02, 'levels': "
     chunks = chunk_text(THREE_PARAS, size=2400, overlap=300, header=header)
     assert len(chunks) == 2 and all(c.startswith(header) for c in chunks)
-    assert [c[len(header):] for c in chunks] == chunk_text(THREE_PARAS, size=2400, overlap=300)
+    assert [c[len(header) :] for c in chunks] == chunk_text(THREE_PARAS, size=2400, overlap=300)
 
 
 def test_deterministic() -> None:
@@ -105,12 +105,12 @@ def test_the_defaults_are_the_bound_defaults() -> None:
 
 def test_content_hash_is_the_full_sha256_hex_stable_and_sensitive() -> None:
     a = "doc text"
-    assert content_hash(a) == hashlib.sha256(a.encode("utf-8")).hexdigest()   # continuity: stored hashes
+    assert content_hash(a) == hashlib.sha256(a.encode("utf-8")).hexdigest()  # continuity: stored hashes
     assert content_hash(a) == content_hash(a) and content_hash(a) != content_hash(a + " changed")
 
 
 def test_should_ingest_new_changed_unchanged() -> None:
     h = content_hash("doc")
-    assert should_ingest(None, h) is True          # new doc
-    assert should_ingest("otherhash", h) is True   # changed doc
-    assert should_ingest(h, h) is False            # unchanged -> skip (the idempotency)
+    assert should_ingest(None, h) is True  # new doc
+    assert should_ingest("otherhash", h) is True  # changed doc
+    assert should_ingest(h, h) is False  # unchanged -> skip (the idempotency)

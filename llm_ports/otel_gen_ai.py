@@ -61,7 +61,7 @@ class GenAiRecorder:
     def _set(self, key: str, value: Any) -> None:
         if self._span is None or value is None:
             return
-        with contextlib.suppress(Exception):     # telemetry must never break the call
+        with contextlib.suppress(Exception):  # telemetry must never break the call
             self._span.set_attribute(key, value)
 
     def set_usage(self, input_tokens: int | None, output_tokens: int | None) -> None:
@@ -77,19 +77,25 @@ def span_name(operation: str, model: str) -> str:
     return f"{operation} {model}"
 
 
-def attributes_for(*, operation: str, model: str, provider: str,
-                   attributes: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def attributes_for(
+    *, operation: str, model: str, provider: str, attributes: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """Pure. The convention attributes plus the consumer's own (None values dropped)."""
-    out: dict[str, Any] = {SYSTEM: provider, PROVIDER_NAME: provider, OPERATION: operation,
-                           REQUEST_MODEL: model}
+    out: dict[str, Any] = {SYSTEM: provider, PROVIDER_NAME: provider, OPERATION: operation, REQUEST_MODEL: model}
     out.update({k: v for k, v in (attributes or {}).items() if v is not None})
     return out
 
 
 @contextlib.contextmanager
-def gen_ai_span(tracer: Any | None, *, operation: str, model: str, provider: str,
-                attributes: Mapping[str, Any] | None = None,
-                unmeasured_attr: str = UNMEASURED) -> Iterator[GenAiRecorder]:
+def gen_ai_span(
+    tracer: Any | None,
+    *,
+    operation: str,
+    model: str,
+    provider: str,
+    attributes: Mapping[str, Any] | None = None,
+    unmeasured_attr: str = UNMEASURED,
+) -> Iterator[GenAiRecorder]:
     """A child span around one live model call (module docstring)."""
     null = GenAiRecorder(None)
     if tracer is None:
@@ -100,8 +106,8 @@ def gen_ai_span(tracer: Any | None, *, operation: str, model: str, provider: str
     try:
         cm = tracer.start_as_current_span(
             span_name(operation, model),
-            attributes=attributes_for(operation=operation, model=model, provider=provider,
-                                      attributes=attributes))
+            attributes=attributes_for(operation=operation, model=model, provider=provider, attributes=attributes),
+        )
     except Exception:
         yield null
         return
@@ -109,10 +115,19 @@ def gen_ai_span(tracer: Any | None, *, operation: str, model: str, provider: str
         yield GenAiRecorder(span, unmeasured_attr=unmeasured_attr)
 
 
-def record_gen_ai(tracer: Any | None, *, operation: str, model: str, provider: str, latency_ms: int,
-                  input_tokens: int | None = None, output_tokens: int | None = None,
-                  error: str | None = None, attributes: Mapping[str, Any] | None = None,
-                  unmeasured_attr: str = UNMEASURED) -> None:
+def record_gen_ai(
+    tracer: Any | None,
+    *,
+    operation: str,
+    model: str,
+    provider: str,
+    latency_ms: int,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    error: str | None = None,
+    attributes: Mapping[str, Any] | None = None,
+    unmeasured_attr: str = UNMEASURED,
+) -> None:
     """A span for a call that already FINISHED, back-dated by `latency_ms`; `error` set = status
     ERROR (a swallowed failure would otherwise close the span UNSET and read as a healthy call).
     Never raises."""
@@ -122,9 +137,10 @@ def record_gen_ai(tracer: Any | None, *, operation: str, model: str, provider: s
         end_ns = time.time_ns()
         start_ns = end_ns - max(0, int(latency_ms)) * 1_000_000
         span = tracer.start_span(
-            span_name(operation, model), start_time=start_ns,
-            attributes=attributes_for(operation=operation, model=model, provider=provider,
-                                      attributes=attributes))
+            span_name(operation, model),
+            start_time=start_ns,
+            attributes=attributes_for(operation=operation, model=model, provider=provider, attributes=attributes),
+        )
         GenAiRecorder(span, unmeasured_attr=unmeasured_attr).set_usage(input_tokens, output_tokens)
         if error:
             span.set_status(Status(StatusCode.ERROR, error[:ERROR_MAX]))
@@ -133,6 +149,18 @@ def record_gen_ai(tracer: Any | None, *, operation: str, model: str, provider: s
         return
 
 
-__all__ = ["ERROR_MAX", "INPUT_TOKENS", "OPERATION", "OUTPUT_TOKENS", "PROVIDER_NAME", "REQUEST_MODEL",
-           "SYSTEM", "UNMEASURED", "GenAiRecorder", "attributes_for", "gen_ai_span", "record_gen_ai",
-           "span_name"]
+__all__ = [
+    "ERROR_MAX",
+    "INPUT_TOKENS",
+    "OPERATION",
+    "OUTPUT_TOKENS",
+    "PROVIDER_NAME",
+    "REQUEST_MODEL",
+    "SYSTEM",
+    "UNMEASURED",
+    "GenAiRecorder",
+    "attributes_for",
+    "gen_ai_span",
+    "record_gen_ai",
+    "span_name",
+]

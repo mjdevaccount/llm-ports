@@ -59,8 +59,11 @@ _MARKUP = re.compile(r"(?m)^\s*</?(?:tool_call|parameter|function)\b|<(?:paramet
 #: The grade's own JSON keys leaking onto the TAIL of the reason (`... law 2.", "pass": false,
 #: "score": 0.0`). Anchored to the end: the same keys quoted mid-reason are content, not a leak.
 _VAL = r"(?:true|false|-?\d+(?:\.\d+)?)"
-_LEAK = re.compile(rf'"\s*,\s*"(?:pass|score)"\s*:\s*{_VAL}(?:\s*,\s*"(?:pass|score)"\s*:\s*{_VAL})*'
-                   r"\s*\}?\s*$", re.I)
+_LEAK = re.compile(
+    rf'"\s*,\s*"(?:pass|score)"\s*:\s*{_VAL}(?:\s*,\s*"(?:pass|score)"\s*:\s*{_VAL})*'
+    r"\s*\}?\s*$",
+    re.I,
+)
 _STATED_PASS = re.compile(r'"pass"\s*:\s*(true|false)', re.I)
 
 
@@ -80,10 +83,10 @@ def clean_reason(reason: str, passed: bool) -> str:
     m = _LEAK.search(reason)
     if m is None:
         return reason
-    stated = _STATED_PASS.search(reason[m.start():])
+    stated = _STATED_PASS.search(reason[m.start() :])
     if stated is not None and (stated.group(1).lower() == "true") != passed:
         raise ValueError(f"judge reason states a verdict that contradicts pass={passed}")
-    return reason[:m.start()].rstrip(' ",')
+    return reason[: m.start()].rstrip(' ",')
 
 
 def verdict_of(out: dict[str, Any]) -> JudgeVerdict:
@@ -120,8 +123,9 @@ class PydanticEvalsJudge:
     def model_name(self) -> str:
         return self._role.resolved_model
 
-    async def judge(self, *, prompt: str, output: Any, rubric: str,
-                    images: Sequence[tuple[bytes, str]] = ()) -> JudgeVerdict:
+    async def judge(
+        self, *, prompt: str, output: Any, rubric: str, images: Sequence[tuple[bytes, str]] = ()
+    ) -> JudgeVerdict:
         inputs = judge_inputs(prompt, images)
         if self._model is not None:
             return await self._run(self._model, inputs, output, rubric)
@@ -130,17 +134,37 @@ class PydanticEvalsJudge:
             return await self._run(model, inputs, output, rubric)
 
     async def _run(self, model: Model, inputs: str | list[Any], output: Any, rubric: str) -> JudgeVerdict:
-        judge = LLMJudge(rubric=rubric, model=model, include_input=True,
-                         model_settings=self._role.model_settings(),  # type: ignore[arg-type]
-                         score={"evaluation_name": SCORE_KEY, "include_reason": True},
-                         assertion={"evaluation_name": PASS_KEY, "include_reason": True})
+        judge = LLMJudge(
+            rubric=rubric,
+            model=model,
+            include_input=True,
+            model_settings=self._role.model_settings(),  # type: ignore[arg-type]
+            score={"evaluation_name": SCORE_KEY, "include_reason": True},
+            assertion={"evaluation_name": PASS_KEY, "include_reason": True},
+        )
         ctx: EvaluatorContext[Any, Any, Any] = EvaluatorContext(
-            name=self._role.name, inputs=inputs, metadata=None, expected_output=None, output=output,
-            duration=0.0, _span_tree=SpanTreeRecordingError("no span tree: one-off judge, not a dataset run"),
-            attributes={}, metrics={})
+            name=self._role.name,
+            inputs=inputs,
+            metadata=None,
+            expected_output=None,
+            output=output,
+            duration=0.0,
+            _span_tree=SpanTreeRecordingError("no span tree: one-off judge, not a dataset run"),
+            attributes={},
+            metrics={},
+        )
         out = await judge.evaluate(ctx)
         return verdict_of(dict(out) if isinstance(out, dict) else {})
 
 
-__all__ = ["JUDGE_NAME", "JUDGE_PROFILE", "PASS_KEY", "SCORE_KEY", "JudgeModelFor", "PydanticEvalsJudge",
-           "clean_reason", "judge_inputs", "verdict_of"]
+__all__ = [
+    "JUDGE_NAME",
+    "JUDGE_PROFILE",
+    "PASS_KEY",
+    "SCORE_KEY",
+    "JudgeModelFor",
+    "PydanticEvalsJudge",
+    "clean_reason",
+    "judge_inputs",
+    "verdict_of",
+]
