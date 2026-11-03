@@ -2,7 +2,7 @@
 
 Why the library is shaped the way it is, with the evidence that decided it. Each record follows
 [MADR 4](https://adr.github.io/madr/). Docstrings state the contract and point here with
-`Rationale: ADR-NNNN.`; what changed release by release is in [`CHANGELOG.md`](../../CHANGELOG.md).
+`Rationale: ADR-NNNN.`; what changed release by release is in [`CHANGELOG.md`](https://github.com/mjdevaccount/llm-ports/blob/main/CHANGELOG.md).
 
 The first eight were recorded together in 0.12.0, after the fact: each decision had shipped
 earlier, and its reasoning lived in docstrings until then. The release that made each decision is

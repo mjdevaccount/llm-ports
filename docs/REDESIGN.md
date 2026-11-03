@@ -241,6 +241,12 @@ Nav: Home (README) · Concepts · Guides (one per example) · API reference (one
 `prompt_pack/` · `print_gate.py` · `judge_and_refute.py` · `rag_chunk_and_score.py` ·
 `observability_otel.py` (in-memory exporter) · `openai_compatible.py` (env-configured; skipped in CI).
 
+(Shipped in PR 7 without `quickstart.py`: the README quickstart is the runnable one, executed by
+`pytest-examples`, so a second copy would be a duplicate the `dup-code` gate refuses. The examples
+and the docs' Python blocks run in `tests/examples/` on every `pytest` leg rather than in a
+separate `examples` job; a fragment is fenced `{.python test="skip"}` and a guide includes its
+example file with `--8<--`.)
+
 ## 6. PyPI: trusted publishing
 
 GitHub Actions OIDC, no stored token. One index: PyPI. The operator registered the pending

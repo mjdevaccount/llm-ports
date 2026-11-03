@@ -1,0 +1,5 @@
+id: orders.refute
+version: 1.0.0
+role: orders.refute
+templates:
+  prompt: prompt.j2

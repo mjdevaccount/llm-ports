@@ -3,12 +3,21 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Why a design is the way it is lives in
-[`docs/adr/`](docs/adr/).
+[`docs/adr/`](https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr).
 
 ## [Unreleased]
 
 ### Added
 
+- A documentation site (mkdocs-material + mkdocstrings, `mkdocs.yml`): concepts, a guide per
+  example, an API reference page per subpackage generated from the docstrings, the ADRs and this
+  changelog. The new `docs` CI job builds it with `--strict`; a release tag deploys it to GitHub
+  Pages.
+- `examples/`: named outcomes as a fallback `match`, grounded prose with slots, a prompt pack,
+  the print gate, a judge and an adversary, chunk/embed/score, OpenTelemetry spans (all
+  network-free), and an OpenAI-compatible endpoint (run when its env vars are set). Each asserts
+  its claims; `tests/examples/` runs them, and every Python block in the README and docs, on every
+  `pytest` leg.
 - Strict typing: `mypy --strict` over the package and `pyright --verifytypes` at 100% (the public
   surface fully typed), run by the new `types` CI job. `CaptureLike` members are read-only
   properties, so any capture with those attributes satisfies it; `StubEmbedder` and `StubReranker`
@@ -24,6 +33,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- The README is rewritten for a first reader: the one idea, a 30-line quickstart that needs no
+  network or key (run in CI), the concepts with their ADRs, and the layer diagram.
 - **Breaking: the package is layered** (`src/llm_ports/`, PyPA src layout). The 33 flat modules
   move into subpackages, bottom-up: `ports` (with `ports.outcomes`, was `failure`) <
   `observability` (`context`, `observation`, `NoopTracer`) | `grounding` (`numbers`, `slots`, the
