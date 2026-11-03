@@ -37,7 +37,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from llm_ports._extras import extra
 from llm_ports.adapters.pydantic_ai._schema import framework_output
@@ -50,6 +50,7 @@ with extra("pydantic-ai"):
     from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
     from pydantic_ai.messages import ModelResponse
     from pydantic_ai.models import Model
+    from pydantic_ai.settings import ModelSettings
 
 ModelFor = Callable[[GenRequest], AbstractAsyncContextManager[Model]]
 
@@ -57,9 +58,17 @@ ModelFor = Callable[[GenRequest], AbstractAsyncContextManager[Model]]
 class CaptureLike(Protocol):
     """What `PydanticAIGenerator` reads from a capture after a call; the type of its `capture=`."""
 
-    finish_reason: str | None
-    usage: Mapping[str, int | None]
-    sources: tuple[str, ...] | None
+    @property
+    def finish_reason(self) -> str | None:
+        """The last reply's `finish_reason`, or None."""
+
+    @property
+    def usage(self) -> Mapping[str, int | None]:
+        """`input` and `output` token counts; None for a count the server did not report."""
+
+    @property
+    def sources(self) -> tuple[str, ...] | None:
+        """The reply's top-level `sources` strings, or None."""
 
 
 @dataclass
@@ -112,7 +121,9 @@ async def _record_response(response: httpx.Response) -> None:
         choices = body.get("choices") or []
         choice = choices[0] if choices and isinstance(choices[0], dict) else {}
         cap.finish_reason = choice.get("finish_reason")
-        usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        usage = body.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
         cap.usage = {"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens")}
         src = body.get("sources")
         cap.sources = tuple(u for u in src if isinstance(u, str)) if isinstance(src, list) else None
@@ -348,9 +359,9 @@ class PydanticAIGenerator:
             model,
             output_type=out_spec,
             system_prompt=req.system or (),
-            retries={"output": req.output_retries},  # type: ignore[arg-type]
-            model_settings=dict(req.settings),
-        )  # type: ignore[arg-type]
+            retries={"output": req.output_retries},
+            model_settings=cast(ModelSettings, dict(req.settings)),
+        )
         kept: dict[str, tuple[Any, ...]] = {"problems": ()}
         if validate is None:
             return agent, kept

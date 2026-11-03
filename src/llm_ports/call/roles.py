@@ -90,6 +90,7 @@ def load_tiers(source: Path | Mapping[str, Any], *, check_ladder: LadderCheck | 
         ValueError: A tier names a `[models]` key or a `[ladder]` rung the table does not have, or
             sets both `self_hosted` and its deprecated alias `box`.
     """
+    raw: Mapping[str, Any]
     if isinstance(source, Path):
         path, raw = source, tomllib.loads(source.read_text(encoding="utf-8"))
     else:

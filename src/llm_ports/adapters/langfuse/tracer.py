@@ -47,7 +47,7 @@ from llm_ports.observability import EventHook, NoopGeneration, log_events
 from llm_ports.ports import Generation
 
 with extra("langfuse"):
-    from langfuse import propagate_attributes  # type: ignore[import-untyped]
+    from langfuse import propagate_attributes
     from opentelemetry import trace as otel_trace
 
 DEFAULT_PROMPT_LABEL = "production"

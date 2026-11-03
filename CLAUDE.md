@@ -19,6 +19,8 @@ uv run pytest -q --cov                    # suite + coverage floor (fail_under i
 uv run ruff check . && uv run ruff format --check .
 uv run pre-commit run --all-files         # docstring-vocabulary hook
 uv run vulture                            # dead code (whitelist: [tool.vulture] in pyproject.toml)
+uv run --group types mypy                 # --strict over src/ ([tool.mypy] in pyproject.toml)
+uv run --group types pyright --verifytypes llm_ports --ignoreexternal   # public surface 100% typed
 ```
 
 The import-linter contracts run inside pytest (`tests/contract/test_layers.py`), so a green suite
@@ -54,6 +56,10 @@ core and no vendor module.
 - **History has two homes:** what changed goes in `CHANGELOG.md` (Keep a Changelog, under
   `Unreleased`); why, with evidence, goes in a new `docs/adr/NNNN-title.md` (MADR). A docstring
   keeps a one-line `Rationale: ADR-NNNN.` pointer.
+- **Strictly typed.** `mypy --strict` passes over `src/` and `pyright --verifytypes` scores 100%:
+  annotate every public attribute and class variable, never leave an inferred type on the public
+  surface. A `# type: ignore[code]` names its code and says why on the same line; a vendor with no
+  type information goes in `[[tool.mypy.overrides]]`, not in an ignore.
 - Tests mirror `src/` layout. Use the doubles in `llm_ports.testing` rather than ad-hoc mocks of
   vendor clients.
 - A vendor import sits inside its adapter, in a `with extra("<extra>"):` block (`llm_ports._extras`),

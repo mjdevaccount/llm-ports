@@ -9,6 +9,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Strict typing: `mypy --strict` over the package and `pyright --verifytypes` at 100% (the public
+  surface fully typed), run by the new `types` CI job. `CaptureLike` members are read-only
+  properties, so any capture with those attributes satisfies it; `StubEmbedder` and `StubReranker`
+  take `fail: Outcome`; `PackManifest.model_config` is a `ClassVar`.
 - CI: `vulture` (dead code) in `lint`; the `core-only` job (the core with no extra, then with
   `http` only).
 - Releases publish to PyPI through trusted publishing (no stored token), with PEP 740

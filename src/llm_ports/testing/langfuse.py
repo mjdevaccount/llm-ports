@@ -19,14 +19,18 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from llm_ports._extras import extra
 
 with extra("langfuse"):
     import httpx
 
+if TYPE_CHECKING:  # imported for real when a rig is built, so the module imports without the SDK
+    from langfuse import Langfuse
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 OBS = "langfuse.observation."
 _HTTP: httpx.Client | None = None
@@ -86,13 +90,13 @@ class LangfuseRig:
 
     def __init__(self) -> None:
         with extra("langfuse"):
-            from langfuse import Langfuse  # type: ignore[import-untyped]
-            from langfuse.span_filter import is_langfuse_span  # type: ignore[import-untyped]
+            from langfuse import Langfuse
+            from langfuse.span_filter import is_langfuse_span
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-        self.exporter = InMemorySpanExporter()
-        self.client = Langfuse(
+        self.exporter: InMemorySpanExporter = InMemorySpanExporter()
+        self.client: Langfuse = Langfuse(
             public_key=f"pk-test-{uuid.uuid4().hex}",
             secret_key="sk-test",
             base_url="http://127.0.0.1:9",
@@ -102,7 +106,7 @@ class LangfuseRig:
             httpx_client=_http(),
         )
         self.scores: list[dict[str, Any]] = []
-        self.client.create_score = lambda **kw: self.scores.append(kw)
+        self.client.create_score = lambda **kw: self.scores.append(kw)  # type: ignore[method-assign]  # recorded, not sent
 
     def spans(self) -> list[Any]:
         """Flush the client and return every finished span."""
@@ -131,10 +135,14 @@ class RefusingLangfuse:
 
     error = "langfuse refused"
 
-    def _refuse(self, *_a: Any, **_k: Any) -> Any:
+    def _refuse(self, *_a: Any, **_k: Any) -> NoReturn:
         raise ConnectionError(self.error)
 
-    get_prompt = create_prompt = create_trace_id = start_observation = create_score = _refuse
+    get_prompt: Callable[..., NoReturn] = _refuse
+    create_prompt: Callable[..., NoReturn] = _refuse
+    create_trace_id: Callable[..., NoReturn] = _refuse
+    start_observation: Callable[..., NoReturn] = _refuse
+    create_score: Callable[..., NoReturn] = _refuse
 
 
 class FakeLangfusePrompts:

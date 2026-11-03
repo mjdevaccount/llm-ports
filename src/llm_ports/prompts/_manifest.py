@@ -10,6 +10,7 @@ Invariants:
 from __future__ import annotations
 
 import re
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -46,7 +47,7 @@ class PackManifest(BaseModel):
     Rationale: ADR-0008.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     id: str
     version: str

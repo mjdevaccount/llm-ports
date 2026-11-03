@@ -164,8 +164,8 @@ def _check_functions(tree: exp.Expression, policy: SqlGuardPolicy) -> None:
             raise SqlGuardError(f"function '{anon.name}' is not permitted")
 
 
-def _enforce_limit(tree: exp.Expression, policy: SqlGuardPolicy) -> exp.Expression:
-    limit = tree.args.get("limit") if isinstance(tree, (exp.Select, exp.Union)) else None
+def _enforce_limit(tree: exp.Select | exp.Union, policy: SqlGuardPolicy) -> exp.Select | exp.Union:
+    limit = tree.args.get("limit")
     if limit is not None:
         try:
             current = int(limit.expression.name)

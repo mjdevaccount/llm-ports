@@ -31,7 +31,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from llm_ports.ports import Chunk, CitedAnswer, Embedded, EmbedInput, Generated, GenRequest, Prompt, Reranked
+from llm_ports.ports import (
+    Chunk,
+    CitedAnswer,
+    Embedded,
+    EmbedInput,
+    Generated,
+    GenRequest,
+    Outcome,
+    Prompt,
+    Reranked,
+)
 from llm_ports.ports.outcomes import failure_reason
 
 Reply = Callable[[GenRequest, type[Any]], Any]
@@ -172,7 +182,7 @@ class StubEmbedder:
         - The same text always maps to the same vector.
     """
 
-    def __init__(self, *, dims: int = 8, stamp: str = "stub@8", fail: str | None = None) -> None:
+    def __init__(self, *, dims: int = 8, stamp: str = "stub@8", fail: Outcome | None = None) -> None:
         self.dims = dims
         self._stamp = stamp
         self._fail = fail
@@ -197,7 +207,7 @@ class StubEmbedder:
             return Embedded(
                 vectors=(),
                 outcome=self._fail,
-                stamp=self._stamp,  # type: ignore[arg-type]
+                stamp=self._stamp,
                 reason=f"stub {self._fail}",
             )
         return Embedded(
@@ -218,7 +228,7 @@ class StubReranker:
         calls: `(query, documents)` for every call, in call order.
     """
 
-    def __init__(self, *, model: str = "stub-reranker", fail: str | None = None) -> None:
+    def __init__(self, *, model: str = "stub-reranker", fail: Outcome | None = None) -> None:
         self.model = model
         self._fail = fail
         self.calls: list[tuple[str, tuple[str, ...]]] = []
@@ -230,7 +240,7 @@ class StubReranker:
             return Reranked(
                 scores=(),
                 outcome=self._fail,
-                model=self.model,  # type: ignore[arg-type]
+                model=self.model,
                 reason=f"stub {self._fail}",
             )
         words = set(query.lower().split())

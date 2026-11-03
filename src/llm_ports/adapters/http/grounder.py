@@ -62,10 +62,10 @@ class HttpGrounder:
         - A dead sidecar raises for a no-spans claim rather than answering for it.
     """
 
-    checker = "http"  # replaced by the sidecar's own name on the first verdict
+    checker: str = "http"  # replaced by the sidecar's own name on the first verdict
 
     def __init__(self, url: str, *, timeout_s: float = 20.0, client: httpx.Client | None = None) -> None:
-        self.url = url.rstrip("/")
+        self.url: str = url.rstrip("/")
         self._client = client or httpx.Client(timeout=timeout_s)
 
     def verdict(self, claim: Claim, spans: Sequence[Chunk]) -> GroundingVerdict:
