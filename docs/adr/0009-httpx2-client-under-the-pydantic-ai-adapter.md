@@ -49,7 +49,7 @@ Chosen option 3, in `adapters.pydantic_ai._wire`:
 - A legacy `httpx.TransportError` re-raises as the httpx2 error of the same name, chained, so the
   OpenAI SDK's connection and timeout handling sees its own types. Any other exception crosses
   unchanged, so a caller's gate refusal still classifies as `gated`.
-- The index-order re-sort is library-free (`index_key`, `reordered`); the public
+- The index-order re-sort is library-free (`ordered_reply`); the public
   `IndexOrderedTransport` stays an httpx transport for callers that build their own httpx client,
   and the httpx2 builder uses a private twin.
 - `classify` maps an `httpx2.HTTPStatusError` as it maps an httpx one.

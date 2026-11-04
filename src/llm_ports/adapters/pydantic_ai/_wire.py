@@ -26,7 +26,7 @@ with extra("pydantic-ai"):
     import httpx
     import httpx2
 
-    from llm_ports.adapters._index_order import HOP_HEADERS, index_key, reordered
+    from llm_ports.adapters._index_order import HOP_HEADERS, ordered_reply
 
 
 def as_httpx2(
@@ -97,14 +97,11 @@ class IndexOrdered(httpx2.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         """Send `request` through the inner transport and return the reply with its list in index order."""
         resp = await self._inner.handle_async_request(request)
-        key = index_key(request.url.path)
-        if resp.status_code != 200 or key is None:
-            return resp
-        body = reordered(await resp.aread(), key)
-        if body is None:
-            return resp
-        headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in HOP_HEADERS]
-        return httpx2.Response(200, headers=headers, json=body, request=request)
+        return await ordered_reply(
+            resp,
+            request.url.path,
+            lambda headers, body: httpx2.Response(200, headers=headers, json=body, request=request),
+        )
 
     async def aclose(self) -> None:
         """Close the inner transport."""
