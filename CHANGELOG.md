@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `openai_compatible` takes `profile=` (a pydantic-ai `ModelProfileSpec`) and `settings=`
+  (model-level `ModelSettings`) and passes both to the `OpenAIChatModel` it yields, so a caller can
+  move an agent whose output type it does not construct onto native structured output without
+  rebuilding the model on the builder's client. Both default to None; with neither given the model
+  is built exactly as in 1.0.1.
+
 ## [1.0.1] - 2026-11-03
 
 ### Fixed
