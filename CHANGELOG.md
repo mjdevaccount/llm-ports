@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-03
+
 ### Fixed
 
 - `openai_compatible` and `openai_compatible_embeddings` hand pydantic-ai's OpenAI provider an
@@ -317,7 +319,8 @@ dependency floors.
   named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
   pydantic-ai `Generator` adapter, and test doubles.
 
-[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0rc1...v1.0.0
 [1.0.0rc1]: https://github.com/mjdevaccount/llm-ports/compare/v0.12.0...v1.0.0rc1
 [0.12.0]: https://github.com/mjdevaccount/llm-ports/compare/v0.11.0...v0.12.0
