@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-04
+
 ### Added
 
 - `openai_compatible` takes `profile=` (a pydantic-ai `ModelProfileSpec`) and `settings=`
@@ -327,7 +329,8 @@ dependency floors.
   named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
   pydantic-ai `Generator` adapter, and test doubles.
 
-[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.0.0rc1...v1.0.0
 [1.0.0rc1]: https://github.com/mjdevaccount/llm-ports/compare/v0.12.0...v1.0.0rc1
