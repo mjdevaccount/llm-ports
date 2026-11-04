@@ -236,5 +236,63 @@ async def test_wrap_decorates_the_wire_model_and_sees_every_attempt(wire) -> Non
     assert seen == [_j(""), _j("second try")] and len(wire["sent"]) == 2
 
 
+async def test_by_default_the_built_model_carries_no_profile_or_settings_of_its_own(wire) -> None:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    async with pag.openai_compatible("http://gateway.test/v1", transport=wire["transport"])(REQ) as model:
+        assert isinstance(model, OpenAIChatModel)
+        assert model.settings is None
+        bare = OpenAIChatModel(REQ.model, provider=OpenAIProvider(openai_client=model.client))
+        assert model.profile == bare.profile, "no profile= resolves exactly as the provider does"
+
+
+async def test_a_profile_passed_in_reaches_the_model_and_moves_a_plain_agent_onto_the_grammar(wire) -> None:
+    from pydantic_ai import Agent
+    from pydantic_ai.profiles import ModelProfile
+
+    wire["replies"] = [(200, _completion(_j("native")))]
+    model_for = pag.openai_compatible(
+        "http://gateway.test/v1",
+        transport=wire["transport"],
+        profile=ModelProfile(default_structured_output_mode="native"),
+    )
+    async with model_for(REQ) as model:
+        assert model.profile["default_structured_output_mode"] == "native"
+        res = await Agent(model, output_type=_Note).run("narrate")  # no NativeOutput: the profile decides
+    assert res.output.headline == "native"
+    sent = wire["sent"][0]
+    assert sent["response_format"]["type"] == "json_schema" and "tools" not in sent
+
+
+async def test_a_profile_function_receives_the_resolved_profile(wire) -> None:
+    from pydantic_ai.profiles import ModelProfile
+
+    seen: list[ModelProfile] = []
+
+    def spec(resolved: ModelProfile) -> ModelProfile:
+        seen.append(resolved)
+        return ModelProfile(**{**resolved, "default_structured_output_mode": "prompted"})
+
+    async with pag.openai_compatible("http://gateway.test/v1", transport=wire["transport"], profile=spec)(REQ) as m:
+        assert m.profile["default_structured_output_mode"] == "prompted"
+    assert len(seen) == 1 and "supports_json_schema_output" in seen[0]
+
+
+async def test_model_settings_reach_the_wire_and_a_request_setting_overrides_them(wire) -> None:
+    wire["replies"] = [(200, _completion(_j("a")))]
+    gen = PydanticAIGenerator(
+        model_for=pag.openai_compatible(
+            "http://gateway.test/v1", transport=wire["transport"], settings={"temperature": 0.25, "seed": 7}
+        )
+    )
+    assert (await gen.generate(REQ, _Note)).outcome == "ok"
+    override = GenRequest(model="small-chat", prompt="n", settings={"temperature": 0.9})
+    assert (await gen.generate(override, _Note)).outcome == "ok"
+    first, second = wire["sent"]
+    assert (first["temperature"], first["seed"]) == (0.25, 7)
+    assert (second["temperature"], second["seed"]) == (0.9, 7), "run settings merge over model settings"
+
+
 async def test_record_response_is_a_no_op_with_no_capture_open() -> None:
     await _generator._record_response(httpx.Response(200, json=_completion("x")))

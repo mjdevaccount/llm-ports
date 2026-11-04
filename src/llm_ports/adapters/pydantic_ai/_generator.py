@@ -51,6 +51,7 @@ with extra("pydantic-ai"):
     from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
     from pydantic_ai.messages import ModelResponse
     from pydantic_ai.models import Model
+    from pydantic_ai.profiles import ModelProfileSpec
     from pydantic_ai.settings import ModelSettings
 
     from llm_ports.adapters.pydantic_ai._wire import as_httpx2
@@ -140,6 +141,8 @@ def openai_compatible(
     *,
     max_retries: int = 0,
     transport: httpx2.AsyncBaseTransport | httpx.AsyncBaseTransport | None = None,
+    profile: ModelProfileSpec | None = None,
+    settings: ModelSettings | None = None,
 ) -> ModelFor:
     """Build a `model_for` over any OpenAI-wire chat-completions endpoint.
 
@@ -154,9 +157,16 @@ def openai_compatible(
         transport: Replaces httpx2's own transport (a caller's admitting or counting transport, or
             a `MockTransport` in a test). An httpx2 transport is used as is; a legacy httpx one is
             carried across a bridge, so the provider still gets an httpx2 client.
+        profile: A pydantic-ai `ModelProfileSpec`: a partial `ModelProfile` merged over the one
+            the provider resolves for the model, or a function from that resolved profile to the
+            profile to use. E.g. it moves an agent whose output type the caller does not construct
+            onto native structured output. None keeps the provider's.
+        settings: Model-level `ModelSettings`, applied under each run's own settings (pydantic-ai
+            merges run settings over model settings, key by key at the top level). None sets none.
 
     Returns:
-        A `ModelFor` that yields an `OpenAIChatModel` for `req.model`.
+        A `ModelFor` that yields an `OpenAIChatModel` for `req.model`, carrying `profile` and
+        `settings`.
 
     Rationale: ADR-0009.
     """
@@ -170,7 +180,7 @@ def openai_compatible(
         ) as client:
             provider = OpenAIProvider(base_url=base_url, api_key=api_key or "no-key", http_client=client)
             provider = OpenAIProvider(openai_client=provider.client.with_options(max_retries=max_retries))
-            yield OpenAIChatModel(req.model, provider=provider)
+            yield OpenAIChatModel(req.model, provider=provider, profile=profile, settings=settings)
 
     return model_for
 
