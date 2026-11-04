@@ -1333,6 +1333,7 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "langfuse" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-semantic-conventions" },
@@ -1358,6 +1359,7 @@ otel = [
 ]
 pydantic-ai = [
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "pydantic-ai-slim", extra = ["openai"] },
 ]
 sql = [
@@ -1367,6 +1369,7 @@ sql = [
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "import-linter" },
     { name = "langfuse" },
     { name = "opentelemetry-sdk" },
@@ -1401,6 +1404,7 @@ types = [
 requires-dist = [
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'pydantic-ai'", specifier = ">=0.27" },
+    { name = "httpx2", marker = "extra == 'pydantic-ai'", specifier = ">=2.12" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=5.0.2,<6" },
     { name = "lettucedetect", marker = "extra == 'lettucedetect'", specifier = ">=0.1.6" },
@@ -1418,6 +1422,7 @@ provides-extras = ["pydantic-ai", "http", "evals", "lettucedetect", "langfuse", 
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx2", specifier = ">=2.12" },
     { name = "import-linter", specifier = ">=2.15" },
     { name = "langfuse", specifier = ">=5.0.2,<6" },
     { name = "opentelemetry-sdk", specifier = ">=1.30" },

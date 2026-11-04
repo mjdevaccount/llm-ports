@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `openai_compatible` and `openai_compatible_embeddings` hand pydantic-ai's OpenAI provider an
+  `httpx2.AsyncClient`, so pydantic-ai 2.65's `PydanticAIDeprecationWarning` (a legacy
+  `httpx.AsyncClient` on an OpenAI-compatible provider, removed in pydantic-ai 3) no longer fires
+  on every call. `transport=` still takes a legacy httpx transport, bridged onto the httpx2
+  client; it now also takes an httpx2 one. `classify` maps an `httpx2.HTTPStatusError`.
+  (ADR-0009)
+
+### Changed
+
+- The `pydantic-ai` extra names `httpx2>=2.12` (already installed by the OpenAI SDK). The default
+  transport under both builders is httpx2's, which verifies TLS against the OS trust store instead
+  of `certifi`.
+- pytest fails on a `DeprecationWarning` or `UserWarning` raised at a call this package makes.
+
 ## [1.0.0] - 2026-11-03
 
 The first stable release: the API of 1.0.0rc1, unchanged. From here the public surface (every
