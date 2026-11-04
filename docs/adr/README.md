@@ -18,3 +18,4 @@ named in its record.
 | [0006](0006-data-rights-in-prov-o-terms.md) | Data rights and lineage in PROV-O terms, with one deterministic print gate |
 | [0007](0007-one-observation-lifecycle.md) | One observation lifecycle; unmeasured usage is unmeasured, never zero |
 | [0008](0008-prompt-packs-named-by-content-sha.md) | Prompt packs live in the repo and are named by a content sha |
+| [0009](0009-httpx2-client-under-the-pydantic-ai-adapter.md) | The pydantic-ai adapter hands its provider an httpx2 client and bridges a legacy httpx transport |

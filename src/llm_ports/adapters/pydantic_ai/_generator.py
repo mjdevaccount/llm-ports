@@ -17,17 +17,17 @@ The model source is the caller's choice:
 
 `capture=` is a context-manager factory whose value (a `CaptureLike`) carries the last reply's
 `finish_reason`, `usage` and `sources` as they appeared on the wire (pydantic-ai drops
-non-standard keys). The default capture is filled by the httpx response hook `openai_compatible`
-installs; a caller on its own transport passes its own factory.
+non-standard keys). The default capture is filled by the response hook on the httpx2 client
+`openai_compatible` builds; a caller on its own transport passes its own factory.
 
 Invariants:
     - A model, wire or gate failure never raises; it returns a `Generated` with a named outcome.
     - `classify` names the outcome from the exception chain, whose root cause is at the bottom
-      (pydantic-ai -> openai -> httpx -> the transport).
+      (pydantic-ai -> openai -> httpx2 -> the transport).
     - Exception types passed as `gated=` (a refusal raised by the caller's transport) map to
       `gated`.
 
-Rationale: ADR-0001.
+Rationale: ADR-0001; the httpx2 client, ADR-0009.
 """
 
 from __future__ import annotations
@@ -46,11 +46,14 @@ from llm_ports.ports.outcomes import REASON_MAX, exception_chain, failure_reason
 
 with extra("pydantic-ai"):
     import httpx
+    import httpx2
     from pydantic_ai import Agent, BinaryContent, ModelRetry, NativeOutput, RunContext
     from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
     from pydantic_ai.messages import ModelResponse
     from pydantic_ai.models import Model
     from pydantic_ai.settings import ModelSettings
+
+    from llm_ports.adapters.pydantic_ai._wire import as_httpx2
 
 ModelFor = Callable[[GenRequest], AbstractAsyncContextManager[Model]]
 
@@ -91,7 +94,7 @@ _active: ContextVar[_Capture | None] = ContextVar("llm_ports_capture", default=N
 
 @contextmanager
 def _capture() -> Iterator[_Capture]:
-    """Open a capture for one call; `_record_response` fills it from inside the httpx client."""
+    """Open a capture for one call; `_record_response` fills it from inside the httpx2 client."""
     cap = _Capture()
     token = _active.set(cap)
     try:
@@ -103,8 +106,8 @@ def _capture() -> Iterator[_Capture]:
             _active.set(None)
 
 
-async def _record_response(response: httpx.Response) -> None:
-    """Record a chat-completions reply into the active capture (an httpx `response` event hook).
+async def _record_response(response: httpx2.Response) -> None:
+    """Record a chat-completions reply into the active capture (an httpx2 `response` event hook).
 
     Invariants:
         - Never raises; an unreadable body is ignored.
@@ -136,30 +139,34 @@ def openai_compatible(
     api_key: str | None = None,
     *,
     max_retries: int = 0,
-    transport: httpx.AsyncBaseTransport | None = None,
+    transport: httpx2.AsyncBaseTransport | httpx.AsyncBaseTransport | None = None,
 ) -> ModelFor:
     """Build a `model_for` over any OpenAI-wire chat-completions endpoint.
 
-    Each call opens one httpx client with the request's timeout and the capture hook.
+    Each call opens one `httpx2.AsyncClient` (the client pydantic-ai's OpenAI provider takes) with
+    the request's timeout and the capture hook.
 
     Args:
         base_url: The URL up to where `/chat/completions` starts, e.g. `http://localhost:4000/v1`.
         api_key: The bearer key; None sends a placeholder, for servers that need no key.
         max_retries: The OpenAI SDK's own retry count. Defaults to 0, so retries are not stacked
             on those of a gateway in front.
-        transport: Replaces httpx's own transport (a caller's admitting or counting transport, or
-            `httpx.MockTransport` in a test).
+        transport: Replaces httpx2's own transport (a caller's admitting or counting transport, or
+            a `MockTransport` in a test). An httpx2 transport is used as is; a legacy httpx one is
+            carried across a bridge, so the provider still gets an httpx2 client.
 
     Returns:
         A `ModelFor` that yields an `OpenAIChatModel` for `req.model`.
+
+    Rationale: ADR-0009.
     """
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     @asynccontextmanager
     async def model_for(req: GenRequest) -> AsyncIterator[Model]:
-        async with httpx.AsyncClient(
-            timeout=req.timeout_s, transport=transport, event_hooks={"response": [_record_response]}
+        async with httpx2.AsyncClient(
+            timeout=req.timeout_s, transport=as_httpx2(transport), event_hooks={"response": [_record_response]}
         ) as client:
             provider = OpenAIProvider(base_url=base_url, api_key=api_key or "no-key", http_client=client)
             provider = OpenAIProvider(openai_client=provider.client.with_options(max_retries=max_retries))
@@ -198,7 +205,7 @@ def classify(
     for e in chain:
         if isinstance(e, ModelHTTPError):
             return outcome_for_status(e.status_code), failure_reason(e)
-        if isinstance(e, httpx.HTTPStatusError):
+        if isinstance(e, httpx2.HTTPStatusError | httpx.HTTPStatusError):
             return outcome_for_status(e.response.status_code), failure_reason(e)
     if isinstance(exc, UnexpectedModelBehavior):
         return "invalid", failure_reason(exc)

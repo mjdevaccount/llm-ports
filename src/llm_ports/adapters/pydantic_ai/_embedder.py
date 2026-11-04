@@ -14,8 +14,8 @@ store needs and the framework does not promise:
   and drops each item's `index`, so a server that answers out of order would put vectors on the
   wrong rows while the count check still passes. `IndexOrderedTransport` (`llm_ports.adapters.http`,
   shared with the rerank wire) re-sorts `data` by `index` beneath the SDK.
-  `openai_compatible_embeddings` always installs it; a caller that builds its own provider wraps
-  its transport the same way.
+  `openai_compatible_embeddings` always installs the same re-sort under its httpx2 client; a caller
+  that builds its own httpx provider wraps its transport in `IndexOrderedTransport`.
 
 The model source is the caller's, as for the generator:
 
@@ -29,7 +29,7 @@ Invariants:
     - A model, wire or gate failure never raises; `classify` names the outcome, with one
       taxonomy for the generator and the embedder.
 
-Rationale: ADR-0001.
+Rationale: ADR-0001; the httpx2 client, ADR-0009.
 """
 
 from __future__ import annotations
@@ -44,9 +44,11 @@ from llm_ports.ports.outcomes import exception_chain, failure_reason
 
 with extra("pydantic-ai"):
     import httpx
+    import httpx2
     from pydantic_ai.embeddings import EmbeddingModel
 
     from llm_ports.adapters._index_order import IndexOrderedTransport
+    from llm_ports.adapters.pydantic_ai._wire import IndexOrdered, as_httpx2
 
 EmbedModelFor = Callable[[], AbstractAsyncContextManager[EmbeddingModel]]
 
@@ -61,32 +63,35 @@ def openai_compatible_embeddings(
     *,
     timeout_s: float = 120.0,
     max_retries: int = 0,
-    transport: httpx.AsyncBaseTransport | None = None,
+    transport: httpx2.AsyncBaseTransport | httpx.AsyncBaseTransport | None = None,
 ) -> EmbedModelFor:
     """Build a `model_for` over any OpenAI-wire `/embeddings` endpoint.
 
-    Each call opens one httpx client.
+    Each call opens one `httpx2.AsyncClient` (the client pydantic-ai's OpenAI provider takes).
 
     Args:
         base_url: The URL up to where `/embeddings` starts, e.g. `http://localhost:4000/v1`.
         model_name: The embedding model the endpoint serves.
         api_key: The bearer key; None sends a placeholder, for servers that need no key.
-        timeout_s: The httpx timeout per call.
+        timeout_s: The client timeout per call.
         max_retries: The OpenAI SDK's own retry count. Defaults to 0, so retries are not stacked
             on those of a gateway in front.
-        transport: Replaces httpx's own transport (a caller's admitting or counting transport, or
-            `httpx.MockTransport` in a test). It always sits under `IndexOrderedTransport`.
+        transport: Replaces httpx2's own transport (a caller's admitting or counting transport, or
+            a `MockTransport` in a test). An httpx2 transport is used as is; a legacy httpx one is
+            carried across a bridge. It always sits under the index-order re-sort.
 
     Returns:
         An `EmbedModelFor` that yields an `OpenAIEmbeddingModel`.
+
+    Rationale: ADR-0009.
     """
     from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     @asynccontextmanager
     async def model_for() -> AsyncIterator[EmbeddingModel]:
-        ordered = IndexOrderedTransport(transport)
-        async with httpx.AsyncClient(timeout=timeout_s, transport=ordered) as client:
+        ordered = IndexOrdered(as_httpx2(transport))
+        async with httpx2.AsyncClient(timeout=timeout_s, transport=ordered) as client:
             provider = OpenAIProvider(base_url=base_url, api_key=api_key or "no-key", http_client=client)
             provider = OpenAIProvider(openai_client=provider.client.with_options(max_retries=max_retries))
             yield OpenAIEmbeddingModel(model_name, provider=provider)
@@ -201,7 +206,7 @@ class PydanticAIEmbedder:
                 outcome = "unavailable"  # an embeddings reply has no parse step or token ceiling
             root = list(exception_chain(exc))[-1]
             if outcome == "unavailable" and root is not exc:
-                # pydantic-ai -> openai -> httpx: the wrappers say "Connection error."; the root
+                # pydantic-ai -> openai -> httpx2: the wrappers say "Connection error."; the root
                 # of the chain names the cause (refused, timed out, DNS).
                 reason = f"{reason} <- {failure_reason(root)}"[:_CHAINED_REASON_MAX]
             return Embedded(vectors=(), outcome=outcome, stamp=self._stamp, reason=reason)

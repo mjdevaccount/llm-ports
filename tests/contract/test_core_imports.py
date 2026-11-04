@@ -19,6 +19,7 @@ from llm_ports import _extras
 
 VENDORS = (
     "httpx",
+    "httpx2",
     "langfuse",
     "lettucedetect",
     "openai",

@@ -97,5 +97,6 @@ nav:
       - adr/0006-data-rights-in-prov-o-terms.md
       - adr/0007-one-observation-lifecycle.md
       - adr/0008-prompt-packs-named-by-content-sha.md
+      - adr/0009-httpx2-client-under-the-pydantic-ai-adapter.md
   - The 1.0 redesign: REDESIGN.md
   - Changelog: changelog.md
