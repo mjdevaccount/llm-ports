@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-06
+
+### Added
+
+- `llm_ports.grounding.numbers.shorten(text, width, placeholder="…")`: cut a text for display on
+  a word boundary, never inside a digit run. When the first word alone is too long the hard cut
+  steps back to the start of any number it would split, so a shortened "25bp" can never read
+  "2…". Every digit run in the result is a whole digit run of the input. Pure, no I/O.
+
 ## [1.2.0] - 2026-11-06
 
 ### Added

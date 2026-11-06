@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from llm_ports.grounding import numbers
 
 
@@ -51,3 +53,26 @@ def test_uncited_is_loose_in_the_cited_spans_shape() -> None:
     assert numbers.uncited("up 3 percent", [("", "up 3 points")]) == ["percent"]
     assert numbers.uncited("at 580", []) == ["580"]
     assert numbers.uncited("no figures here", []) == []
+
+
+def test_shorten_cuts_on_a_word_and_marks_the_cut() -> None:
+    head = "CHINA SAYS IT WILL HONOUR BUSAN ARRANGEMENT ON TARIFFS"
+    out = numbers.shorten(head, 40)
+    assert out == "CHINA SAYS IT WILL HONOUR BUSAN…" and len(out) <= 40
+    assert numbers.shorten("  two   spaces\ncollapse ", 40) == "two spaces collapse"  # fits: whole, no mark
+    assert numbers.shorten(None, 10) == ""  # type: ignore[arg-type]
+
+
+def test_shorten_never_leaves_part_of_a_number() -> None:
+    assert numbers.shorten("Fed hikes 25bp tonight", 14) == "Fed hikes…"
+    assert numbers.shorten("7,773.95target", 8) == "…"  # the one long word is a number: step back whole
+    assert numbers.shorten("abcdef12345", 9) == "abcdef…"
+    assert numbers.shorten("abcdefghij", 6) == "abcde…"  # no number in the way: a plain hard cut
+    for width in range(2, 30):
+        out = numbers.shorten("SPY 580.50 to 7,773.95 then 25bp", width)
+        assert numbers.loose(out, numbers.digits("SPY 580.50 to 7,773.95 then 25bp")) == [], out
+
+
+def test_shorten_refuses_a_width_with_no_room_before_the_placeholder() -> None:
+    with pytest.raises(ValueError, match="no room"):
+        numbers.shorten("anything", 1)

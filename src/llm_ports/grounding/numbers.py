@@ -57,6 +57,45 @@ def redact(text: str, *, hole: str, pattern: re.Pattern[str] = NUM) -> str:
     return pattern.sub(hole, text or "")
 
 
+def shorten(text: str, width: int, *, placeholder: str = "…") -> str:
+    """Return `text` cut to at most `width` characters on a word, never inside a number.
+
+    Whitespace collapses first. A text that fits is returned whole, with no placeholder. Otherwise
+    the cut falls on the last word boundary that leaves room for `placeholder`. When the first word
+    alone is too long, the cut is hard but steps back to the start of any digit run (`DIGITS`) it
+    would split, so "25bp" can never read as "2…". Show the full text beside the short one (a
+    tooltip, a detail row): the placeholder says text is missing, not what it was.
+
+    Args:
+        text: The text to shorten; None reads as empty.
+        width: The longest result, placeholder included.
+        placeholder: Appended to a cut text.
+
+    Returns:
+        `text` with collapsed whitespace, or a cut prefix ending in `placeholder`. Every digit run
+        in the result is a whole digit run of `text`.
+
+    Raises:
+        ValueError: `width` leaves no room for one character before `placeholder`.
+
+    Rationale: ADR-0003.
+    """
+    if width <= len(placeholder):
+        raise ValueError(f"width {width} leaves no room before a {len(placeholder)}-char placeholder")
+    flat = " ".join((text or "").split())
+    if len(flat) <= width:
+        return flat
+    room = width - len(placeholder)
+    cut = flat.rfind(" ", 0, room + 1)
+    if cut <= 0:
+        cut = room
+        for m in DIGITS.finditer(flat):
+            if m.start() < cut < m.end():
+                cut = m.start()
+                break
+    return flat[:cut].rstrip() + placeholder
+
+
 def canon(run: str) -> str:
     """Return one digit run as its value reads.
 
@@ -213,6 +252,7 @@ __all__ = [
     "law_text",
     "loose",
     "redact",
+    "shorten",
     "spelled",
     "uncited",
 ]
