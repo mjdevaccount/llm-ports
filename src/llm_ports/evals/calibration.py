@@ -36,7 +36,7 @@ YES = "yes"
 #: What `seed_placeholder` writes into every string.
 PLACEHOLDER = "TBD"
 #: What `seed_figure` appends: two figures that appear in no input.
-FIGURE = " Target 7,431.5 by 2026-12-19."
+FIGURE = " Target 7,431.5 by the 19th, up 38.2%."
 #: `verdict` exit codes: calibrated in both directions, a finding, did not finish looking.
 CALIBRATED, FINDING, BLIND = 0, 1, 2
 

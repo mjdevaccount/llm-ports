@@ -82,7 +82,12 @@ class TestTallyAndVerdict:
         assert cal.verdict([_r("a", "good", "pass")])[0] == cal.BLIND, "nothing seeded proves one direction"
 
     def test_both_directions_decide_the_exit(self) -> None:
-        good = [_r("a", "good", "pass"), _r("a", "good", "could_not_run"), _r("a", "tbd", "fail"), _r("a", "figure", "fail")]
+        good = [
+            _r("a", "good", "pass"),
+            _r("a", "good", "could_not_run"),
+            _r("a", "tbd", "fail"),
+            _r("a", "figure", "fail"),
+        ]
         code, why = cal.verdict(good)
         assert code == cal.CALIBRATED and "1/4 could_not_run" in why
         leaky = [*good[:2], _r("a", "tbd", "pass")]
