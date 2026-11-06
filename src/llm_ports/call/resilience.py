@@ -19,8 +19,8 @@ retry lands on a server that is still busy with the first attempt.
 Invariants:
     - Pure: no I/O, no vendor import. The adapter brings the retry library.
 
-Rationale: a 10-hour embedding fill died on one email whose batch timed out twice (2026-11-06),
-because a single failed item read as "the embedder is down".
+Rationale: a 10-hour embedding fill died on one item whose request timed out twice, because a
+single failed item read as "the embedder is down".
 """
 
 from __future__ import annotations
