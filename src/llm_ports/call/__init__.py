@@ -1,6 +1,9 @@
-"""The one call path: `generate`, its hooks, roles (`roles`), per-call graders (`graders`) and output schemas (`schema`)."""
+"""The one call path: `generate`, its hooks, roles, per-call graders, output schemas, retry and skip.
 
-from llm_ports.call import graders, roles, schema
+Submodules: `roles`, `graders`, `schema`, and `resilience` (the retry and skip mechanics of a long run).
+"""
+
+from llm_ports.call import graders, resilience, roles, schema
 from llm_ports.call._generate import (
     OUTPUT_TRACE_MAX,
     AdmitHook,
@@ -23,6 +26,7 @@ __all__ = [
     "json_output",
     "request_for",
     "require_ok",
+    "resilience",
     "roles",
     "schema",
     "tracer_trace",
