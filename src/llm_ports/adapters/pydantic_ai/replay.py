@@ -14,7 +14,8 @@ the model's replies are replayed.
 
 `Recording` keeps every raw reply parsed in `attempts` (an agent returns only the last attempt; a
 grader wants every one); an unparsable reply is kept as `{"_unparsed": head}`, never dropped.
-Either wrapper plugs into `PydanticAIGenerator` as its `wrap=` model wrapper.
+Either wrapper plugs into `PydanticAIGenerator` as its `wrap=` model wrapper; `recording(make)` and
+`recorder(make)` build a generator with the wrapper on and return it with the list or dict it fills.
 
 The module depends on pydantic-ai, so it is imported by its path and needs the `pydantic-ai` extra.
 """
@@ -22,6 +23,7 @@ The module depends on pydantic-ai, so it is imported by its path and needs the `
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from llm_ports._extras import extra
@@ -29,7 +31,7 @@ from llm_ports.prompts import sha
 
 with extra("pydantic-ai"):
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models import Model, ModelRequestParameters
     from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.models.wrapper import WrapperModel
     from pydantic_ai.settings import ModelSettings
@@ -120,4 +122,30 @@ class Recording(WrapperModel):
         return resp
 
 
-__all__ = ["UNPARSED_HEAD", "NotRecorded", "Recorder", "Recording", "key", "replay"]
+#: Builds a generator around a model wrapper, as `lambda wrap: PydanticAIGenerator(..., wrap=wrap)`.
+type MakeGenerator[G] = Callable[[Callable[[Model], Model]], G]
+
+
+def recording[G](make: MakeGenerator[G]) -> tuple[G, list[Any]]:
+    """Return a generator whose every raw reply lands, parsed, in the returned list (`Recording`)."""
+    attempts: list[Any] = []
+    return make(lambda m: Recording(m, attempts)), attempts
+
+
+def recorder[G](make: MakeGenerator[G]) -> tuple[G, dict[str, str]]:
+    """Return a generator whose every reply lands in the returned dict under `key` (`Recorder`)."""
+    replies: dict[str, str] = {}
+    return make(lambda m: Recorder(m, replies)), replies
+
+
+__all__ = [
+    "UNPARSED_HEAD",
+    "MakeGenerator",
+    "NotRecorded",
+    "Recorder",
+    "Recording",
+    "key",
+    "recorder",
+    "recording",
+    "replay",
+]

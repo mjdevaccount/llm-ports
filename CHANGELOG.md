@@ -7,6 +7,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `llm_ports.evals.judge.JudgeLane` and `Sample`: run a sampled judge as background tasks off the
+  caller's await path. `start(role, prompt, result, mod=, run=, eligible=, seen=)` draws the reply
+  (`should_sample`), reads what the call saw, and schedules the consumer's `run(sample)` in a fresh
+  `contextvars.Context`, holding a strong reference until it finishes; `pending()` and `drain()`
+  serve shutdown and tests. Events `<name>_sampled|_seen_failed|_sampler_failed` go to `on_event`
+  (the stdlib logger by default). Merged into `evals.judge`: there is still one judge module.
+- `llm_ports.evals.golden`: golden-set evaluation of a prompt pack. `fire(items, role=, pack=,
+  source=, output=, generator_for=, generate=)` renders each item's slots through the pack and
+  fires it through the call path (never raises for a model or wire failure); `rows_of`,
+  `monitors`, `grade(rows, role=, extra=)` (the role's call graders plus extra row graders on one
+  `Evaluator` board) and `citations_resolve(cited, known)`.
+- `llm_ports.evals.calibration`: calibrate a judge in both directions. `cohen_kappa` and
+  `gwet_ac1` over binary `(judge, human)` pairs (None where undefined); `seed_placeholder` and
+  `seed_figure` build seeded-bad replies a judge must fail; `tally` and `verdict` read a replay of
+  good samples beside their seeded copies (exit codes `CALIBRATED`, `FINDING`, `BLIND`).
+- `llm_ports.adapters.pydantic_ai.replay.recording(make)` and `recorder(make)`: a generator plus
+  the list (or dict) its raw attempts land in, so a golden run records every attempt.
+
 ## [1.3.0] - 2026-11-06
 
 ### Added

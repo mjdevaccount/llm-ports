@@ -7,16 +7,23 @@ judge's Input names everything the judged call saw.
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
+import logging
+from collections.abc import Mapping
+from typing import Any
+
+import pytest
 
 from llm_ports.evals import judge as js
 from llm_ports.grounding import numbers
-from llm_ports.ports import JudgeVerdict, json_output
+from llm_ports.ports import Generated, JudgeVerdict, json_output
 from tests.conftest import Role
 
 ROLE = Role("test.judged", tier="local", graders=("schema_complete", "numbers_from_inputs"))
 PROSE_ROLE = Role("test.prose", tier="local")
 DAY = dt.date(2026, 10, 31)
+_UNIT: contextvars.ContextVar[str | None] = contextvars.ContextVar("_UNIT", default=None)
 
 
 def _rubric(role: Role = ROLE, seen: js.Seen | None = None, *, mode: str = "graded") -> str:
@@ -161,3 +168,124 @@ def test_verdict_labels() -> None:
     assert js.verdict_label(None) == "could_not_run"
     assert js.verdict_label(JudgeVerdict(passed=True, score=1.0)) == "pass"
     assert js.verdict_label(JudgeVerdict(passed=False, score=0.0)) == "fail"
+
+
+class TestJudgeLane:
+    """The lane schedules a drawn reply off the await path, holds the task, and never raises."""
+
+    @staticmethod
+    def _ok(value: object = "a reply") -> Generated[object]:
+        return Generated(value=value, outcome="ok", model="m")
+
+    @staticmethod
+    def _lane() -> tuple[js.JudgeLane, list[tuple[int, str, Mapping[str, Any]]]]:
+        events: list[tuple[int, str, Mapping[str, Any]]] = []
+        return js.JudgeLane(on_event=lambda lv, ev, f: events.append((lv, ev, dict(f)))), events
+
+    async def test_a_drawn_ok_reply_schedules_one_task_with_its_sample(self) -> None:
+        lane, events = self._lane()
+        got: list[js.Sample] = []
+
+        async def run(s: js.Sample) -> None:
+            got.append(s)
+
+        seen = js.Seen(system="rules")
+        res = self._ok({"a": 1})
+        key = lane.start(ROLE, "p", res, mod=1, run=run, seen=seen)
+        assert key == js.sample_key(ROLE, "p", '{"a": 1}') and lane.pending() == 1
+        await lane.drain()
+        assert lane.pending() == 0
+        assert got == [js.Sample(ROLE, "p", '{"a": 1}', key, seen, res)]
+        assert events == [(logging.INFO, "llm_judge_sampled", {"role": ROLE.name, "sample_key": key, "mod": 1})]
+
+    async def test_nothing_is_scheduled_off_ok_off_switch_ineligible_or_undrawn(self) -> None:
+        lane, _ = self._lane()
+        calls: list[tuple[str, int]] = []
+
+        async def run(_s: js.Sample) -> None:
+            raise AssertionError("never scheduled")
+
+        def eligible(role: Role, mod: int) -> bool:
+            calls.append((role.name, mod))
+            return False
+
+        failed: Generated[object] = Generated(value=None, outcome="truncated", model="m")
+        assert lane.start(ROLE, "p", failed, mod=1, run=run) is None
+        assert lane.start(ROLE, "p", self._ok(), mod=0, run=run) is None
+        assert lane.start(ROLE, "p", self._ok(), mod=lambda: 7, run=run, eligible=eligible) is None
+        assert calls == [(ROLE.name, 7)], "a callable mod is resolved before the gate reads it"
+        key = js.sample_key(ROLE, "p", "a reply")
+        undrawn = int(key[:8], 16) + 1  # the remainder is the key itself, never 0
+        assert lane.start(ROLE, "p", self._ok(), mod=undrawn, run=run) is None
+        assert lane.pending() == 0
+
+    def test_no_running_loop_is_a_quiet_no(self) -> None:
+        lane, events = self._lane()
+
+        async def run(_s: js.Sample) -> None: ...
+
+        assert lane.start(ROLE, "p", self._ok(), mod=1, run=run) is None and events == []
+
+    async def test_a_seen_thunk_runs_only_for_a_draw_and_a_raising_one_is_judged_blind_and_said(self) -> None:
+        lane, events = self._lane()
+        got: list[js.Seen] = []
+
+        async def run(s: js.Sample) -> None:
+            got.append(s.seen)
+
+        def boom() -> js.Seen:
+            raise RuntimeError("schema render broke")
+
+        assert lane.start(ROLE, "p", self._ok(), mod=0, run=run, seen=boom) is None, "undrawn: never called"
+        assert lane.start(ROLE, "p", self._ok(), mod=1, run=run, seen=boom) is not None
+        await lane.drain()
+        assert got == [js.Seen()]
+        failed = [f for lv, ev, f in events if ev == "llm_judge_seen_failed" and lv == logging.WARNING]
+        assert len(failed) == 1 and "schema render broke" in failed[0]["error"]
+
+    async def test_a_sampler_failure_never_reaches_the_caller(self) -> None:
+        lane, events = self._lane()
+
+        async def run(_s: js.Sample) -> None: ...
+
+        def broken(_r: Role, _m: int) -> bool:
+            raise RuntimeError("gate bug")
+
+        assert lane.start(ROLE, "p", self._ok(), mod=1, run=run, eligible=broken) is None
+        assert [(lv, ev) for lv, ev, _ in events] == [(logging.WARNING, "llm_judge_sampler_failed")]
+        assert "gate bug" in events[0][2]["error"]
+
+    async def test_the_task_starts_in_a_fresh_context_not_the_callers(self) -> None:
+        lane, _ = self._lane()
+        seen: list[str | None] = []
+
+        async def run(_s: js.Sample) -> None:
+            seen.append(_UNIT.get())
+
+        token = _UNIT.set("the caller's unit")
+        try:
+            assert lane.start(ROLE, "p", self._ok(), mod=1, run=run) is not None
+        finally:
+            _UNIT.reset(token)
+        await lane.drain()
+        assert seen == [None]
+
+    async def test_drain_survives_a_task_that_raised(self) -> None:
+        lane, _ = self._lane()
+
+        async def run(_s: js.Sample) -> None:
+            raise RuntimeError("the store refused")
+
+        assert lane.start(ROLE, "p", self._ok(), mod=1, run=run) is not None
+        await lane.drain()
+        assert lane.pending() == 0
+
+    async def test_without_a_hook_events_go_to_the_stdlib_logger(self, caplog: pytest.LogCaptureFixture) -> None:
+        lane = js.JudgeLane(name="lane")
+
+        async def run(_s: js.Sample) -> None: ...
+
+        with caplog.at_level(logging.INFO, logger="llm_ports.evals.judge"):
+            assert lane.start(ROLE, "p", self._ok(), mod=1, run=run) is not None
+        await lane.drain()
+        assert any(r.getMessage().startswith("lane_sampled") for r in caplog.records)

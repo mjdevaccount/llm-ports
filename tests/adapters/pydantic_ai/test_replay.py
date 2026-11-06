@@ -11,7 +11,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from llm_ports.adapters.pydantic_ai import PydanticAIGenerator
-from llm_ports.adapters.pydantic_ai.replay import NotRecorded, Recorder, Recording, key, replay
+from llm_ports.adapters.pydantic_ai.replay import NotRecorded, Recorder, Recording, key, recorder, recording, replay
 from llm_ports.ports import GenRequest
 from llm_ports.prompts import sha
 
@@ -76,3 +76,17 @@ async def test_recording_keeps_every_attempt_parsed_including_the_unparsable() -
     res = await gen.generate(REQ, _Note)
     assert res.outcome == "ok" and res.value == _Note(headline="fits")
     assert attempts == [{"_unparsed": "not json at all"}, {"headline": "fits"}]
+
+
+async def test_recording_builds_the_generator_with_the_wrapper_on_and_returns_its_list() -> None:
+    live = _live("not json at all", json.dumps({"headline": "fits"}))
+    gen, attempts = recording(lambda wrap: PydanticAIGenerator(wrap(live)))
+    res = await gen.generate(REQ, _Note)
+    assert res.outcome == "ok" and attempts == [{"_unparsed": "not json at all"}, {"headline": "fits"}]
+
+
+async def test_recorder_builds_the_generator_and_returns_the_dict_replay_reads() -> None:
+    gen, replies = recorder(lambda wrap: PydanticAIGenerator(wrap(_live(json.dumps({"headline": "kept"})))))
+    await gen.generate(REQ, _Note)
+    again = await PydanticAIGenerator(replay(replies)).generate(REQ, _Note)
+    assert again.outcome == "ok" and again.value == _Note(headline="kept")
