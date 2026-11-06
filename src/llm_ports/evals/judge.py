@@ -1,4 +1,4 @@
-"""The pure half of a sampled model judge: what it reads, which reply it draws, how it grades.
+"""A sampled model judge: what it reads, which reply it draws, how it grades, and the lane that runs it.
 
 - `Seen` / `seen_for`: what the judged call put in front of its model beside the prompt (system
   prompt, output grammar, images, a web tier). The judge reads the same.
@@ -8,6 +8,8 @@
 - `rubric`: the four laws the deterministic graders (`call.graders`) encode, stated for a model:
   schema answered honestly, no number absent from the Input (`numbers.law_text`), no echo, grounded.
 - `verdict_label`: `pass`, `fail` or `could_not_run`.
+- `JudgeLane`: schedules the judging of a drawn reply as a background task, off the caller's await
+  path; its `start` is the body of a `call.Hooks.on_ok` hook. `Sample` is what one task judges.
 
 The consumer passes in, and this module never assumes: whether a role is eligible for judging,
 the role's grounding mode, the platform named in the rubric, today's date with its clock label,
@@ -15,22 +17,28 @@ and any domain words the number law should name (`numbers.LawExamples`). Where a
 is the consumer's concern.
 
 Invariants:
-    - Pure: no model, no database, no clock.
+    - Everything but `JudgeLane` is pure: no model, no database, no clock.
+    - `JudgeLane.start` never raises and never awaits; a failure inside it is an event.
     - A draw is a function of (role, prompt, reply), so whether a reply was judged is answerable
       after the fact.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import datetime as dt
 import json
-from collections.abc import Mapping, Sequence
+import logging
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from llm_ports.call.roles import Role
 from llm_ports.grounding import numbers
-from llm_ports.ports import JudgeVerdict
+from llm_ports.observability import EventHook, log_events
+from llm_ports.ports import Generated, JudgeVerdict
+from llm_ports.ports.outcomes import REASON_MAX
 from llm_ports.prompts import sha
 
 #: Characters of the judged call's system prompt the judge reads.
@@ -231,9 +239,148 @@ def verdict_label(v: JudgeVerdict | None) -> str:
     return "pass" if v.passed else "fail"
 
 
+@dataclass(frozen=True)
+class Sample:
+    """One drawn reply, as a `JudgeLane` task receives it.
+
+    Attributes:
+        role: The judged role.
+        prompt: The judged call's prompt.
+        reply: The reply as the judge reads it (`reply_text`).
+        key: The sample's stamp (`sample_key`).
+        seen: What the judged call saw beside its prompt.
+        result: The judged call's result; its `stamp` carries any trace handle to score onto.
+    """
+
+    role: Role
+    prompt: str
+    reply: str
+    key: str
+    seen: Seen
+    result: Generated[Any]
+
+
+#: A lane task body: judge one `Sample` and store the verdict wherever the consumer keeps it.
+JudgeRun = Callable[[Sample], Coroutine[Any, Any, Any]]
+#: An eligibility gate: `(role, mod)` to whether this role's replies may be drawn at all.
+Eligible = Callable[[Role, int], bool]
+
+
+class JudgeLane:
+    """Run a sampled judge as background tasks, off the caller's await path.
+
+    `start` decides and schedules; the consumer's `run` judges and stores. The lane holds every task
+    it created by a strong reference until the task finishes (an event loop keeps tasks only weakly)
+    and starts each in a fresh `contextvars.Context`, so a task never inherits the caller's
+    context-scoped state after the caller has moved on.
+
+    Args:
+        name: The prefix of the lane's event names (`<name>_sampled`, `<name>_seen_failed`,
+            `<name>_sampler_failed`).
+        on_event: Receives the lane's events; without one they go to the stdlib logger
+            `llm_ports.evals.judge`.
+    """
+
+    def __init__(self, *, name: str = "llm_judge", on_event: EventHook | None = None) -> None:
+        self._name = name
+        self._emit: EventHook = on_event if on_event is not None else log_events("llm_ports.evals.judge")
+        self._tasks: set[asyncio.Task[Any]] = set()
+
+    def start(
+        self,
+        role: Role,
+        prompt: str,
+        result: Generated[Any],
+        *,
+        mod: int | Callable[[], int],
+        run: JudgeRun,
+        eligible: Eligible | None = None,
+        seen: Seen | Callable[[], Seen] | None = None,
+    ) -> str | None:
+        """Draw `result` and, when drawn, schedule `run` on it.
+
+        Nothing is scheduled without a running event loop, for a non-`ok` outcome, when `eligible`
+        refuses, or when `selected(key, mod)` does not draw the reply. `mod` and `seen` may be
+        callables, resolved only here: `mod` once per call, `seen` only for a drawn reply. A `seen`
+        callable that raises is judged with an empty `Seen` and reported as `<name>_seen_failed`.
+
+        Args:
+            role: The judged role.
+            prompt: The judged call's prompt.
+            result: The judged call's result.
+            mod: The 1-in-N draw (`selected`); `<= 0` is off.
+            run: The task body, called with the `Sample`.
+            eligible: Whether the role may be drawn; None admits every role.
+            seen: What the judged call saw beside its prompt; None reads as nothing.
+
+        Returns:
+            The sample key when a task was scheduled, else None. Never raises: any failure is
+            reported as `<name>_sampler_failed` and returns None.
+        """
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:  # no loop to carry a task: a quiet no, not a failure
+                return None
+            n = mod() if callable(mod) else mod
+            if result.outcome != "ok" or (eligible is not None and not eligible(role, n)):
+                return None
+            reply = reply_text(result.value)
+            key = sample_key(role, prompt, reply)
+            if not selected(key, n):
+                return None
+            task = loop.create_task(
+                run(Sample(role, prompt, reply, key, self._seen(role, seen), result)),
+                context=contextvars.Context(),
+            )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+            self._emit(logging.INFO, f"{self._name}_sampled", {"role": role.name, "sample_key": key, "mod": n})
+            return key
+        except Exception as exc:  # the lane is advisory: a sampler failure must not reach the caller
+            self._emit(logging.WARNING, f"{self._name}_sampler_failed", {"role": role.name, "error": _err(exc)})
+            return None
+
+    def _seen(self, role: Role, seen: Seen | Callable[[], Seen] | None) -> Seen:
+        if seen is None:
+            return Seen()
+        if not callable(seen):
+            return seen
+        try:
+            return seen()
+        except Exception as exc:  # judged blind, and said so
+            self._emit(logging.WARNING, f"{self._name}_seen_failed", {"role": role.name, "error": _err(exc)})
+            return Seen()
+
+    def pending(self) -> int:
+        """Return the number of lane tasks not yet finished."""
+        return len(self._tasks)
+
+    async def drain(self) -> None:
+        """Await every lane task that belongs to the running loop.
+
+        A task created on another loop cannot be awaited here; it is dropped from the lane. Never
+        raises for a task's own exception.
+        """
+        loop = asyncio.get_running_loop()
+        for t in list(self._tasks):
+            if t.get_loop() is not loop:
+                self._tasks.discard(t)
+        if self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
+
+
+def _err(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"[:REASON_MAX]
+
+
 __all__ = [
     "SCHEMA_CAP",
     "SYSTEM_CAP",
+    "Eligible",
+    "JudgeLane",
+    "JudgeRun",
+    "Sample",
     "Seen",
     "judge_input",
     "reply_text",
