@@ -20,6 +20,7 @@ from llm_ports.adapters.pydantic_ai import (
     PydanticAIEmbedder,
     openai_compatible_embeddings,
 )
+from llm_ports.call.resilience import RetryPolicy
 from llm_ports.testing import StubEmbedder
 
 BASE = "http://gw.test/v1"
@@ -177,3 +178,44 @@ async def test_stub_is_deterministic_and_can_fail() -> None:
     a, b = await s.embed(["x", "y"]), await s.embed(["x"])
     assert a.vectors[0] == b.vectors[0] != a.vectors[1] and len(a.vectors[0]) == 6
     assert (await StubEmbedder(fail="unavailable").embed(["x"])).outcome == "unavailable"
+
+
+def _flaky(calls: list[int], fail: set[int], status: int = 503) -> httpx.MockTransport:
+    """An /embeddings server whose request number n (from 1) fails with `status` when n is in `fail`."""
+    ok = _wire([])
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(len(json.loads(req.content)["input"]))
+        if len(calls) in fail:
+            return httpx.Response(status, json={"error": {"message": "busy"}})
+        return ok.handler(req)  # type: ignore[attr-defined]
+
+    return httpx.MockTransport(handler)
+
+
+NO_WAIT = RetryPolicy(attempts=3, wait_initial_s=0.0, wait_max_s=0.0)
+
+
+async def test_a_failed_request_is_resent_alone_and_counted() -> None:
+    calls: list[int] = []
+    res = await _embedder(_flaky(calls, {2}), batch_size=2, retry=NO_WAIT).embed(["a", "b", "c", "d"])
+    assert res.ok and len(res.vectors) == 4 and res.retries == 1
+    assert calls == [2, 2, 2]  # batch 1 once, batch 2 failed then re-sent; batch 1 is not redone
+
+
+async def test_retries_run_out_as_unavailable_with_the_count() -> None:
+    calls: list[int] = []
+    res = await _embedder(_flaky(calls, {1, 2, 3}), retry=NO_WAIT).embed(["a"])
+    assert res.outcome == "unavailable" and res.retries == 2 and len(calls) == 3
+
+
+async def test_a_request_fault_is_never_retried() -> None:
+    calls: list[int] = []
+    res = await _embedder(_flaky(calls, {1}, status=400), retry=NO_WAIT).embed(["a"])
+    assert res.outcome == "request_fault" and res.retries == 0 and calls == [1]
+
+
+async def test_without_a_policy_a_request_is_sent_once() -> None:
+    calls: list[int] = []
+    res = await _embedder(_flaky(calls, {1})).embed(["a"])
+    assert res.outcome == "unavailable" and res.retries == 0 and calls == [1]

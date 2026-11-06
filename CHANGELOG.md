@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `llm_ports.call.resilience`: `RetryPolicy` (tries per request, backoff start and cap) and
+  `FailureBudget` (a long run's per-item outcomes; `exhausted` after `max_consecutive` failures in
+  a row, or a failure rate above `max_rate` once `min_attempts` items were tried). Pure, no I/O.
+- `PydanticAIEmbedder(retry=RetryPolicy(...))` re-sends ONE request that failed `unavailable`
+  (timeout, refused, 5xx) with exponential backoff (tenacity, now in the `pydantic-ai` extra); the
+  batches that landed are not redone, and `request_fault` / `gated` are never retried. Default
+  None: each request is sent once, as in 1.1.0.
+- `Embedded.retries`: the requests re-sent during the call, on success and failure alike.
+
 ## [1.1.0] - 2026-11-04
 
 ### Added

@@ -1340,6 +1340,7 @@ all = [
     { name = "pydantic-ai-slim", extra = ["openai"] },
     { name = "pydantic-evals" },
     { name = "sqlglot" },
+    { name = "tenacity" },
 ]
 evals = [
     { name = "pydantic-evals" },
@@ -1361,6 +1362,7 @@ pydantic-ai = [
     { name = "httpx" },
     { name = "httpx2" },
     { name = "pydantic-ai-slim", extra = ["openai"] },
+    { name = "tenacity" },
 ]
 sql = [
     { name = "sqlglot" },
@@ -1383,6 +1385,7 @@ dev = [
     { name = "pytest-examples" },
     { name = "ruff" },
     { name = "sqlglot" },
+    { name = "tenacity" },
 ]
 docs = [
     { name = "mkdocs-material" },
@@ -1416,6 +1419,7 @@ requires-dist = [
     { name = "pydantic-evals", marker = "extra == 'evals'", specifier = ">=2.57,<3" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlglot", marker = "extra == 'sql'", specifier = ">=30.22" },
+    { name = "tenacity", marker = "extra == 'pydantic-ai'", specifier = ">=8.2" },
 ]
 provides-extras = ["pydantic-ai", "http", "evals", "lettucedetect", "langfuse", "otel", "sql", "all"]
 
@@ -1436,6 +1440,7 @@ dev = [
     { name = "pytest-examples", specifier = ">=0.0.18" },
     { name = "ruff", specifier = ">=0.15" },
     { name = "sqlglot", specifier = ">=30.22" },
+    { name = "tenacity", specifier = ">=8.2" },
 ]
 docs = [
     { name = "mkdocs-material", specifier = ">=9.8.0" },
@@ -3148,6 +3153,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl", hash = "sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5", size = 6299353, upload-time = "2025-04-27T18:04:59.103Z" },
+]
+
+[[package]]
+name = "tenacity"
+version = "9.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/9e/497c1c8ebe5a5b5d1d4a7511aea22c0bb1a97e3170d98abdef0e1b34265a/tenacity-9.2.1.tar.gz", hash = "sha256:a606b5c808d0cded4a359d5b9932d867ff2a6a6b64d37350260fd01bbdf83839", size = 58261, upload-time = "2026-10-07T12:13:01.633Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/26/1ff2b0721ac66a3ec5b1402b333110b352ab0a8724052ac279a7b82d40c4/tenacity-9.2.1-py3-none-any.whl", hash = "sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e", size = 32310, upload-time = "2026-10-07T12:13:00.102Z" },
 ]
 
 [[package]]

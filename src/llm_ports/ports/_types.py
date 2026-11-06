@@ -271,6 +271,8 @@ class Embedded:
         stamp: The vector space (model and dims). It belongs on every stored vector.
         reason: One line naming the failure; None on `ok`.
         input_tokens: Tokens the wire reported; None when it reported no usage (unknown, never 0).
+        retries: Requests the adapter re-sent after an `unavailable` failure (its `RetryPolicy`),
+            counted whether the call then landed or not.
 
     Invariants:
         - Two stamps never compare: a store holding two is a reindex in progress, not an index.
@@ -282,6 +284,7 @@ class Embedded:
     stamp: str = ""
     reason: str | None = None
     input_tokens: int | None = None
+    retries: int = 0
 
     @property
     def ok(self) -> bool:

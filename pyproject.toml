@@ -40,7 +40,8 @@ Decisions = "https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr"
 # `adapters.pydantic_ai`: the Generator, the Embedder, output schemas and record/replay. httpx2 is
 # named, not inherited: the adapter builds its own `httpx2.AsyncClient` (ADR-0009); its floor is
 # the OpenAI SDK 3's (`openai` requires `httpx2>=2.12`). httpx stays for `IndexOrderedTransport` and a legacy transport.
-pydantic-ai = ["pydantic-ai-slim[openai]>=2.57,<3", "httpx2>=2.12", "httpx>=0.27"]
+# tenacity carries the embedder's per-request retry (`RetryPolicy`).
+pydantic-ai = ["pydantic-ai-slim[openai]>=2.57,<3", "httpx2>=2.12", "httpx>=0.27", "tenacity>=8.2"]
 # `adapters.http`: the reranker, the grounder client and the index-ordered transport.
 http = ["httpx>=0.27"]
 # `adapters.pydantic_evals` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
@@ -74,6 +75,7 @@ dev = [
     "pydantic-ai-slim[openai]>=2.57,<3",
     "httpx2>=2.12",
     "httpx>=0.27",
+    "tenacity>=8.2",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.15",
@@ -178,6 +180,7 @@ forbidden_modules = [
     "pydantic_ai",
     "pydantic_evals",
     "sqlglot",
+    "tenacity",
 ]
 
 [tool.pytest.ini_options]
