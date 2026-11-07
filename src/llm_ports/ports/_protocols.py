@@ -35,7 +35,7 @@ Rationale: ADR-0001.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Protocol, runtime_checkable
 
 from llm_ports.ports._types import (
@@ -48,6 +48,9 @@ from llm_ports.ports._types import (
     GenRequest,
     GroundingVerdict,
     JudgeVerdict,
+    Label,
+    LabelsRead,
+    LabelsWritten,
     Prompt,
     Reranked,
 )
@@ -334,6 +337,48 @@ class Judge(Protocol):
         ...
 
 
+@runtime_checkable
+class LabelStore(Protocol):
+    """Labelled data: verdicts on model replies, a queue of replies awaiting a human, and their read.
+
+    Synchronous, as labelling and observability SDKs are; an async caller uses
+    `asyncio.to_thread`. Every method returns a named outcome and never raises for a store failure.
+
+    Rationale: ADR-0010.
+    """
+
+    def enqueue(self, role: str, subjects: Sequence[tuple[str, str]]) -> LabelsWritten:
+        """Put replies in front of a human labeller.
+
+        Args:
+            role: The role the replies belong to; the store keeps one queue per role.
+            subjects: `(subject, trace)` pairs (`Label.subject`, `Label.trace`).
+
+        Returns:
+            How many landed; enqueueing a subject twice is not an error.
+        """
+        ...
+
+    def put(self, labels: Sequence[Label]) -> LabelsWritten:
+        """Store `model` and `judge` labels.
+
+        A `human` label is given in the store's own labelling surface, never written here: a
+        human label written by code is not ground truth.
+
+        Returns:
+            How many landed; a `human` label in `labels` is a `request_fault`, and none is written.
+        """
+        ...
+
+    def labels(self, roles: Sequence[str], *, since: datetime | None = None) -> LabelsRead:
+        """Read every label on replies of `roles`, from every labeller, given at or after `since`.
+
+        Returns:
+            The labels, or an `unavailable` outcome; an unreadable store never reads as an empty one.
+        """
+        ...
+
+
 __all__ = [
     "Citer",
     "Embedder",
@@ -343,6 +388,7 @@ __all__ = [
     "Grader",
     "Grounder",
     "Judge",
+    "LabelStore",
     "PromptSource",
     "Reranker",
     "Retriever",

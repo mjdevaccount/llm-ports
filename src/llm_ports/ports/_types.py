@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any, ClassVar, Literal
 
 
@@ -335,6 +335,90 @@ class JudgeVerdict:
     judge: str = ""
 
 
+#: A label's verdict on one reply.
+LabelValue = Literal["good", "bad"]
+#: Who gave a label: a person, a stronger model labelling offline, or the sampled production judge.
+Labeller = Literal["human", "model", "judge"]
+
+
+@dataclass(frozen=True)
+class Label:
+    """One verdict on one model reply, from one labeller.
+
+    Attributes:
+        role: The role whose reply is labelled (`Role.name`).
+        subject: The id of the labelled reply in the label store (a trace's generation id).
+        value: `good` or `bad`.
+        labeller: `human`, `model` or `judge`.
+        trace: The trace the subject belongs to, where the store scopes ids by trace; "" otherwise.
+        by: Who labelled: a user id, a model name; "" when the store does not say.
+        reason: The labeller's reason; "" when none was given.
+        at: When the label was given; None when the store does not say.
+
+    Invariants:
+        - A human label is ground truth; a model or judge label is measured against it, never
+          counted as one.
+    """
+
+    role: str
+    subject: str
+    value: LabelValue
+    labeller: Labeller
+    trace: str = ""
+    by: str = ""
+    reason: str = ""
+    at: datetime | None = None
+
+    @property
+    def good(self) -> bool:
+        """True when `value == "good"`."""
+        return self.value == "good"
+
+
+@dataclass(frozen=True)
+class LabelsRead:
+    """What `LabelStore.labels` returns.
+
+    Attributes:
+        labels: Every label read; `()` exactly when `outcome != "ok"`.
+        outcome: `ok`, or `unavailable` when the store could not be read.
+        reason: One line naming the failure; None on `ok`.
+
+    Invariants:
+        - A store that could not be read never reads as a store with no labels.
+    """
+
+    labels: tuple[Label, ...]
+    outcome: Outcome
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
+        return self.outcome == "ok"
+
+
+@dataclass(frozen=True)
+class LabelsWritten:
+    """What `LabelStore.enqueue` and `LabelStore.put` return.
+
+    Attributes:
+        written: Items the store accepted.
+        outcome: `ok` when every item landed; `unavailable` when the store failed (`written`
+            counts what landed before it did); `request_fault` when the store refused the input.
+        reason: One line naming the failure; None on `ok`.
+    """
+
+    written: int
+    outcome: Outcome
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
+        return self.outcome == "ok"
+
+
 __all__ = [
     "Chunk",
     "CitedAnswer",
@@ -346,6 +430,11 @@ __all__ = [
     "GroundingVerdict",
     "JsonOutput",
     "JudgeVerdict",
+    "Label",
+    "LabelValue",
+    "Labeller",
+    "LabelsRead",
+    "LabelsWritten",
     "Outcome",
     "Prompt",
     "Reranked",
