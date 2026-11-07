@@ -98,5 +98,7 @@ nav:
       - adr/0007-one-observation-lifecycle.md
       - adr/0008-prompt-packs-named-by-content-sha.md
       - adr/0009-httpx2-client-under-the-pydantic-ai-adapter.md
+  - Design:
+      - design/EVAL-LABELS-CONSOLIDATION.md
   - The 1.0 redesign: REDESIGN.md
   - Changelog: changelog.md
