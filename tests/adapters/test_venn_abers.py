@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-import random
-
 import pytest
 
 pytest.importorskip("venn_abers")
 
 from llm_ports.adapters.venn_abers import VennAbersCalibrator
 from llm_ports.forecast import Insufficient
-
-
-def overconfident(n: int, seed: int = 3) -> tuple[list[float], list[bool]]:
-    """A voice whose stated p overclaims: the truth is p**2 (0.68 stated hits about 0.46)."""
-    rng = random.Random(seed)
-    ps = [rng.random() for _ in range(n)]
-    return ps, [rng.random() < p * p for p in ps]
+from tests.forecast._data import overconfident
 
 
 def test_venn_abers_brackets_a_small_history() -> None:
