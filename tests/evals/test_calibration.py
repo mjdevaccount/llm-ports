@@ -125,6 +125,10 @@ class TestTrust:
         t = cal.trust(_pairs(12, 0, 0, 10), replay=[_r("x", "good", "pass"), _r("x", "tbd", "pass")])
         assert not t.trusted and t.seeded == cal.FINDING and t.why.startswith("seeded-bad")
 
+    def test_a_malformed_replay_row_is_blind_never_an_error(self) -> None:
+        t = cal.trust(_pairs(12, 0, 0, 10), replay=[{"role": "x"}])
+        assert not t.trusted and t.seeded == cal.BLIND and "replay unreadable (KeyError" in t.why
+
     def test_a_missing_replay_is_untrusted_unless_not_required(self) -> None:
         assert not cal.trust(_pairs(12, 0, 0, 10)).trusted
         assert cal.trust(_pairs(12, 0, 0, 10), require_seeded=False).trusted

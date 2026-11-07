@@ -227,11 +227,18 @@ def trust(
     Invariants:
         - No pairs is untrusted, never an error: a new judge starts untrusted.
         - An undefined kappa (one-sided labels) never clears the floor.
+        - A replay row `verdict` cannot read (a missing key) is a BLIND replay: untrusted.
     """
     agr = Agreement.of(pairs)
     good = [a for a, b in pairs if b == YES]
     ff = sum(a != YES for a in good)
-    seeded, seeded_why = verdict(replay) if replay is not None else (None, "")
+    seeded: int | None = None
+    seeded_why = ""
+    if replay is not None:
+        try:
+            seeded, seeded_why = verdict(replay)
+        except (KeyError, TypeError, ValueError) as exc:  # a malformed row leaves the replay unread
+            seeded, seeded_why = BLIND, f"replay unreadable ({type(exc).__name__}: {exc})"
 
     def out(trusted: bool, why: str) -> Trust:
         return Trust(trusted, why, agr, false_fail=ff, human_good=len(good), seeded=seeded)

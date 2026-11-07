@@ -170,14 +170,17 @@ def pairs(
         `{topic: [(measured, reference), ...]}` for every topic with a reference label, in topic
         order; a topic where no subject was labelled by both maps to `[]`. Never raises.
     """
+    # The labeller filter runs before `latest`: another model's newer label on a subject must
+    # not hide this model's label there.
+    kept = examples if by is None else (ex for ex in examples if ex.source != measured or ex.by == by)
     by_key: dict[tuple[str, str], dict[str, Example]] = defaultdict(dict)
-    for (topic, subject, source), ex in latest(examples).items():
+    for (topic, subject, source), ex in latest(kept).items():
         by_key[(topic, source)][subject] = ex
     out: dict[str, list[tuple[str, str]]] = {}
     for (topic, source), ref in sorted(by_key.items()):
         if source != reference:
             continue
-        theirs = {s: ex for s, ex in by_key.get((topic, measured), {}).items() if by is None or ex.by == by}
+        theirs = by_key.get((topic, measured), {})
         out[topic] = [
             (_yes(theirs[s].value, positive), _yes(ref[s].value, positive)) for s in sorted(ref) if s in theirs
         ]

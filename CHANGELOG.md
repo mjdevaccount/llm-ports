@@ -13,7 +13,8 @@ All notable changes to this project are documented here. The format is based on
 
 - `llm_ports.evals.calibration.trust` and `Trust`: whether a judge's verdicts may act, from its
   agreement with human labels (at least `MIN_LABELLED` pairs, kappa or its interval's lower end at
-  `MIN_KAPPA`) and its seeded-bad replay. Never raises; a judge with no labels is untrusted.
+  `MIN_KAPPA`) and its seeded-bad replay. Never raises; a judge with no labels, or a replay row it
+  cannot read, is untrusted.
   Rationale: ADR-0012.
 - `llm_ports.learn.stats.kappa_ci` (Fleiss-Cohen-Everitt 95% interval, `Z95`) and
   `Agreement.kappa_low` / `kappa_high`, filled by `examples.agreement`.

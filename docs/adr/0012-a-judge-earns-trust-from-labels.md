@@ -41,11 +41,15 @@ seeded-bad replay `CALIBRATED` (required by default), and kappa at least `min_ka
 0.6, Landis-Koch "substantial") read as the point or, with `bound="low"`, the 95% interval's lower
 end. The interval is the Fleiss-Cohen-Everitt large-sample one (`stats.kappa_ci`), checked against
 statsmodels to 1e-5; statsmodels itself is not a dependency because `learn` is standard library
-only. `score(..., metadata=...)` is an optional argument, so a handle written before it still
-satisfies the port as long as no caller passes metadata to it.
+only. `score(..., metadata=...)` is an optional argument: at runtime a handle written before it
+keeps working as long as no caller passes metadata to it, but a type checker rejects a three-argument
+`score` as an implementation of the port, so such a handle needs the parameter added to type-check.
 
 ### Consequences
 
 - Good: a consumer's trust module shrinks to loading its data; live human labels reach the judge.
 - Good: a judge with no labels is untrusted by construction.
 - Bad: judge labels written before 1.10.0 have no `by` and count for no model under `pairs(by=...)`.
+- Bad: at perfect agreement the large-sample interval has zero width (its standard error is 0),
+  so `bound="low"` reads the point estimate exactly there; on a small set a perfect score is
+  less certain than the interval says, which `min_labelled` exists to bound.
