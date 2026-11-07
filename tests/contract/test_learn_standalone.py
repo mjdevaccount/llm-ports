@@ -18,6 +18,7 @@ import llm_ports.learn
 
 SCRIPT = """
 import asyncio, json, sys
+before = set(sys.modules)  # what the interpreter loaded itself (site hooks such as _virtualenv)
 sys.path.insert(0, sys.argv[2])
 from llm_ports.learn import Fit, gate, run
 from llm_ports.learn.stores import JsonlRunLedger
@@ -29,14 +30,16 @@ class Loop:
     def fit(self, xs):
         return Fit({"mean": sum(xs) / len(xs)}, {"n": len(xs)})
     def clauses(self, fit, xs):
-        return [gate.at_least("n", fit.metrics["n"], 3, floor=True)]
+        return [gate.at_least("n", fit.metrics["n"], 3, role="floor")]
+    async def apply(self, verdict, fit):
+        return "stored"
 
 got = asyncio.run(run(Loop(), JsonlRunLedger(sys.argv[1])))
 third = sorted(
-    m.split(".")[0] for m in sys.modules
-    if m.split(".")[0] not in sys.stdlib_module_names and m.split(".")[0] != "llm_ports"
+    {m.split(".")[0] for m in set(sys.modules) - before}
+    - set(sys.stdlib_module_names) - {"llm_ports"}
 )
-print(json.dumps({"decision": got.verdict.decision, "recorded": got.recorded.ok, "third_party": third}))
+print(json.dumps({"decision": got.verdict.decision, "applied": got.applied, "recorded": got.recorded.ok, "third_party": third}))
 """
 
 
@@ -55,5 +58,5 @@ def test_learn_runs_alone_on_the_standard_library(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     got = json.loads(proc.stdout)
-    assert got == {"decision": "pass", "recorded": True, "third_party": []}
+    assert got == {"decision": "pass", "applied": "stored", "recorded": True, "third_party": []}
     assert (tmp_path / "runs.jsonl").read_text(encoding="utf-8").count('"kind": "demo"') == 1

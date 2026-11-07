@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from llm_ports.learn import Clause, Fit, RowRead, Written, run
+from llm_ports.learn import VERDICT_KEY, Clause, Fit, RowRead, Verdict, Written, record, run
 from llm_ports.learn import gate as g
 from llm_ports.learn.stores import MemoryRunLedger
 
@@ -22,6 +22,7 @@ class Mean:
     kind: str = "mean"
     subject: str = "SPY"
     params: Mapping[str, Any] = field(default_factory=lambda: {"window": 3})
+    applied: list[str] = field(default_factory=list[str])
 
     async def evidence(self) -> list[float]:
         if self.fail_at == "evidence":
@@ -32,15 +33,21 @@ class Mean:
         if self.fail_at == "fit":
             raise ZeroDivisionError("empty")
         mean = sum(evidence) / len(evidence) if evidence else None
-        return Fit(model={"mean": mean}, metrics={"n": len(evidence), "verdict": "shadowed"})
+        return Fit(model={"mean": mean}, metrics={"n": len(evidence), "learn_model": "shadowed", "verdict": "kept"})
 
     def clauses(self, fit: Fit, evidence: list[float]) -> Sequence[Clause]:
         if self.fail_at == "clauses":
             raise KeyError("n")
         return [
-            g.at_least("n", fit.metrics["n"], self.floor, floor=True),
+            g.at_least("n", fit.metrics["n"], self.floor, role="floor"),
             g.at_least("mean", fit.model["mean"], self.bar),
         ]
+
+    async def apply(self, verdict: Verdict, fit: Fit) -> str:
+        if self.fail_at == "apply":
+            raise PermissionError("read-only replica")
+        self.applied.append(verdict.decision)
+        return "stored" if verdict.passed else "held"
 
 
 def _clock() -> Any:
@@ -54,16 +61,21 @@ async def test_a_passing_run_records_verdict_model_and_metrics() -> None:
     assert (got.verdict.decision, got.recorded.ok, got.seconds) == ("pass", True, 0.25)
     (row,) = ledger.rows
     assert (row.kind, row.subject, row.params) == ("mean", "SPY", {"window": 3})
-    assert row.metrics["verdict"] == "pass", "a reserved key replaces the fit's metric of the same name"
-    assert row.metrics["model"] == {"mean": 2.0} and row.metrics["n"] == 3 and row.metrics["seconds"] == 0.25
-    assert row.verdict == got.verdict
+    assert row.metrics["learn_model"] == {"mean": 2.0}, "a reserved key replaces the fit's metric of the same name"
+    assert row.metrics["verdict"] == "kept", "a consumer's own verdict key is never touched"
+    assert "gate" not in row.metrics
+    assert row.metrics["n"] == 3 and row.metrics["learn_seconds"] == 0.25
+    assert (row.metrics["learn_apply"], got.applied) == ("stored", "stored")
+    assert row.verdict == got.verdict and row.decision == "pass"
 
 
 async def test_an_insufficient_run_is_recorded_too() -> None:
     ledger = MemoryRunLedger()
-    got = await run(Mean([5.0]), ledger)
+    loop = Mean([5.0])
+    got = await run(loop, ledger)
     assert (got.verdict.decision, got.verdict.blocker) == ("insufficient", "n")
     assert len(ledger.rows) == 1
+    assert (loop.applied, got.applied) == (["insufficient"], "held"), "apply sees every decided verdict"
 
 
 async def test_a_failed_gate_names_its_blocker() -> None:
@@ -78,8 +90,40 @@ async def test_a_stage_that_raises_is_a_recorded_could_not_run() -> None:
         assert got.verdict.decision == "could_not_run"
         assert got.verdict.reason.startswith(f"{stage}: {exc}")
         assert (got.fit is None) == (stage != "clauses"), "a fit that finished is kept for the record"
+        assert got.applied == "", "nothing is applied without a decision"
         (row,) = ledger.rows
-        assert row.metrics["verdict"] == "could_not_run"
+        assert row.decision == "could_not_run"
+
+
+async def test_an_apply_that_raises_keeps_the_verdict() -> None:
+    ledger = MemoryRunLedger()
+    got = await run(Mean([1.0, 2.0, 3.0], fail_at="apply"), ledger)
+    assert (got.verdict.decision, got.applied) == ("pass", "apply_failed")
+    (row,) = ledger.rows
+    assert row.decision == "pass" and row.metrics["learn_apply"] == "apply_failed"
+    assert row.metrics["learn_apply_reason"].startswith("apply: PermissionError: read-only replica")
+
+
+async def test_a_loop_may_choose_the_unevaluated_policy() -> None:
+    @dataclass
+    class Unknown(Mean):
+        unevaluated: str = "insufficient"
+
+    got = await run(Unknown([]), MemoryRunLedger())
+    assert (got.verdict.decision, got.verdict.blocker) == ("insufficient", "n")
+    unknown_mean = await run(Unknown([], floor=0), MemoryRunLedger())
+    assert (unknown_mean.verdict.decision, unknown_mean.verdict.blocker) == ("insufficient", "mean")
+    strict = await run(Mean([], floor=0), MemoryRunLedger())
+    assert strict.verdict.decision == "fail"
+
+
+async def test_record_writes_a_verdict_row_outside_a_loop() -> None:
+    ledger = MemoryRunLedger()
+    v = g.decide("card-system", [g.check("sealed_gate_passed", True)], subject="SPY")
+    got = await record(ledger, "card_system", v, metrics={"n": 4})
+    (row,) = ledger.rows
+    assert got.ok and row.subject == "SPY" and row.metrics[VERDICT_KEY] == v.as_dict() and row.verdict == v
+    assert (await record(_Raising(), "k", v)).outcome == "unavailable"
 
 
 class _Raising:

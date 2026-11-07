@@ -6,9 +6,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from llm_ports.learn import Example, ExamplesRead, RunLedger, Source, WritableExampleStore
+from llm_ports.learn import VERDICT_KEY, Example, ExamplesRead, RunLedger, Source, WritableExampleStore, stores
 from llm_ports.learn import gate as g
-from llm_ports.learn import stores
 
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -19,12 +18,13 @@ def _now() -> datetime:
 
 async def _exercise_ledger(ledger: RunLedger) -> None:
     v = g.decide("k", [g.check("ok", True)])
-    first = await ledger.append("k", subject="SPY", params={"w": 1}, metrics={"verdict": "pass", "gate": v.as_dict()})
+    first = await ledger.append("k", subject="SPY", params={"w": 1}, metrics={VERDICT_KEY: v.as_dict()})
     assert first.ok
-    assert (await ledger.append("k", subject="SPY", params={}, metrics={"verdict": "could_not_run"})).ok
+    nothing = g.could_not_run("k", "store down")
+    assert (await ledger.append("k", subject="SPY", params={}, metrics={VERDICT_KEY: nothing.as_dict()})).ok
     assert (await ledger.append("k", subject="QQQ", params={}, metrics={})).ok
     newest = await ledger.latest("k", subject="SPY")
-    assert newest.ok and newest.row is not None and newest.row.metrics["verdict"] == "could_not_run"
+    assert newest.ok and newest.row is not None and newest.row.decision == "could_not_run"
     decisive = await ledger.latest("k", subject="SPY", decisions=("pass", "fail"))
     assert decisive.row is not None and decisive.row.params == {"w": 1} and decisive.row.verdict == v
     assert (await ledger.latest("k")).row is not None

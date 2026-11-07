@@ -3,7 +3,7 @@
 - `RunLedger`: where every run of every loop is recorded, one row per run.
 - `ExampleStore` / `WritableExampleStore`: where labelled examples are read (and, for some
   stores, written). One contract over many physical stores; a consumer reads, never copies.
-- `Loop`: one learning loop's three stages, which `loop.run` drives.
+- `Loop`: one learning loop's four stages (evidence, fit, clauses, apply), which `loop.run` drives.
 
 Async, as the stores a loop reads usually are; a synchronous backend runs its calls in a thread.
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from llm_ports.learn._types import Clause, Decision, Example, ExamplesRead, RowRead, Source, Written
+from llm_ports.learn._types import Clause, Decision, Example, ExamplesRead, RowRead, Source, Verdict, Written
 
 
 class RunLedger(Protocol):
@@ -36,7 +36,8 @@ class RunLedger(Protocol):
             kind: The loop's run kind.
             subject: What the run was about; "" for a loop with one subject.
             params: The knobs the run used; JSON-able.
-            metrics: What it measured; JSON-able. A gated run carries `verdict` and `gate`.
+            metrics: What it measured; JSON-able. A gated run carries its verdict under
+                `VERDICT_KEY`.
 
         Returns:
             `written == 1` on success, else an `unavailable` or `request_fault` outcome.
@@ -51,7 +52,8 @@ class RunLedger(Protocol):
         Args:
             kind: The run kind.
             subject: Only rows about this subject; None for any.
-            decisions: Only rows whose `metrics.verdict` is one of these; None for any row. A
+            decisions: Only rows whose recorded verdict's decision is one of these (a row with no
+                verdict never matches); None for any row. A
                 gate's decisive read passes `("pass", "fail")`, so a later `could_not_run` does not
                 close what a decisive run opened.
 
@@ -103,10 +105,11 @@ class Fit:
 
 
 class Loop[E](Protocol):
-    """One learning loop: read evidence, fit, and say which clauses the fit must clear.
+    """One learning loop: read evidence, fit, say which clauses the fit must clear, act on it.
 
-    `loop.run` drives the stages, decides the verdict with `gate.decide` and records one ledger
-    row, so a loop holds only what is specific to it.
+    `loop.run` drives the stages, decides the verdict with `gate.decide`, calls `apply` and
+    records one ledger row, so a loop holds only what is specific to it. A loop whose verdict
+    needs a policy other than the default (`unevaluated`) sets the `unevaluated` attribute.
     """
 
     @property
@@ -134,6 +137,18 @@ class Loop[E](Protocol):
 
     def clauses(self, fit: Fit, evidence: E) -> Sequence[Clause]:
         """Return the gate's evaluated clauses for this fit. May raise; `run` records the failure."""
+        ...
+
+    async def apply(self, verdict: Verdict, fit: Fit) -> str:
+        """Act on the verdict: store the fit on `pass`, keep the incumbent otherwise, or nothing.
+
+        Called once per run that reached a decision (never on `could_not_run`), before the run
+        is recorded, so the row says what was done.
+
+        Returns:
+            One word for the record (`stored`, `held`, `noop`, ...). May raise; `run` records
+            `apply_failed` and keeps the verdict.
+        """
         ...
 
 
