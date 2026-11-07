@@ -83,7 +83,18 @@ def _installed(module: str) -> bool:
 
 def test_the_walk_sees_the_core_layers_and_no_adapter() -> None:
     top = {m.split(".")[1] for m in CORE if "." in m}
-    assert top >= {"call", "evals", "grounding", "observability", "ports", "prompts", "provenance", "rag", "testing"}
+    assert top >= {
+        "call",
+        "evals",
+        "grounding",
+        "learn",
+        "observability",
+        "ports",
+        "prompts",
+        "provenance",
+        "rag",
+        "testing",
+    }
     assert not [m for m in CORE if m.startswith(NEEDS_AN_EXTRA)]
 
 

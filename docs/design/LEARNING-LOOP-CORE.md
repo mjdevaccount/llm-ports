@@ -330,8 +330,8 @@ a core defect to fix, not a number to restate.
   `src/llm_ports/learn/` into a temporary directory as a top-level package, rewrites its
   `llm_ports.learn` imports, and runs it in a subprocess whose `sys.modules` must then hold no
   third-party module: the "lift it into another codebase" claim, executed.
-- `tests/contract/test_core_imports.py` gains a leg: a bare install imports `llm_ports.learn` and
-  runs the guide's example with the JSONL ledger.
+- `tests/contract/test_core_imports.py` (the `core-only` CI job, a bare install) walks `llm_ports.learn`
+  with the rest of the core and asserts it loads no vendor module; `examples/learning_loop.py` runs on every pytest leg.
 - The deployment-vocabulary pre-commit hook already rejects EDGE names in `src/llm_ports/`.
 - Docs say how to plug in a ledger: implement two methods.
 
