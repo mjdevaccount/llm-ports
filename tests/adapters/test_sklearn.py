@@ -69,7 +69,7 @@ def test_weights_drop_only_their_own_bad_pairs() -> None:
         assert isinstance(m, PiecewiseLinear) and m.n == 199
     zero = cal.fit([0.5] * 40, [True, False] * 20, weights=[0.0] * 40)
     assert isinstance(zero, Insufficient) and zero.n == 0
-    assert isinstance(cal.fit([0.5] * 40, [True, False] * 20, weights=[1.0]), Insufficient)  # one weight, one pair
+    assert isinstance(cal.fit([0.5] * 40, [True, False] * 20, weights=[1.0]), Insufficient)  # weights not aligned
 
 
 def test_weights_walk_positions_not_labels() -> None:

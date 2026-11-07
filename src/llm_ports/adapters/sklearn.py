@@ -47,14 +47,16 @@ class IsotonicCalibrator:
             outcomes: Whether each event happened, aligned with `p`.
             weights: Optional sample weights aligned with `p`, to calibrate toward a reweighted
                 population. A pair is dropped when its `p` is invalid or its weight is not a
-                finite real > 0; items past the shortest of the three are ignored, as `usable`
-                does without weights.
+                finite real > 0. Weights of a different length from `p` are `Insufficient`
+                (a derived array that lost a row would misalign every pair after it).
 
         Returns:
             The fitted `PiecewiseLinear`, or `Insufficient`. Never raises.
         """
         w: list[float] | None = None
         if weights is not None:
+            if len(weights) != len(p):  # weights are derived: a length mismatch is the one misalignment visible here
+                return Insufficient(n=0, need=self.min_pairs, reason="weights not aligned with p")
             # One positional walk over the triples (never index: a pandas Series indexes by label),
             # so `usable` below drops nothing more and the three lists stay aligned.
             kept = [

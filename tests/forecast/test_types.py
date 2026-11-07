@@ -70,3 +70,11 @@ def test_valid_p_reads_any_real_but_not_bool_or_decimal() -> None:
 def test_a_naive_and_an_aware_time_is_a_value_error() -> None:
     with pytest.raises(ValueError, match="naive"):
         make(resolves_at=datetime(2026, 1, 6))  # the naive time under test
+
+
+def test_a_number_past_float_range_is_not_finite() -> None:
+    from fractions import Fraction
+
+    from llm_ports.forecast import finite_real
+
+    assert not finite_real(10**400) and not finite_real(Fraction(10**400)) and not valid_p(10**400)

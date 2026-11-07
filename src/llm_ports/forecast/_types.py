@@ -17,7 +17,12 @@ from datetime import datetime
 
 def finite_real(v: object) -> bool:
     """Return True for a finite `numbers.Real` that is not a bool (a weight, a strength). Never raises."""
-    return isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v)
+    if isinstance(v, bool) or not isinstance(v, numbers.Real):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:  # an int or Fraction past float range is not a usable number here
+        return False
 
 
 def valid_p(p: float) -> bool:
