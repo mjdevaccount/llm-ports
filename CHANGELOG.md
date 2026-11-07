@@ -19,7 +19,7 @@ All notable changes to this project are documented here. The format is based on
   pool, optional extremizing). A `forecast-standalone` import contract keeps it liftable.
   Rationale: ADR-0013.
 - Adapters, one extra each and grouped as `forecast` (not in `all`): `adapters.scoringrules`
-  (`brier_scores`, `interval_scores`, `crps_normal`), `adapters.sklearn.IsotonicCalibrator`,
+  (`brier_scores`, `interval_scores`, `crps_normal`), `adapters.sklearn.IsotonicCalibrator` (optional sample `weights`),
   `adapters.venn_abers.VennAbersCalibrator` (small-n, with a `(p0, p1)` bracket) and
   `adapters.river.RiverLogitPool` (online logistic logit pool with silent-voice flags).
 - The forecasts guide and `examples/forecasts.py`.

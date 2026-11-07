@@ -9,7 +9,6 @@ Rationale: ADR-0013.
 
 from __future__ import annotations
 
-import decimal
 import math
 import numbers
 from dataclasses import dataclass
@@ -19,14 +18,11 @@ from datetime import datetime
 def valid_p(p: float) -> bool:
     """Return True when `p` is a finite real probability in [0, 1] (a bool is not a probability).
 
-    Any `numbers.Real` counts (`int`, `float`, NumPy scalars, `Fraction`); `Decimal` is not a
-    `numbers.Real` and is read through `float`. Never raises.
+    Any `numbers.Real` counts (`int`, `float`, NumPy floating scalars, `Fraction`); `Decimal`
+    is not a `numbers.Real` and is refused. A caller that accepts `p` reads it through `float`.
+    Never raises.
     """
-    if isinstance(p, bool):
-        return False
-    if isinstance(p, decimal.Decimal):
-        return p.is_finite() and 0 <= p <= 1
-    if not isinstance(p, numbers.Real):
+    if isinstance(p, bool) or not isinstance(p, numbers.Real):
         return False
     q = float(p)
     return math.isfinite(q) and 0.0 <= q <= 1.0

@@ -7,7 +7,7 @@ import random
 import pytest
 
 from llm_ports.forecast import HedgeMap
-from llm_ports.forecast.hedge import DEFAULT_STRENGTH, MAX_STRENGTH, normalise
+from llm_ports.forecast.hedge import DEFAULT_STRENGTH, MAX_STRENGTH, _tau2, normalise
 
 
 def rows(source: str, hedge: str, hits: int, n: int) -> list[tuple[str, str, bool]]:
@@ -97,3 +97,33 @@ def test_a_hedge_that_is_not_a_string_is_skipped() -> None:
     hm = HedgeMap.fit([("a", None, True), ("a", "likely", True)])  # type: ignore[list-item]  # the guard under test
     assert hm.p("a", None) is None  # type: ignore[arg-type]  # the guard under test
     assert list(hm.pooled) == ["likely"]
+
+
+def test_the_between_source_variance_is_unbiased_at_small_n() -> None:
+    # Three sources, ten uses each, true tau^2 = 0.04 (m = 0.5, s = 5.25). The estimator without
+    # the design-term correction averages about 0.026 here.
+    rng = random.Random(11)
+    m, s, ests = 0.5, 5.25, []
+    for _ in range(4000):
+        cells = {}
+        for j in range(3):
+            rate = rng.betavariate(m * s, (1 - m) * s)
+            cells[str(j)] = (sum(rng.random() < rate for _ in range(10)), 10)
+        t = _tau2(cells, sum(k for k, _ in cells.values()) / 30)
+        assert t is not None
+        ests.append(t)
+    assert 0.036 < sum(ests) / len(ests) < 0.052
+
+
+@pytest.mark.parametrize("cell", [["a", "likely", 0, -10], ["a", "likely", 50, 1], ["a", "likely", -1, 3]])
+def test_from_dict_refuses_impossible_counts(cell: list[object]) -> None:
+    with pytest.raises(ValueError):
+        HedgeMap.from_dict({"cells": [cell], "pooled": {"likely": 0.5}, "strengths": {"likely": 10.0}})
+
+
+def test_a_bool_is_not_a_pooled_rate_and_any_real_is_a_strength() -> None:
+    with pytest.raises(ValueError):
+        HedgeMap(cells={}, pooled={"x": True})
+    from fractions import Fraction
+
+    assert HedgeMap.fit(rows("a", "likely", 1, 2), strength=Fraction(5)).strengths["likely"] == 5  # type: ignore[arg-type]

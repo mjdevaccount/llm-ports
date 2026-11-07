@@ -13,6 +13,7 @@ Rationale: ADR-0013.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -36,23 +37,38 @@ class IsotonicCalibrator:
 
     min_pairs: int = MIN_PAIRS
 
-    def fit(self, p: Sequence[float], outcomes: Sequence[bool]) -> PiecewiseLinear | Insufficient:
+    def fit(
+        self, p: Sequence[float], outcomes: Sequence[bool], *, weights: Sequence[float] | None = None
+    ) -> PiecewiseLinear | Insufficient:
         """Fit the map.
 
         Args:
             p: Stated probabilities.
             outcomes: Whether each event happened, aligned with `p`.
+            weights: Optional sample weights aligned with `p`, to calibrate toward a reweighted
+                population; a pair whose weight is not finite and > 0 is dropped. A `weights`
+                whose length differs from `p` is `Insufficient`.
 
         Returns:
             The fitted `PiecewiseLinear`, or `Insufficient`. Never raises.
         """
+        w: list[float] | None = None
+        if weights is not None:
+            if len(weights) != len(p):
+                return Insufficient(n=0, need=self.min_pairs, reason="weights not aligned with p")
+            keep = [i for i, v in enumerate(weights) if isinstance(v, int | float) and math.isfinite(v) and v > 0]
+            p = [p[i] for i in keep]
+            outcomes = [outcomes[i] for i in keep if i < len(outcomes)]
+            w = [float(weights[i]) for i in keep]
         got = usable(p, outcomes, self.min_pairs)
         if isinstance(got, Insufficient):
             return got
         xs, ys = got
+        if w is not None and len(xs) != len(w):
+            return Insufficient(n=len(xs), need=self.min_pairs, reason="weights not aligned with usable pairs")
         try:
             iso = IsotonicRegression(y_min=0.0, y_max=1.0, increasing=True, out_of_bounds="clip")
-            iso.fit(xs, [float(y) for y in ys])
+            iso.fit(xs, [float(y) for y in ys], sample_weight=w)
             knots_x = [float(v) for v in iso.X_thresholds_]
             knots_y = [min(max(float(v), 0.0), 1.0) for v in iso.y_thresholds_]
             # Defensive: X_thresholds_ is unique in current scikit-learn, but PiecewiseLinear needs

@@ -119,6 +119,9 @@ class PiecewiseLinear:
             raise ValueError("PiecewiseLinear.xs must be strictly increasing")
         if any(b < a for a, b in zip(self.ys, self.ys[1:], strict=False)):
             raise ValueError("PiecewiseLinear.ys must be non-decreasing")
+        # Knots are stored as float, so a call and `as_dict` never mix numeric types.
+        object.__setattr__(self, "xs", tuple(float(x) for x in self.xs))
+        object.__setattr__(self, "ys", tuple(float(y) for y in self.ys))
 
     def __call__(self, p: float) -> float:
         """Return the calibrated probability for `p`; an invalid `p` maps to 0.5, the neutral answer.

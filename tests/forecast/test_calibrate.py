@@ -50,3 +50,11 @@ def test_usable_drops_invalid_and_names_the_shortfall() -> None:
     assert isinstance(short, Insufficient) and short.n == 1 and "< 2" in short.reason
     one = usable([0.1, 0.2, 0.3], [True, True, True], need=2)
     assert isinstance(one, Insufficient) and one.reason == "one outcome only"
+
+
+def test_knots_are_stored_as_float() -> None:
+    from fractions import Fraction
+
+    m = PiecewiseLinear(xs=(Fraction(1, 10), Fraction(9, 10)), ys=(Fraction(1, 5), Fraction(4, 5)))
+    assert all(type(v) is float for v in (*m.xs, *m.ys))
+    assert m(0.5) == pytest.approx(0.5) and json.loads(json.dumps(m.as_dict()))["xs"] == [0.1, 0.9]

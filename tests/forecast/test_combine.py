@@ -38,3 +38,10 @@ def test_a_non_finite_weight_is_ignored(pool: LogitPool) -> None:
 
 def test_a_non_finite_alpha_does_not_combine() -> None:
     assert LogitPool(alpha=float("nan")).combine({"a": 0.7}) is None
+
+
+def test_any_real_weight_and_alpha_count() -> None:
+    from fractions import Fraction
+
+    pool = LogitPool(weights={"a": Fraction(2)}, alpha=Fraction(1))  # type: ignore[dict-item,arg-type]
+    assert pool.combine({"a": 0.9}) == pytest.approx(0.9)

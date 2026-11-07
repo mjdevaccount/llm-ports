@@ -59,12 +59,12 @@ def test_valid_p(v: object, ok: bool) -> None:
     assert valid_p(v) is ok  # type: ignore[arg-type]  # probes non-floats on purpose
 
 
-def test_valid_p_reads_any_real_but_not_bool() -> None:
+def test_valid_p_reads_any_real_but_not_bool_or_decimal() -> None:
     from decimal import Decimal
     from fractions import Fraction
 
-    assert valid_p(Fraction(1, 3)) and valid_p(Decimal("0.4"))  # type: ignore[arg-type]  # Decimal is accepted on purpose
-    assert not valid_p(Decimal("NaN")) and not valid_p(True) and not valid_p("0.5")  # type: ignore[arg-type]
+    assert valid_p(Fraction(1, 3))
+    assert not valid_p(Decimal("0.4")) and not valid_p(True) and not valid_p("0.5")  # type: ignore[arg-type]
 
 
 def test_a_naive_and_an_aware_time_is_a_value_error() -> None:

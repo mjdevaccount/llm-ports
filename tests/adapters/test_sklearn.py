@@ -39,7 +39,7 @@ def test_isotonic_refuses_too_few_and_a_failed_fit(monkeypatch: pytest.MonkeyPat
         def __init__(self, **k: object) -> None:
             pass
 
-        def fit(self, *a: object) -> None:
+        def fit(self, *a: object, **kw: object) -> None:
             raise ValueError("bad")
 
     import llm_ports.adapters.sklearn as sk
@@ -48,3 +48,18 @@ def test_isotonic_refuses_too_few_and_a_failed_fit(monkeypatch: pytest.MonkeyPat
     ps, ys = overconfident(100)
     out = IsotonicCalibrator().fit(ps, ys)
     assert isinstance(out, Insufficient) and "isotonic fit failed" in out.reason
+
+
+def test_weights_pull_the_map_toward_the_heavier_pairs() -> None:
+    p = [0.5] * 40
+    y = [True, False] * 20
+    w = [3.0, 1.0] * 20
+    m = IsotonicCalibrator().fit(p, y, weights=w)
+    assert isinstance(m, PiecewiseLinear) and m(0.5) == pytest.approx(0.75)
+
+
+def test_unaligned_or_unusable_weights_are_insufficient() -> None:
+    cal = IsotonicCalibrator()
+    assert isinstance(cal.fit([0.5] * 40, [True, False] * 20, weights=[1.0]), Insufficient)
+    zero = cal.fit([0.5] * 40, [True, False] * 20, weights=[0.0] * 40)
+    assert isinstance(zero, Insufficient) and zero.n == 0

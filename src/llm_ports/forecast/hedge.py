@@ -23,6 +23,7 @@ Rationale: ADR-0013.
 from __future__ import annotations
 
 import math
+import numbers
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -60,11 +61,11 @@ class HedgeRow:
     pooled: float
 
 
-def _strength(cells: Mapping[str, tuple[int, int]], m: float, fallback: float) -> float:
-    """Method-of-moments prior strength for one word from its per-source `(hits, n)` cells."""
+def _tau2(cells: Mapping[str, tuple[int, int]], m: float) -> float | None:
+    """Between-source variance of one word's hit rate, unclipped; None when not estimable."""
     used = [(k, n) for k, n in cells.values() if n > 0]
     if len(used) < 2 or m <= 0.0 or m >= 1.0:
-        return fallback
+        return None
     total = sum(n for _, n in used)
     # E[sum n_i (r_i - m)^2 / N] = tau^2 (1 - sum n_i^2 / N^2) + (J - 1) sigma^2 / N, with
     # sigma^2 = m(1 - m) - tau^2. Subtracting (J - 1) m(1 - m) / N leaves tau^2 times `scale`;
@@ -73,15 +74,26 @@ def _strength(cells: Mapping[str, tuple[int, int]], m: float, fallback: float) -
     noise = (len(used) - 1) * m * (1 - m) / total
     scale = 1.0 - sum(n * n for _, n in used) / total**2 - (len(used) - 1) / total
     if scale <= 1e-9:  # every source used the word once: spread and noise are inseparable
+        return None
+    return (observed - noise) / scale
+
+
+def _strength(cells: Mapping[str, tuple[int, int]], m: float, fallback: float) -> float:
+    """Method-of-moments prior strength for one word from its per-source `(hits, n)` cells."""
+    tau2 = _tau2(cells, m)
+    if tau2 is None:
         return fallback
-    tau2 = (observed - noise) / scale
     if tau2 <= 0.0:
         return MAX_STRENGTH
     return min(max(m * (1 - m) / tau2 - 1.0, 1.0), MAX_STRENGTH)
 
 
+def _finite_real(v: object) -> bool:
+    return isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def _valid_strength(s: object) -> bool:
-    return isinstance(s, int | float) and not isinstance(s, bool) and math.isfinite(s) and s > 0
+    return _finite_real(s) and float(s) > 0  # type: ignore[arg-type]  # _finite_real proved it Real
 
 
 @dataclass(frozen=True)
@@ -96,8 +108,8 @@ class HedgeMap:
         strengths: `hedge -> prior strength` used for that word.
 
     Raises:
-        ValueError: At construction, for a pooled rate that is not in [0, 1] or a strength that
-            is not finite and > 0.
+        ValueError: At construction, for a cell whose counts are not `0 <= hits <= n`, a pooled
+            rate that is not in [0, 1], or a strength that is not finite and > 0.
     """
 
     cells: Mapping[tuple[str, str], tuple[int, int]]
@@ -105,7 +117,9 @@ class HedgeMap:
     strengths: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not all(isinstance(v, int | float) and math.isfinite(v) and 0.0 <= v <= 1.0 for v in self.pooled.values()):
+        if not all(0 <= k <= n for k, n in self.cells.values()):
+            raise ValueError("HedgeMap.cells must hold (hits, n) with 0 <= hits <= n")
+        if not all(_finite_real(v) and 0.0 <= v <= 1.0 for v in self.pooled.values()):
             raise ValueError("HedgeMap.pooled rates must be probabilities in [0, 1]")
         if not all(_valid_strength(v) for v in self.strengths.values()):
             raise ValueError("HedgeMap.strengths must be finite and > 0")

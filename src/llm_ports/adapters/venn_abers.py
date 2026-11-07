@@ -32,7 +32,7 @@ MIN_PAIRS = 10
 
 
 def _two_class(p: Sequence[float]) -> Any:
-    return np.array([[1.0 - x, x] for x in p], dtype=float)
+    return np.array([[1.0 - float(x), float(x)] for x in p], dtype=float)
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,7 @@ class VennAbersFit:
         """
         if not valid_p(p):
             return (0.5, 0.5)
+        p = float(p)
         try:
             _, p0p1 = self.model.predict_proba(_two_class([p]))
             lo, hi = float(p0p1[0][0]), float(p0p1[0][1])
@@ -67,6 +68,7 @@ class VennAbersFit:
         """Return the merged calibrated probability `p1 / (1 - p0 + p1)`. Never raises."""
         if not valid_p(p):
             return 0.5
+        p = float(p)
         p0, p1 = self.interval(p)
         denom = 1.0 - p0 + p1
         return p if denom <= 0 else min(max(p1 / denom, 0.0), 1.0)
