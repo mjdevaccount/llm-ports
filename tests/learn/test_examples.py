@@ -24,6 +24,15 @@ class TestCoverage:
     def test_a_labelled_topic_not_asked_for_is_still_reported(self) -> None:
         assert list(ex.coverage([lab("z", "1", "good")], ["a"], target=1)) == ["a", "z"]
 
+    def test_an_older_label_given_later_does_not_replace_a_newer_one(self) -> None:
+        rows = [lab("a", "1", "bad", at=T0 + timedelta(hours=1)), lab("a", "1", "good", at=T0)]
+        assert ex.coverage(rows, ["a"], target=1)["a"].positive == 0
+
+    def test_an_uneven_pool_still_fills_k_from_the_larger_class(self) -> None:
+        rows = [lab("a", "1", "bad"), *(lab("a", str(i), "good") for i in range(2, 6))]
+        picked = ex.few_shot(rows, 4, topic="a")
+        assert len(picked) == 4 and sorted(e.value for e in picked) == ["bad", "good", "good", "good"]
+
     def test_a_relabel_counts_once_and_the_latest_wins(self) -> None:
         rows = [lab("a", "1", "good", at=T0), lab("a", "1", "bad", at=T0 + timedelta(hours=1))]
         cov = ex.coverage(rows, ["a"], target={"a": 1})

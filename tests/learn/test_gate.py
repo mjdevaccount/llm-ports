@@ -25,6 +25,10 @@ class TestClauses:
         clause = g.at_least("n", missing, 1)  # type: ignore[arg-type]  # deliberately not a number
         assert clause.passed is None and clause.value is None
 
+    def test_a_failed_label_check_names_both_labels(self) -> None:
+        v = g.decide("sign", [g.equals("sign", "-", "+")])
+        assert (v.decision, v.reason) == ("fail", "sign: - not == +")
+
     def test_equals_and_check(self) -> None:
         assert g.equals("sign", "+", "+").passed is True
         assert g.equals("sign", None, "+").passed is None

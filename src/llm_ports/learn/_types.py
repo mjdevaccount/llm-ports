@@ -171,8 +171,8 @@ class Example:
     """One labelled example: something a loop learns from, with where it came from.
 
     Attributes:
-        topic: What is learned (`llm:narrative.research`, `trend:1d`, `picker:SPY`).
-        subject: The thing labelled, unique within the topic (an observation id, `SPY@2026-11-06`).
+        topic: What is learned (`llm:summary`, `trend:1d`, `fit:calibration`).
+        subject: The thing labelled, unique within the topic (an observation id, `item@day`).
         value: The label: a class (`good`, `bad`) or a number (a forward return).
         source: `human`, `model`, `judge` or `outcome`.
         by: Who labelled: a person's id, a model's name, a grader's name; "" when unknown.
