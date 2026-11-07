@@ -29,3 +29,12 @@ def test_weights_and_unusable_voices() -> None:
     assert pool.combine({"muted": 0.9}) is None
     pool.learn({"a": 0.9}, True)  # fixed: nothing changes
     assert pool.combine({"a": 0.9}) == pytest.approx(0.9)
+
+
+@pytest.mark.parametrize("pool", [LogitPool(weights={"a": float("inf")}), LogitPool(weights={"a": float("nan")})])
+def test_a_non_finite_weight_is_ignored(pool: LogitPool) -> None:
+    assert pool.combine({"a": 0.9, "b": 0.6}) == pytest.approx(0.6)
+
+
+def test_a_non_finite_alpha_does_not_combine() -> None:
+    assert LogitPool(alpha=float("nan")).combine({"a": 0.7}) is None

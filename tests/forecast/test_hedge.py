@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import random
 
 import pytest
 
@@ -61,3 +63,37 @@ def test_rows_and_json_round_trip() -> None:
 def test_from_dict_refuses_what_as_dict_never_wrote(data: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         HedgeMap.from_dict(data)
+
+
+def test_the_estimated_strength_recovers_the_true_prior() -> None:
+    rng = random.Random(7)
+    m, s = 0.6, 20.0
+    data: list[tuple[str, str, bool]] = []
+    for j in range(200):
+        rate = rng.betavariate(m * s, (1 - m) * s)
+        data += [(f"v{j}", "likely", rng.random() < rate) for _ in range(30)]
+    assert 14.0 < HedgeMap.fit(data).strengths["likely"] < 28.0
+
+
+def test_sources_that_each_spoke_once_fall_back() -> None:
+    hm = HedgeMap.fit([("a", "likely", True), ("b", "likely", False), ("c", "likely", True)])
+    assert hm.strengths["likely"] == DEFAULT_STRENGTH
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, math.nan, math.inf])
+def test_an_unusable_strength_is_refused(bad: float) -> None:
+    with pytest.raises(ValueError):
+        HedgeMap.fit(rows("a", "likely", 1, 2), strength=bad)
+    with pytest.raises(ValueError):
+        HedgeMap.from_dict({"cells": [["a", "likely", 1, 2]], "pooled": {"likely": 0.5}, "strengths": {"likely": bad}})
+
+
+def test_from_dict_refuses_a_pooled_rate_outside_0_1() -> None:
+    with pytest.raises(ValueError):
+        HedgeMap.from_dict({"cells": [], "pooled": {"likely": 7.0}})
+
+
+def test_a_hedge_that_is_not_a_string_is_skipped() -> None:
+    hm = HedgeMap.fit([("a", None, True), ("a", "likely", True)])  # type: ignore[list-item]  # the guard under test
+    assert hm.p("a", None) is None  # type: ignore[arg-type]  # the guard under test
+    assert list(hm.pooled) == ["likely"]

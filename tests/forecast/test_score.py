@@ -50,3 +50,8 @@ def test_reliability_bins() -> None:
     assert curve[-1].hit_rate == pytest.approx(2 / 3)
     assert reliability([(0.5, True)], bins=0) == (Bin(lo=0.0, hi=1.0, n=1, mean_p=0.5, hit_rate=1.0),)
     assert ece(()) is None
+
+
+def test_a_value_on_a_bin_edge_lands_in_that_bin() -> None:
+    (b,) = reliability([(0.57, True)], bins=100)
+    assert b.lo == pytest.approx(0.57)

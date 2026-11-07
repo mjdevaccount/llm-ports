@@ -7,8 +7,10 @@ across every source (beta-binomial shrinkage), so one lucky call does not make "
 
 The prior for a word is `Beta(m * s, (1 - m) * s)`: `m` is the word's pooled hit rate, `s` its
 strength in pseudo-observations. `s` is estimated by the method of moments from how much the
-sources disagree beyond binomial noise; with fewer than two sources, or no excess disagreement,
-it falls back to `strength` (or full pooling when the sources agree).
+sources disagree beyond binomial noise (Kleinman's weighted estimator). It falls back to
+`DEFAULT_STRENGTH` when it cannot be estimated (fewer than two sources, a pooled rate of 0 or 1,
+or sources that each used the word once), and to `MAX_STRENGTH` (near-full pooling) when the
+sources agree within noise.
 
 Invariants:
     - Pure, standard library only.
@@ -20,6 +22,7 @@ Rationale: ADR-0013.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -63,14 +66,22 @@ def _strength(cells: Mapping[str, tuple[int, int]], m: float, fallback: float) -
     if len(used) < 2 or m <= 0.0 or m >= 1.0:
         return fallback
     total = sum(n for _, n in used)
-    # n-weighted spread of the source rates, less what binomial noise alone would give: the
-    # between-source variance tau^2 = m(1 - m) / (s + 1), solved for s.
+    # E[sum n_i (r_i - m)^2 / N] = tau^2 (1 - sum n_i^2 / N^2) + (J - 1) sigma^2 / N, with
+    # sigma^2 = m(1 - m) - tau^2. Subtracting (J - 1) m(1 - m) / N leaves tau^2 times `scale`;
+    # the prior's tau^2 = m(1 - m) / (s + 1) is then solved for s.
     observed = sum(n * (k / n - m) ** 2 for k, n in used) / total
     noise = (len(used) - 1) * m * (1 - m) / total
-    excess = observed - noise
-    if excess <= 0.0:
+    scale = 1.0 - sum(n * n for _, n in used) / total**2 - (len(used) - 1) / total
+    if scale <= 1e-9:  # every source used the word once: spread and noise are inseparable
+        return fallback
+    tau2 = (observed - noise) / scale
+    if tau2 <= 0.0:
         return MAX_STRENGTH
-    return min(max(m * (1 - m) / excess - 1.0, 1.0), MAX_STRENGTH)
+    return min(max(m * (1 - m) / tau2 - 1.0, 1.0), MAX_STRENGTH)
+
+
+def _valid_strength(s: object) -> bool:
+    return isinstance(s, int | float) and not isinstance(s, bool) and math.isfinite(s) and s > 0
 
 
 @dataclass(frozen=True)
@@ -83,25 +94,42 @@ class HedgeMap:
         cells: `(source, hedge) -> (hits, n)`.
         pooled: `hedge -> pooled hit rate` (Jeffreys-smoothed).
         strengths: `hedge -> prior strength` used for that word.
+
+    Raises:
+        ValueError: At construction, for a pooled rate that is not in [0, 1] or a strength that
+            is not finite and > 0.
     """
 
     cells: Mapping[tuple[str, str], tuple[int, int]]
     pooled: Mapping[str, float]
     strengths: Mapping[str, float] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not all(isinstance(v, int | float) and math.isfinite(v) and 0.0 <= v <= 1.0 for v in self.pooled.values()):
+            raise ValueError("HedgeMap.pooled rates must be probabilities in [0, 1]")
+        if not all(_valid_strength(v) for v in self.strengths.values()):
+            raise ValueError("HedgeMap.strengths must be finite and > 0")
+
     @classmethod
     def fit(cls, rows: Iterable[tuple[str, str, bool]], *, strength: float | None = None) -> HedgeMap:
         """Learn the map from resolved forecasts.
 
         Args:
-            rows: `(source, hedge, outcome)`; a row with an empty hedge is skipped.
+            rows: `(source, hedge, outcome)`; a row whose hedge is empty or not a string is skipped.
             strength: A fixed prior strength for every word; None (default) estimates it per word.
 
         Returns:
-            The fitted map. Never raises.
+            The fitted map.
+
+        Raises:
+            ValueError: For a `strength` that is not finite and > 0.
         """
+        if strength is not None and not _valid_strength(strength):
+            raise ValueError(f"HedgeMap.fit strength must be finite and > 0, got {strength!r}")
         counts: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
         for source, hedge, outcome in rows:
+            if not isinstance(hedge, str):
+                continue
             key = normalise(hedge)
             if not key:
                 continue
@@ -126,8 +154,11 @@ class HedgeMap:
         A source that never used the word resolved gets the word's pooled rate.
 
         Returns:
-            The probability, or None for a word no source has used resolved. Never raises.
+            The probability, or None for a word no source has used resolved (or a hedge that is
+            not a string). Never raises.
         """
+        if not isinstance(hedge, str):
+            return None
         word = normalise(hedge)
         m = self.pooled.get(word)
         if m is None:
@@ -158,7 +189,7 @@ class HedgeMap:
         """Build a map from `as_dict` output.
 
         Raises:
-            ValueError: For a dict that is not `as_dict` output.
+            ValueError: For a dict that is not `as_dict` output, or one the constructor rejects.
         """
         try:
             cells = {(str(s), str(w)): (int(k), int(n)) for s, w, k, n in data["cells"]}

@@ -127,7 +127,8 @@ def reliability(pairs: Iterable[Pair], bins: int = 10) -> tuple[Bin, ...]:
     k = max(int(bins), 1)
     grouped: list[list[Pair]] = [[] for _ in range(k)]
     for p, y in _clean(pairs):
-        grouped[min(int(p * k), k - 1)].append((p, y))
+        # The 1e-9 nudge keeps a value on an edge in its bin despite float error (0.57 * 100).
+        grouped[min(math.floor(p * k + 1e-9), k - 1)].append((p, y))
     return tuple(
         Bin(
             lo=i / k,

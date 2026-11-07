@@ -25,9 +25,9 @@ from llm_ports.forecast._types import valid_p
 from llm_ports.forecast.score import EPS
 
 
-def logit(p: float) -> float:
-    """Return `ln(p / (1 - p))`, with `p` clipped to `[EPS, 1 - EPS]`."""
-    q = min(max(p, EPS), 1.0 - EPS)
+def logit(p: float, eps: float = EPS) -> float:
+    """Return `ln(p / (1 - p))`, with `p` clipped to `[eps, 1 - eps]`."""
+    q = min(max(float(p), eps), 1.0 - eps)
     return math.log(q / (1.0 - q))
 
 
@@ -65,8 +65,9 @@ class LogitPool:
 
     Attributes:
         weights: `voice -> weight`; a voice absent here weighs 1.0. Weights are renormalised
-            over the voices that spoke, and a voice with weight <= 0 is ignored.
-        alpha: The extremizing factor; 1.0 (default) leaves the pool as is.
+            over the voices that spoke, and a voice whose weight is not finite and > 0 is ignored.
+        alpha: The extremizing factor; 1.0 (default) leaves the pool as is. A non-finite
+            `alpha` makes `combine` return None.
     """
 
     weights: Mapping[str, float] = field(default_factory=dict)
@@ -75,9 +76,9 @@ class LogitPool:
     def combine(self, ps: Mapping[str, float]) -> float | None:
         """Return the pooled probability, or None when no voice is usable. Never raises."""
         terms = [(self.weights.get(v, 1.0), logit(p)) for v, p in ps.items() if valid_p(p)]
-        terms = [(w, x) for w, x in terms if w > 0]
+        terms = [(float(w), x) for w, x in terms if isinstance(w, int | float) and math.isfinite(w) and w > 0]
         total = sum(w for w, _ in terms)
-        if not terms or total <= 0:
+        if not terms or total <= 0 or not math.isfinite(self.alpha):
             return None
         return expit(self.alpha * sum(w * x for w, x in terms) / total)
 

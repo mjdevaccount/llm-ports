@@ -49,3 +49,10 @@ def test_a_vendor_rejection_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sr_adapter.brier_scores([0.5], [True]) is None
     assert sr_adapter.interval_scores([1.0], [0.0], [2.0], 0.1) is None
     assert sr_adapter.crps_normal([1.0], [0.0], [1.0]) is None
+
+
+def test_numpy_arrays_are_usable_input() -> None:
+    import numpy as np
+
+    got = sr_adapter.brier_scores(np.array([0.7, 0.2]), np.array([True, False]))
+    assert got is not None and got[0] == pytest.approx(brier(0.7, True))

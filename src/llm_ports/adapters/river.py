@@ -29,6 +29,9 @@ with extra("river"):
 
 #: Outcomes heard before the pool combines.
 WARMUP = 50
+#: Voice features are log-odds clipped to `[FEATURE_EPS, 1 - FEATURE_EPS]` (about +-6.9), so one
+#: voice saying 0 or 1 cannot swamp an unscaled linear model.
+FEATURE_EPS = 1e-3
 
 
 class RiverLogitPool:
@@ -41,6 +44,8 @@ class RiverLogitPool:
 
     Attributes:
         seen: Outcomes heard so far.
+        failures: Updates River refused (state left unchanged); a rising count means the pool
+            is not learning.
         voices: Every voice heard so far.
     """
 
@@ -48,10 +53,11 @@ class RiverLogitPool:
         self._model: Any = linear_model.LogisticRegression(optimizer=optim.SGD(lr), l2=l2)
         self._warmup = warmup
         self.seen: int = 0
+        self.failures: int = 0
         self.voices: set[str] = set()
 
     def _features(self, ps: Mapping[str, float]) -> dict[str, float]:
-        x = {f"voice:{v}": logit(p) for v, p in ps.items() if valid_p(p)}
+        x = {f"voice:{v}": logit(p, FEATURE_EPS) for v, p in ps.items() if valid_p(p)}
         for v in self.voices:
             if f"voice:{v}" not in x:
                 x[f"silent:{v}"] = 1.0
@@ -76,6 +82,7 @@ class RiverLogitPool:
         try:
             self._model.learn_one(x, bool(outcome))
         except (ValueError, ArithmeticError, KeyError):
+            self.failures += 1
             return
         self.seen += 1
         self.voices.update(v for v, p in ps.items() if valid_p(p))
@@ -85,4 +92,4 @@ class RiverLogitPool:
         return {str(k): float(v) for k, v in self._model.weights.items()}
 
 
-__all__ = ["WARMUP", "RiverLogitPool"]
+__all__ = ["FEATURE_EPS", "WARMUP", "RiverLogitPool"]

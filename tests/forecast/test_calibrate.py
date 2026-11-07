@@ -14,7 +14,7 @@ def test_piecewise_linear_interpolates_and_clamps() -> None:
     assert m(0.0) == 0.1 and m(1.0) == 0.5
     assert m(0.4) == pytest.approx(0.3)
     assert m(0.6) == 0.5
-    assert m(float("nan")) == 0.5  # the middle knot
+    assert m(float("nan")) == 0.5  # neutral, not a knot
 
 
 def test_piecewise_linear_round_trips_through_json() -> None:

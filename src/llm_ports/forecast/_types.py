@@ -9,14 +9,27 @@ Rationale: ADR-0013.
 
 from __future__ import annotations
 
+import decimal
 import math
+import numbers
 from dataclasses import dataclass
 from datetime import datetime
 
 
 def valid_p(p: float) -> bool:
-    """Return True when `p` is a finite probability in [0, 1]."""
-    return isinstance(p, int | float) and not isinstance(p, bool) and math.isfinite(p) and 0.0 <= p <= 1.0
+    """Return True when `p` is a finite real probability in [0, 1] (a bool is not a probability).
+
+    Any `numbers.Real` counts (`int`, `float`, NumPy scalars, `Fraction`); `Decimal` is not a
+    `numbers.Real` and is read through `float`. Never raises.
+    """
+    if isinstance(p, bool):
+        return False
+    if isinstance(p, decimal.Decimal):
+        return p.is_finite() and 0 <= p <= 1
+    if not isinstance(p, numbers.Real):
+        return False
+    q = float(p)
+    return math.isfinite(q) and 0.0 <= q <= 1.0
 
 
 @dataclass(frozen=True)
@@ -41,7 +54,7 @@ class Forecast:
 
     Raises:
         ValueError: At construction, for a `p` outside [0, 1] or not finite, a `resolves_at`
-            before `asserted_at`, an empty `evidence`, `producer`, `subject` or `kind`, or a
+            before `asserted_at` (or one naive and one aware), an empty `evidence`, `producer`, `subject` or `kind`, or a
             forecast with neither `p` nor `hedge`.
     """
 
@@ -60,7 +73,11 @@ class Forecast:
             raise ValueError("Forecast needs a producer, a subject and a kind")
         if not self.evidence.strip():
             raise ValueError("Forecast needs a non-empty evidence span")
-        if self.resolves_at < self.asserted_at:
+        try:
+            backwards = self.resolves_at < self.asserted_at
+        except TypeError as exc:
+            raise ValueError("Forecast.asserted_at and resolves_at must both be naive or both aware") from exc
+        if backwards:
             raise ValueError("Forecast.resolves_at is before asserted_at")
         if self.p is None and not (self.hedge and self.hedge.strip()):
             raise ValueError("Forecast needs a probability or a hedge")

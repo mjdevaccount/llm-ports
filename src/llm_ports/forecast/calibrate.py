@@ -121,12 +121,13 @@ class PiecewiseLinear:
             raise ValueError("PiecewiseLinear.ys must be non-decreasing")
 
     def __call__(self, p: float) -> float:
-        """Return the calibrated probability for `p`; an invalid `p` maps to the middle knot's output.
+        """Return the calibrated probability for `p`; an invalid `p` maps to 0.5, the neutral answer.
 
         Never raises.
         """
         if not valid_p(p):
-            return self.ys[len(self.ys) // 2]
+            return 0.5
+        p = float(p)
         i = bisect.bisect_right(self.xs, p)
         if i == 0:
             return self.ys[0]

@@ -48,4 +48,4 @@ def test_river_pool_ignores_unusable_events_and_survives_failures() -> None:
 
     pool._model = Broken()
     pool.learn({"a": 0.6}, True)
-    assert pool.seen == 0 and pool.combine({"a": 0.6}) is None
+    assert pool.seen == 0 and pool.failures == 1 and pool.combine({"a": 0.6}) is None

@@ -25,7 +25,7 @@ with extra("scoringrules"):
 
 
 def _aligned(*cols: Sequence[float]) -> bool:
-    return bool(cols[0]) and all(len(c) == len(cols[0]) for c in cols)
+    return len(cols[0]) > 0 and all(len(c) == len(cols[0]) for c in cols)
 
 
 def _finite(values: object) -> list[float] | None:

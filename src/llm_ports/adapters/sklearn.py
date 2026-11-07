@@ -55,7 +55,8 @@ class IsotonicCalibrator:
             iso.fit(xs, [float(y) for y in ys])
             knots_x = [float(v) for v in iso.X_thresholds_]
             knots_y = [min(max(float(v), 0.0), 1.0) for v in iso.y_thresholds_]
-            # Ties in x collapse to one knot (the last value, which is the largest: y is sorted).
+            # Defensive: X_thresholds_ is unique in current scikit-learn, but PiecewiseLinear needs
+            # strictly increasing xs, so a repeated x keeps its last (largest) y.
             merged: dict[float, float] = {}
             for x, y in zip(knots_x, knots_y, strict=True):
                 merged[x] = y
