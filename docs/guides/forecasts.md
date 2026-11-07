@@ -20,7 +20,7 @@ uses of it. Ranges and distributions score through `adapters.scoringrules` (inte
 
 ## The whole loop
 
-```python
+```{.python title="examples/forecasts.py"}
 --8<-- "examples/forecasts.py"
 ```
 
