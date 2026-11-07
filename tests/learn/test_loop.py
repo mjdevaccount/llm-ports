@@ -149,3 +149,67 @@ async def test_a_ledger_failure_is_returned_not_raised() -> None:
     assert "RuntimeError: pool exhausted" in (got.recorded.reason or "")
     refused = await run(Mean([1.0, 2.0, 3.0]), _Refusing())
     assert refused.recorded.reason == "db down"
+
+
+class _Wrapped:
+    """Delegates to a `Mean`; subclasses replace one attribute with a property that raises."""
+
+    def __init__(self, inner: Mean) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _BadParams(_Wrapped):
+    @property
+    def params(self) -> Mapping[str, Any]:
+        raise RuntimeError("config gone")
+
+
+class _BadKind(_Wrapped):
+    @property
+    def kind(self) -> str:
+        raise RuntimeError("no name")
+
+
+class _BadFit(Mean):
+    def fit(self, evidence: list[float]) -> Fit:
+        return Fit(model={"mean": 1.0}, metrics=[1, 2, 3])  # type: ignore[arg-type]  # a malformed fit, by design
+
+
+async def test_a_loop_attribute_that_raises_is_a_recorded_could_not_run() -> None:
+    ledger = MemoryRunLedger()
+    got = await run(_BadParams(Mean([1.0, 2.0, 3.0])), ledger)
+    assert got.verdict.decision == "could_not_run"
+    assert got.verdict.reason.startswith("loop: RuntimeError: config gone")
+    assert (got.kind, got.subject, got.applied) == ("mean", "SPY", "")
+    (row,) = ledger.rows
+    assert row.decision == "could_not_run"
+
+
+async def test_a_loop_whose_kind_cannot_be_read_is_recorded_under_its_class() -> None:
+    ledger = MemoryRunLedger()
+    got = await run(_BadKind(Mean([1.0, 2.0, 3.0])), ledger)
+    assert (got.kind, got.verdict.decision) == ("_BadKind", "could_not_run")
+    assert len(ledger.rows) == 1
+
+
+async def test_a_fit_with_non_mapping_metrics_is_a_recorded_could_not_run() -> None:
+    ledger = MemoryRunLedger()
+    got = await run(_BadFit([1.0, 2.0, 3.0]), ledger)
+    assert got.verdict.decision == "could_not_run"
+    assert got.verdict.reason.startswith("fit: ")
+    assert got.fit is None and got.applied == ""
+    (row,) = ledger.rows
+    assert row.metrics["learn_model"] == {}
+
+
+async def test_an_unknown_unevaluated_policy_is_the_loops_error_not_a_silent_fail() -> None:
+    @dataclass
+    class Misspelt(Mean):
+        unevaluated: str = "insuficient"
+
+    got = await run(Misspelt([1.0, 2.0, 3.0]), MemoryRunLedger())
+    assert got.verdict.decision == "could_not_run"
+    assert "unevaluated must be" in got.verdict.reason

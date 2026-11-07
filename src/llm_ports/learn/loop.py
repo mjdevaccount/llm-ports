@@ -18,7 +18,8 @@ Ledger row written for every run:
 
 Invariants:
     - Exactly one `RunLedger.append` per call of `run` or `record`.
-    - Never raises for a loop's failure or a ledger's; both are in the returned value.
+    - Never raises for a loop's failure (a stage, an attribute, a malformed fit) or a
+      ledger's; both are in the returned value.
 
 Rationale: ADR-0010.
 """
@@ -86,58 +87,75 @@ async def record(
     Returns:
         The ledger's answer. Never raises.
     """
-    row = dict(metrics or {})
-    row[VERDICT_KEY] = verdict.as_dict()
     try:
+        row = dict(metrics or {})
+        row[VERDICT_KEY] = verdict.as_dict()
         return await ledger.append(kind, subject=verdict.subject, params=dict(params or {}), metrics=row)
     except Exception as exc:  # a ledger that broke its never-raise contract is still answered
         return Written(0, "unavailable", _error("ledger raised", exc))
+
+
+def _policy(value: object) -> Unevaluated:
+    """Return a loop's `unevaluated` policy; an unknown value is the loop's error, not a silent "fail"."""
+    if value == "fail" or value == "insufficient":
+        return value
+    raise ValueError(f"unevaluated must be 'fail' or 'insufficient', got {value!r}")
 
 
 async def run[E](loop: Loop[E], ledger: RunLedger, *, clock: Callable[[], float] = time.monotonic) -> Run:
     """Run `loop` once and record it in `ledger`.
 
     Args:
-        loop: The loop. An `unevaluated` attribute, when present, is passed to `gate.decide`.
+        loop: The loop. An `unevaluated` attribute, when present, is passed to `gate.decide`;
+            a value other than "fail" or "insufficient" makes the run `could_not_run`.
         ledger: Where the run is recorded.
         clock: A monotonic clock in seconds, for `seconds`; injectable for tests.
 
     Returns:
         The run. Never raises for a stage's exception (recorded as `could_not_run`, or as
-        `apply_failed` for `apply`) or a ledger failure (`Run.recorded` carries it).
+        `apply_failed` for `apply`), a loop attribute that raises or a fit whose `metrics` or
+        `model` is not a mapping (`could_not_run`, stage `loop` or `fit`), or a ledger failure
+        (`Run.recorded` carries it). A loop whose `kind` cannot be read is recorded under its
+        class name.
     """
     start = clock()
+    kind, subject, params = type(loop).__name__, "", {}
     fit: Fit | None = None
-    stage = "evidence"
-    policy: Unevaluated = "insufficient" if getattr(loop, "unevaluated", "fail") == "insufficient" else "fail"
+    fit_metrics: dict[str, Any] = {}
+    model: dict[str, Any] = {}
+    stage = "loop"
     try:
+        kind = str(loop.kind)
+        subject = str(loop.subject)
+        params = dict(loop.params)
+        policy = _policy(getattr(loop, "unevaluated", "fail"))
+        stage = "evidence"
         evidence = await loop.evidence()
         stage = "fit"
         fit = loop.fit(evidence)
+        fit_metrics, model = dict(fit.metrics), dict(fit.model)
         stage = "clauses"
-        verdict = decide(loop.kind, loop.clauses(fit, evidence), subject=loop.subject, unevaluated=policy)
+        verdict = decide(kind, loop.clauses(fit, evidence), subject=subject, unevaluated=policy)
     except Exception as exc:  # a loop's own failure becomes a recorded could_not_run
-        verdict = could_not_run(loop.kind, _error(stage, exc), subject=loop.subject)
+        verdict = could_not_run(kind, _error(stage, exc), subject=subject)
         if stage != "clauses":
-            fit = None
+            fit, fit_metrics, model = None, {}, {}
     applied, apply_reason = "", ""
     if fit is not None and verdict.decision != "could_not_run":
         try:
-            applied = await loop.apply(verdict, fit)
+            applied = str(await loop.apply(verdict, fit))
         except Exception as exc:  # the verdict stands; the failed action is on the record
             applied, apply_reason = "apply_failed", _error("apply", exc)
     seconds = clock() - start
-    metrics: dict[str, Any] = dict(fit.metrics) if fit is not None else {}
-    metrics.update(
-        {
-            "learn_model": dict(fit.model) if fit is not None else {},
-            "learn_apply": applied,
-            "learn_apply_reason": apply_reason,
-            "learn_seconds": round(seconds, 3),
-        }
-    )
-    recorded = await record(ledger, loop.kind, verdict, params=loop.params, metrics=metrics)
-    return Run(loop.kind, loop.subject, verdict, fit, applied, recorded, seconds)
+    metrics: dict[str, Any] = {
+        **fit_metrics,
+        "learn_model": model,
+        "learn_apply": applied,
+        "learn_apply_reason": apply_reason,
+        "learn_seconds": round(seconds, 3),
+    }
+    recorded = await record(ledger, kind, verdict, params=params, metrics=metrics)
+    return Run(kind, subject, verdict, fit, applied, recorded, seconds)
 
 
 __all__ = ["RESERVED", "Run", "record", "run"]
