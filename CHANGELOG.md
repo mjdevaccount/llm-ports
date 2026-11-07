@@ -7,6 +7,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-07
+
+### Added
+
+- Two built-in call graders in `llm_ports.call.graders`, for research (web-fetching) tiers:
+  `cites_url` counts the distinct http(s) URLs in the reply's string fields and passes at one or
+  more; `no_refusal` counts stock ungrounded-refusal phrases ("I don't have real-time access",
+  "as of my training", "please consult ...") and passes at zero. Both are in `GRADERS`, so a role
+  names them by string.
+- `WEB_ONLY_GRADERS` (`{"cites_url"}`): `graders_for_inputs` drops them for a call without
+  `web=True`, the mirror of `TEXT_ONLY_GRADERS`, so a text-only call is never failed for citing no
+  pages.
+
 ## [1.7.0] - 2026-11-07
 
 ### Added
@@ -424,7 +437,8 @@ dependency floors.
   named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
   pydantic-ai `Generator` adapter, and test doubles.
 
-[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.4.0...v1.5.0
