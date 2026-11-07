@@ -58,8 +58,25 @@ def test_weights_pull_the_map_toward_the_heavier_pairs() -> None:
     assert isinstance(m, PiecewiseLinear) and m(0.5) == pytest.approx(0.75)
 
 
-def test_unaligned_or_unusable_weights_are_insufficient() -> None:
+def test_weights_drop_only_their_own_bad_pairs() -> None:
+    import numpy as np
+
     cal = IsotonicCalibrator()
-    assert isinstance(cal.fit([0.5] * 40, [True, False] * 20, weights=[1.0]), Insufficient)
+    p, y = overconfident(200)
+    p[7] = float("nan")
+    for w in ([1.0] * 200, np.ones(200, dtype=np.float32), np.ones(200, dtype=np.int64)):
+        m = cal.fit(p, y, weights=w)
+        assert isinstance(m, PiecewiseLinear) and m.n == 199
     zero = cal.fit([0.5] * 40, [True, False] * 20, weights=[0.0] * 40)
     assert isinstance(zero, Insufficient) and zero.n == 0
+    assert isinstance(cal.fit([0.5] * 40, [True, False] * 20, weights=[1.0]), Insufficient)  # one weight, one pair
+
+
+def test_weights_walk_positions_not_labels() -> None:
+    pd = pytest.importorskip("pandas")
+    p, y = overconfident(200)
+    idx = range(1000, 1200)
+    m = IsotonicCalibrator().fit(
+        pd.Series(p, index=idx), pd.Series(y, index=idx), weights=pd.Series([1.0] * 200, index=idx)
+    )
+    assert isinstance(m, PiecewiseLinear) and m.n == 200

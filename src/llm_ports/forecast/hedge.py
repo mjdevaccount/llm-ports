@@ -22,12 +22,13 @@ Rationale: ADR-0013.
 
 from __future__ import annotations
 
-import math
 import numbers
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+
+from llm_ports.forecast._types import finite_real, valid_p
 
 #: The prior strength used when it cannot be estimated (fewer than two sources use the word).
 DEFAULT_STRENGTH = 10.0
@@ -88,12 +89,12 @@ def _strength(cells: Mapping[str, tuple[int, int]], m: float, fallback: float) -
     return min(max(m * (1 - m) / tau2 - 1.0, 1.0), MAX_STRENGTH)
 
 
-def _finite_real(v: object) -> bool:
-    return isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v)
+def _count(v: object) -> bool:
+    return isinstance(v, numbers.Integral) and not isinstance(v, bool) and int(v) >= 0
 
 
 def _valid_strength(s: object) -> bool:
-    return _finite_real(s) and float(s) > 0  # type: ignore[arg-type]  # _finite_real proved it Real
+    return finite_real(s) and float(s) > 0  # type: ignore[arg-type]  # finite_real proved it Real
 
 
 @dataclass(frozen=True)
@@ -117,12 +118,16 @@ class HedgeMap:
     strengths: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not all(0 <= k <= n for k, n in self.cells.values()):
-            raise ValueError("HedgeMap.cells must hold (hits, n) with 0 <= hits <= n")
-        if not all(_finite_real(v) and 0.0 <= v <= 1.0 for v in self.pooled.values()):
+        if not all(_count(k) and _count(n) and k <= n for k, n in self.cells.values()):
+            raise ValueError("HedgeMap.cells must hold integer (hits, n) with 0 <= hits <= n")
+        if not all(valid_p(v) for v in self.pooled.values()):
             raise ValueError("HedgeMap.pooled rates must be probabilities in [0, 1]")
         if not all(_valid_strength(v) for v in self.strengths.values()):
             raise ValueError("HedgeMap.strengths must be finite and > 0")
+        # Stored as plain int/float, so `p` and `as_dict` never mix numeric types.
+        object.__setattr__(self, "cells", {key: (int(k), int(n)) for key, (k, n) in self.cells.items()})
+        object.__setattr__(self, "pooled", {w: float(v) for w, v in self.pooled.items()})
+        object.__setattr__(self, "strengths", {w: float(v) for w, v in self.strengths.items()})
 
     @classmethod
     def fit(cls, rows: Iterable[tuple[str, str, bool]], *, strength: float | None = None) -> HedgeMap:
@@ -130,7 +135,8 @@ class HedgeMap:
 
         Args:
             rows: `(source, hedge, outcome)`; a row whose hedge is empty or not a string is skipped.
-            strength: A fixed prior strength for every word; None (default) estimates it per word.
+            strength: A fixed prior strength for every word (any finite real > 0, stored as
+                float); None (default) estimates it per word.
 
         Returns:
             The fitted map.
@@ -159,7 +165,7 @@ class HedgeMap:
             k = sum(c[0] for c in cells.values())
             n = sum(c[1] for c in cells.values())
             pooled[word] = (k + 0.5) / (n + 1.0)
-            strengths[word] = strength if strength is not None else _strength(cells, k / n, DEFAULT_STRENGTH)
+            strengths[word] = float(strength) if strength is not None else _strength(cells, k / n, DEFAULT_STRENGTH)
         return cls(cells={key: (c[0], c[1]) for key, c in counts.items()}, pooled=pooled, strengths=strengths)
 
     def p(self, source: str, hedge: str) -> float | None:

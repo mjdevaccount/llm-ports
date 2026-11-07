@@ -126,4 +126,9 @@ def test_a_bool_is_not_a_pooled_rate_and_any_real_is_a_strength() -> None:
         HedgeMap(cells={}, pooled={"x": True})
     from fractions import Fraction
 
-    assert HedgeMap.fit(rows("a", "likely", 1, 2), strength=Fraction(5)).strengths["likely"] == 5  # type: ignore[arg-type]
+    hm = HedgeMap.fit(rows("a", "likely", 1, 2), strength=Fraction(5))  # type: ignore[arg-type]  # any Real
+    assert type(hm.strengths["likely"]) is float and json.dumps(hm.as_dict())
+    direct = HedgeMap(cells={("a", "x"): (1, 2)}, pooled={"x": Fraction(1, 2)})  # type: ignore[dict-item]
+    assert type(direct.pooled["x"]) is float and json.dumps(direct.as_dict())
+    with pytest.raises(ValueError):
+        HedgeMap(cells={("a", "x"): ("1", "2")}, pooled={"x": 0.5})  # type: ignore[dict-item]

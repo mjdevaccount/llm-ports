@@ -13,11 +13,11 @@ Rationale: ADR-0013.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from llm_ports._extras import extra
+from llm_ports.forecast._types import finite_real, valid_p
 from llm_ports.forecast.calibrate import Insufficient, PiecewiseLinear, usable
 
 with extra("sklearn"):
@@ -46,26 +46,27 @@ class IsotonicCalibrator:
             p: Stated probabilities.
             outcomes: Whether each event happened, aligned with `p`.
             weights: Optional sample weights aligned with `p`, to calibrate toward a reweighted
-                population; a pair whose weight is not finite and > 0 is dropped. A `weights`
-                whose length differs from `p` is `Insufficient`.
+                population. A pair is dropped when its `p` is invalid or its weight is not a
+                finite real > 0; items past the shortest of the three are ignored, as `usable`
+                does without weights.
 
         Returns:
             The fitted `PiecewiseLinear`, or `Insufficient`. Never raises.
         """
         w: list[float] | None = None
         if weights is not None:
-            if len(weights) != len(p):
-                return Insufficient(n=0, need=self.min_pairs, reason="weights not aligned with p")
-            keep = [i for i, v in enumerate(weights) if isinstance(v, int | float) and math.isfinite(v) and v > 0]
-            p = [p[i] for i in keep]
-            outcomes = [outcomes[i] for i in keep if i < len(outcomes)]
-            w = [float(weights[i]) for i in keep]
+            # One positional walk over the triples (never index: a pandas Series indexes by label),
+            # so `usable` below drops nothing more and the three lists stay aligned.
+            kept = [
+                (float(x), bool(y), float(v))
+                for x, y, v in zip(p, outcomes, weights, strict=False)
+                if valid_p(x) and finite_real(v) and v > 0
+            ]
+            p, outcomes, w = [k[0] for k in kept], [k[1] for k in kept], [k[2] for k in kept]
         got = usable(p, outcomes, self.min_pairs)
         if isinstance(got, Insufficient):
             return got
         xs, ys = got
-        if w is not None and len(xs) != len(w):
-            return Insufficient(n=len(xs), need=self.min_pairs, reason="weights not aligned with usable pairs")
         try:
             iso = IsotonicRegression(y_min=0.0, y_max=1.0, increasing=True, out_of_bounds="clip")
             iso.fit(xs, [float(y) for y in ys], sample_weight=w)

@@ -19,7 +19,7 @@ Rationale: ADR-0013.
 """
 
 from llm_ports.forecast import calibrate, combine, hedge, score
-from llm_ports.forecast._types import Forecast, Resolved, valid_p
+from llm_ports.forecast._types import Forecast, Resolved, finite_real, valid_p
 from llm_ports.forecast.calibrate import Calibrated, Calibrator, Insufficient, PiecewiseLinear
 from llm_ports.forecast.combine import Combiner, LogitPool
 from llm_ports.forecast.hedge import HedgeMap, HedgeRow
@@ -40,6 +40,7 @@ __all__ = [
     "Score",
     "calibrate",
     "combine",
+    "finite_real",
     "hedge",
     "score",
     "valid_p",

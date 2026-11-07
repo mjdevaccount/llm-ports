@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
+def finite_real(v: object) -> bool:
+    """Return True for a finite `numbers.Real` that is not a bool (a weight, a strength). Never raises."""
+    return isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def valid_p(p: float) -> bool:
     """Return True when `p` is a finite real probability in [0, 1] (a bool is not a probability).
 
@@ -22,10 +27,7 @@ def valid_p(p: float) -> bool:
     is not a `numbers.Real` and is refused. A caller that accepts `p` reads it through `float`.
     Never raises.
     """
-    if isinstance(p, bool) or not isinstance(p, numbers.Real):
-        return False
-    q = float(p)
-    return math.isfinite(q) and 0.0 <= q <= 1.0
+    return finite_real(p) and 0.0 <= float(p) <= 1.0
 
 
 @dataclass(frozen=True)
@@ -96,4 +98,4 @@ class Resolved:
     resolved_at: datetime
 
 
-__all__ = ["Forecast", "Resolved", "valid_p"]
+__all__ = ["Forecast", "Resolved", "finite_real", "valid_p"]

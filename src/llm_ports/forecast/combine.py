@@ -17,12 +17,11 @@ Rationale: ADR-0013.
 from __future__ import annotations
 
 import math
-import numbers
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from llm_ports.forecast._types import valid_p
+from llm_ports.forecast._types import finite_real, valid_p
 from llm_ports.forecast.score import EPS
 
 
@@ -60,10 +59,6 @@ class Combiner(Protocol):
         ...
 
 
-def _finite_real(v: object) -> bool:
-    return isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v)
-
-
 @dataclass
 class LogitPool:
     """A weighted mean in log-odds, extremized by `alpha`; a fixed baseline that never learns.
@@ -81,9 +76,9 @@ class LogitPool:
     def combine(self, ps: Mapping[str, float]) -> float | None:
         """Return the pooled probability, or None when no voice is usable. Never raises."""
         terms = [(self.weights.get(v, 1.0), logit(p)) for v, p in ps.items() if valid_p(p)]
-        terms = [(float(w), x) for w, x in terms if _finite_real(w) and w > 0]
+        terms = [(float(w), x) for w, x in terms if finite_real(w) and w > 0]
         total = sum(w for w, _ in terms)
-        if not terms or total <= 0 or not _finite_real(self.alpha):
+        if not terms or total <= 0 or not finite_real(self.alpha):
             return None
         return expit(float(self.alpha) * sum(w * x for w, x in terms) / total)
 
