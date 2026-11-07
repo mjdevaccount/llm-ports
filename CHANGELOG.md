@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-07
+
 ### Added
 
 - `llm_ports.learn`: the learning-loop core, standard library only (ADR-0010). `Clause` (with a
@@ -391,7 +393,8 @@ dependency floors.
   named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
   pydantic-ai `Generator` adapter, and test doubles.
 
-[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.1.0...v1.2.0
