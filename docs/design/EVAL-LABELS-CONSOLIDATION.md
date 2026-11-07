@@ -1,6 +1,6 @@
 # One system for LLM evaluation, judging and labelled data
 
-Status: DESIGN, 2026-11-07. Scope: every repo of the estate that grades, judges or labels LLM
+Status: SUPERSEDED in scope by `LEARNING-LOOP-CORE.md` (2026-11-07), which owns the decisions; this file stays as the detail of the LLM-label loop, amended there. Originally DESIGN, 2026-11-07. Scope: every repo of the estate that grades, judges or labels LLM
 output. Owner of the decision: this file. Inventory read from each repo's `origin/main` with
 `git ls-files` / `git grep` and from the box (Langfuse API, `quant.prompt_eval_run`) on
 2026-11-07 ~04:40Z.
