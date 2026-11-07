@@ -20,6 +20,12 @@
     options:
       show_root_heading: false
 
+## `llm_ports.evals.labels`
+
+::: llm_ports.evals.labels
+    options:
+      show_root_heading: false
+
 ## `llm_ports.evals.calibration`
 
 ::: llm_ports.evals.calibration

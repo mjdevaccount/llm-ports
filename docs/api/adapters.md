@@ -32,6 +32,18 @@
     options:
       show_root_heading: false
 
+## `llm_ports.adapters.langfuse.experiments`
+
+::: llm_ports.adapters.langfuse.experiments
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.langfuse.labels`
+
+::: llm_ports.adapters.langfuse.labels
+    options:
+      show_root_heading: false
+
 ## `llm_ports.adapters.otel`
 
 ::: llm_ports.adapters.otel
