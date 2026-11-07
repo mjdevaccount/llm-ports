@@ -42,3 +42,27 @@ class TestBhFdr:
 
     def test_the_mask_is_in_input_order(self) -> None:
         assert stats.bh_fdr([0.9, 0.0001], 0.05) == [False, True]
+
+
+def _table(a: int, b: int, c: int, d: int) -> list[tuple[str, str]]:
+    """A 2x2 table as pairs: rows the first labeller (yes, no), columns the second."""
+    return [("yes", "yes")] * a + [("yes", "no")] * b + [("no", "yes")] * c + [("no", "no")] * d
+
+
+def test_kappa_ci_matches_statsmodels_fleiss_cohen_everitt() -> None:
+    # Reference values: statsmodels.stats.inter_rater.cohens_kappa (kappa_low, kappa_upp).
+    for table, low, high in (
+        ((8, 2, 3, 7), 0.122357, 0.877643),
+        ((11, 3, 1, 5), 0.196013, 0.934422),
+        ((20, 5, 10, 15), 0.151092, 0.648908),
+    ):
+        got = stats.kappa_ci(_table(*table))
+        assert got is not None
+        assert abs(got[0] - low) < 1e-5 and abs(got[1] - high) < 1e-5
+
+
+def test_kappa_ci_is_none_where_kappa_is_and_clipped_to_minus_one_one() -> None:
+    assert stats.kappa_ci([("yes", "yes")]) is None
+    assert stats.kappa_ci(_table(5, 0, 0, 0)) is None
+    low, high = stats.kappa_ci(_table(3, 0, 0, 3)) or (0.0, 0.0)
+    assert -1.0 <= low <= high <= 1.0 and high == 1.0

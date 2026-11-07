@@ -64,8 +64,10 @@ class Observation(Protocol):
         """Record what the call produced so far; a None argument leaves that field as it was."""
         ...
 
-    def score(self, *, name: str, value: float, comment: str | None = None) -> None:
-        """Attach a numeric score to the observation."""
+    def score(
+        self, *, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None
+    ) -> None:
+        """Attach a numeric score to the observation, with metadata stored on the score."""
         ...
 
 
@@ -106,9 +108,14 @@ class PortObservation:
         if metadata is not None:
             self._meta = metadata
 
-    def score(self, *, name: str, value: float, comment: str | None = None) -> None:
+    def score(
+        self, *, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None
+    ) -> None:
         """Attach a numeric score to the underlying generation."""
-        self._gen.score(name, float(value), comment)
+        if metadata is None:
+            self._gen.score(name, float(value), comment)
+        else:
+            self._gen.score(name, float(value), comment, metadata)
 
     @property
     def metadata(self) -> Mapping[str, Any] | None:

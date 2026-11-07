@@ -141,6 +141,16 @@ def test_score_is_numeric_on_this_generation_with_the_comment(rig) -> None:
     assert s["observation_id"] == format(span.context.span_id, "016x")
 
 
+def test_score_metadata_is_stored_on_the_score(rig) -> None:
+    g = _start(rig.client)
+    g.score("label.judge-x", 0.0, "why", {"by": "judge-model", "labeller": "judge"})
+    g.score("plain", 1.0)
+    g.end()
+    with_meta, plain = rig.scores
+    assert with_meta["metadata"] == {"by": "judge-model", "labeller": "judge"}
+    assert plain.get("metadata") is None
+
+
 async def test_observe_over_the_real_sdk_flags_an_unmeasured_call(rig) -> None:
     async with observe(tp.LangfuseTracer(rig.client), name="n", model="m", provider="p", input="i") as obs:
         obs.update(output="hi", usage_details={"input": None, "output": None}, metadata={"latency_ms": 12})

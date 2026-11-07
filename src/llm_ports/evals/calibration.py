@@ -9,6 +9,11 @@ A judge earns trust two ways, and each measures something the other cannot:
   `seed_placeholder` blanks every string (the schema-answered-honestly law), `seed_figure` appends
   a figure no input carried (the number law). A judge that passes these passes everything.
 
+`trust` joins the two into one verdict a judge's verdicts carry: trusted only when it agrees with
+the human on enough items (kappa, or its interval's lower end, at a floor) AND its seeded-bad
+replay is calibrated. A judge with no record is untrusted, so swapping the model never inherits
+the old one's trust.
+
 `tally` and `verdict` read the rows of a replay that judged good samples beside their seeded-bad
 copies. A row is a mapping with:
 
@@ -29,8 +34,10 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
+from llm_ports.learn.examples import Agreement
 from llm_ports.learn.stats import YES, Pairs, cohen_kappa, gwet_ac1
 
 #: What `seed_placeholder` writes into every string.
@@ -39,6 +46,9 @@ PLACEHOLDER = "TBD"
 FIGURE = " Target 7,431.5 by the 19th, up 38.2%."
 #: `verdict` exit codes: calibrated in both directions, a finding, did not finish looking.
 CALIBRATED, FINDING, BLIND = 0, 1, 2
+#: `trust` defaults: human-labelled items below which agreement is a coin, not a measurement, and
+#: the Landis-Koch "substantial" floor (a verdict that acts should not ride "moderate" agreement).
+MIN_LABELLED, MIN_KAPPA = 20, 0.6
 
 
 def _strings(obj: Any, path: tuple[Any, ...] = ()) -> Iterator[tuple[tuple[Any, ...], str]]:
@@ -166,18 +176,97 @@ def verdict(results: Sequence[Mapping[str, Any]], *, floor: float = 0.0) -> tupl
     return CALIBRATED, f"calibrated both directions; {blind}/{len(results)} could_not_run"
 
 
+@dataclass(frozen=True)
+class Trust:
+    """Whether a judge's verdicts may be acted on, with the numbers that decided it.
+
+    Attributes:
+        trusted: True only when every condition of `trust` held.
+        why: One line naming the deciding condition and its numbers.
+        agreement: The judge against the human on the shared items (n, kappa and its interval, AC1).
+        false_fail: Items the human labelled good that the judge failed.
+        human_good: Items the human labelled good.
+        seeded: The seeded-bad replay's `verdict` code; None when no replay was given.
+    """
+
+    trusted: bool
+    why: str
+    agreement: Agreement
+    false_fail: int = 0
+    human_good: int = 0
+    seeded: int | None = None
+
+
+def trust(
+    pairs: Pairs,
+    *,
+    replay: Sequence[Mapping[str, Any]] | None = None,
+    min_labelled: int = MIN_LABELLED,
+    min_kappa: float = MIN_KAPPA,
+    bound: Literal["point", "low"] = "point",
+    require_seeded: bool = True,
+) -> Trust:
+    """Return whether a judge is trusted, from its agreement with a human and its seeded-bad replay.
+
+    Checked in order, the first failure deciding: at least `min_labelled` pairs; the seeded-bad
+    replay `CALIBRATED` (or absent with `require_seeded=False`); kappa at least `min_kappa`, read
+    as the point estimate (`bound="point"`) or the 95% interval's lower end (`bound="low"`).
+
+    Args:
+        pairs: `(judge, human)` labels of the same real replies, `"yes"` for pass / good
+            (`learn.examples.pairs` builds them from a label store; abstentions left out).
+        replay: Rows of a seeded-bad replay, as `verdict` reads them; None when there is none.
+        min_labelled: The fewest pairs that can earn trust.
+        min_kappa: The agreement floor.
+        bound: Which kappa the floor reads.
+        require_seeded: Whether a missing replay leaves the judge untrusted.
+
+    Returns:
+        The `Trust`. Never raises.
+
+    Invariants:
+        - No pairs is untrusted, never an error: a new judge starts untrusted.
+        - An undefined kappa (one-sided labels) never clears the floor.
+    """
+    agr = Agreement.of(pairs)
+    good = [a for a, b in pairs if b == YES]
+    ff = sum(a != YES for a in good)
+    seeded, seeded_why = verdict(replay) if replay is not None else (None, "")
+
+    def out(trusted: bool, why: str) -> Trust:
+        return Trust(trusted, why, agr, false_fail=ff, human_good=len(good), seeded=seeded)
+
+    if agr.n < min_labelled:
+        return out(False, f"{agr.n} human-labelled replies, under {min_labelled}")
+    if replay is not None and seeded != CALIBRATED:
+        return out(False, f"seeded-bad: {seeded_why}")
+    if replay is None and require_seeded:
+        return out(False, "seeded-bad direction not measured")
+    k = agr.kappa if bound == "point" else agr.kappa_low
+    shown = "undefined" if agr.kappa is None else f"{agr.kappa:.2f}"
+    if agr.kappa_low is not None and agr.kappa_high is not None:
+        shown += f" [{agr.kappa_low:.2f}, {agr.kappa_high:.2f}]"
+    if k is None or k < min_kappa:
+        return out(False, f"kappa {shown} under {min_kappa} ({bound}): failed {ff}/{len(good)} human-good replies")
+    return out(True, f"kappa {shown} over {agr.n}" + ("; seeded-bad all caught" if replay is not None else ""))
+
+
 __all__ = [
     "BLIND",
     "CALIBRATED",
     "FIGURE",
     "FINDING",
+    "MIN_KAPPA",
+    "MIN_LABELLED",
     "PLACEHOLDER",
     "YES",
     "Pairs",
+    "Trust",
     "cohen_kappa",
     "gwet_ac1",
     "seed_figure",
     "seed_placeholder",
     "tally",
+    "trust",
     "verdict",
 ]

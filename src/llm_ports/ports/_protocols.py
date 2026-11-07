@@ -205,8 +205,18 @@ class Generation(Protocol):
         """
         ...
 
-    def score(self, name: str, value: float, comment: str | None = None) -> None:
-        """Attach a numeric score to this observation. Never raises."""
+    def score(
+        self, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None
+    ) -> None:
+        """Attach a numeric score to this observation. Never raises.
+
+        Args:
+            name: The score's name.
+            value: Its value.
+            comment: A one-line reason, shown beside the score.
+            metadata: Extra fields stored on the score itself (who gave it, for a label);
+                omitted from what the sink receives when None.
+        """
         ...
 
 

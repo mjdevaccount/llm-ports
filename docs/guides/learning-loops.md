@@ -13,6 +13,18 @@ A loop implements four stages and nothing else:
 | `clauses(fit, evidence)` | the gate's evaluated clauses | yes: same |
 | `apply(verdict, fit)` | act: store the fit on `pass`, keep the incumbent otherwise | yes: recorded as `apply_failed`, the verdict stands |
 
+In the vocabulary of a learning-loop registry, the four stages map onto predict / resolve /
+score / consume:
+
+| registry move | where it lives |
+|---|---|
+| predict | your producer writes predictions (or an `Example` with `source="judge"` / `"model"`) |
+| resolve | `evidence()` reads them back joined to what happened (`source="outcome"` or `"human"`) |
+| score | `fit()` measures, `clauses()` holds the measurement to a gate |
+| consume | `apply()` acts on the verdict, and something downstream READS what it stored |
+
+A loop that never consumes is a report: name the reader of `apply()`'s result before you build it.
+
 `run(loop, ledger)` drives them, decides the verdict with `gate.decide`, and appends exactly one
 ledger row per run, every exit included. It never raises.
 
@@ -51,9 +63,21 @@ several as one. Three pure readers serve a coverage report and a judge:
 - `examples.coverage(examples, topics, target=...)`: per topic, how many reference labels exist
   and the gap to the target; a topic with no label is reported with zeros.
 - `examples.agreement(examples)`: per topic, how a judge or model agrees with the human labels
-  (share, Cohen's kappa, Gwet's AC1).
+  (share, Cohen's kappa with its 95% interval, Gwet's AC1).
+- `examples.pairs(examples, by=...)`: the `(measured, reference)` pairs behind those numbers, per
+  topic, optionally for one judge model only, so a caller can pool them across topics.
 - `examples.few_shot(examples, k, topic=...)`: a deterministic pick balanced across classes, for a
   judge's prompt.
+
+## Consume: a judge earns trust from the labels
+
+`evals.calibration.trust(pairs, replay=...)` is the consumer every judge shares: a judge's
+verdicts may act (page, gate, promote) only when it agrees with the human on at least
+`min_labelled` replies (kappa, or with `bound="low"` its interval's lower end, at `min_kappa`) AND
+its seeded-bad replay is calibrated. It returns a `Trust` carrying the numbers, never raises, and
+a judge with no labels is untrusted, so swapping the judge model resets trust instead of
+inheriting it. Record which model gave each judge label (`by`; on a trace handle,
+`score(..., metadata={"by": model})`) or `pairs(by=...)` cannot tell them apart.
 
 ## The whole loop
 

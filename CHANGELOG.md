@@ -7,6 +7,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-07
+
+### Added
+
+- `llm_ports.evals.calibration.trust` and `Trust`: whether a judge's verdicts may act, from its
+  agreement with human labels (at least `MIN_LABELLED` pairs, kappa or its interval's lower end at
+  `MIN_KAPPA`) and its seeded-bad replay. Never raises; a judge with no labels is untrusted.
+  Rationale: ADR-0012.
+- `llm_ports.learn.stats.kappa_ci` (Fleiss-Cohen-Everitt 95% interval, `Z95`) and
+  `Agreement.kappa_low` / `kappa_high`, filled by `examples.agreement`.
+- `llm_ports.learn.examples.pairs`: per topic, the `(measured, reference)` pairs behind
+  `agreement`, optionally for one labeller (`by`, one judge model), so a caller pools them.
+- The trace port's `score` takes an optional `metadata`, stored on the score (Langfuse adapter,
+  `PortObservation`, `RecordingTracer.score_metadata`), so a judge label records its model.
+- The learning-loops guide maps predict / resolve / score / consume onto the loop stages and
+  shows a judge earning trust; `examples/learning_loop.py` runs the consume step.
+
 ## [1.9.1] - 2026-11-07
 
 ### Fixed

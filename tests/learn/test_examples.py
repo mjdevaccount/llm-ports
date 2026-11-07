@@ -76,3 +76,41 @@ class TestFewShot:
 
     def test_k_larger_than_the_pool_returns_the_pool(self) -> None:
         assert len(ex.few_shot([lab("a", "1", "good")], 5, topic="a")) == 1
+
+
+def judged(topic: str, subject: str, value: str, by: str) -> Example:
+    return Example(topic, subject, value, "judge", by=by)
+
+
+class TestPairs:
+    def test_pairs_are_measured_then_reference_on_shared_subjects_by_subject(self) -> None:
+        rows = [
+            lab("a", "2", "bad"),
+            lab("a", "1", "good"),
+            lab("a", "3", "good"),
+            judged("a", "1", "bad", "m1"),
+            judged("a", "2", "bad", "m1"),
+        ]
+        assert ex.pairs(rows) == {"a": [("no", "yes"), ("no", "no")]}
+
+    def test_by_keeps_only_one_judge_models_labels(self) -> None:
+        rows = [
+            lab("a", "1", "good"),
+            lab("a", "2", "good"),
+            judged("a", "1", "good", "old"),
+            judged("a", "2", "bad", "new"),
+        ]
+        assert ex.pairs(rows, by="new") == {"a": [("no", "yes")]}
+        assert ex.pairs(rows, by="none-such") == {"a": []}
+
+    def test_a_topic_without_a_reference_label_is_absent(self) -> None:
+        assert ex.pairs([judged("a", "1", "good", "m")]) == {}
+
+
+def test_agreement_carries_the_kappa_interval() -> None:
+    rows = [lab("t", str(i), v) for i, v in enumerate(["good"] * 10 + ["bad"] * 10)]
+    rows += [judged("t", str(i), v, "m") for i, v in enumerate(["good"] * 8 + ["bad"] * 2 + ["good"] * 3 + ["bad"] * 7)]
+    a = ex.agreement(rows)["t"]["judge"]
+    assert a.n == 20 and a.kappa is not None and a.kappa_low is not None and a.kappa_high is not None
+    assert a.kappa_low < a.kappa < a.kappa_high
+    assert ex.agreement(rows)["t"]["model"] == ex.Agreement(0, None, None, None)
