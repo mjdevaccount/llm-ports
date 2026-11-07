@@ -143,6 +143,8 @@ class RefusingLangfuse:
     create_trace_id: Callable[..., NoReturn] = _refuse
     start_observation: Callable[..., NoReturn] = _refuse
     create_score: Callable[..., NoReturn] = _refuse
+    get_dataset: Callable[..., NoReturn] = _refuse
+    run_experiment: Callable[..., NoReturn] = _refuse
 
 
 class FakeLangfusePrompts:

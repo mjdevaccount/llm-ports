@@ -412,14 +412,20 @@ Slices 1-2 are core, 3-5 make it easy, 6-8 go wide: the operator's order.
 `EVAL-LABELS-CONSOLIDATION.md` holds the inventory and the label decisions; they stand with these
 changes:
 
-- `ports.Label` / `ports.LabelStore` (WIP `04678fd`) become `learn.Example` (topic
-  `llm:<role>`, source human / model / judge) and `learn.ExampleStore`; `evals.labels` keeps only
-  what is LLM-specific: `draw` (stratified by the judge's verdict), `label_of(JudgeVerdict)`.
-  `coverage` and `agreement` move to `learn.examples`.
-- `adapters/langfuse/labels.py` becomes `LangfuseExampleStore` (scores `label:<role>` on the
-  production generation; annotation queue per role); `adapters/langfuse/experiments.py` stays.
-- The judge-trust gate becomes a `Loop`: examples = human labels from the store, clauses =
-  `labelled >= 20`, `kappa >= 0.6`, `seeded_bad_all_caught`, recorded as `run_kind =
+- `ports.Label` / `ports.LabelStore` (WIP `04678fd`) are NOT added: a label is a `learn.Example`
+  (topic `llm:<role>`, `evals.labels.topic`; source human / model / judge; the trace id in
+  `ref["trace"]`) read through `learn.ExampleStore`. `evals.labels` keeps only what is
+  LLM-specific: `topic` / `role_of`, `draw` (stratified by the judge's verdict, keyed by the core's
+  `coverage`), `label_of(JudgeVerdict, source="model"|"judge")`, and the `LabelQueue` port
+  (`enqueue(topic, subjects)`, the review surface). `coverage` and `agreement` are the core's
+  (`learn.examples`); the test double is `learn.stores.MemoryExampleStore`, not a new fake.
+- `adapters/langfuse/labels.py` is `LangfuseExampleStore`, a `WritableExampleStore` and a
+  `LabelQueue` (scores `label:<role>` on the production generation, `label.model:<role>` and
+  `label.judge:<role>` written by `put`; one annotation queue per role; SDK calls in a worker
+  thread). `adapters/langfuse/experiments.py` ships as drafted. Both in slice 2 (1.6.0).
+- The judge-trust gate becomes a `Loop` in trade-data (slice 6): examples = human labels from the
+  store, clauses = `labelled >= 20` (floor), `kappa >= 0.6`, `seeded_bad_all_caught` (via
+  `evals.calibration.verdict`, as `llm_judge_trust.assess` does today), recorded as `run_kind =
   'llm_judge_trust'`; `edge_llm_judge_trusted` reads its latest verdict instead of a baked JSONL.
 - Langfuse stays the LLM label store (UI exists, the label sits on the reply it labels, already
   backed up). A replay read from a Langfuse export was cut at 4,000 characters (sibling notes

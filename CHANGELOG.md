@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `llm_ports.evals.labels`: labelled model replies on the learning-loop core. A label is a
+  `learn.Example` on topic `llm:<role>` (`topic`, `role_of`); `draw` picks which unlabelled
+  production replies to queue for a human, closing each role's `learn.examples.coverage` gap and
+  stratified by the judge's verdict; `label_of` turns any `Judge`'s verdict into a `model` or
+  `judge` example (never `human`); `LabelQueue` is the port a review surface implements.
+- `llm_ports.adapters.langfuse.labels.LangfuseExampleStore`: a `learn.WritableExampleStore` and a
+  `LabelQueue` over Langfuse scores (`label:<role>` human, given in the annotation UI;
+  `label.model:<role>` and `label.judge:<role>` written by `put` under a stable id) and one
+  annotation queue per role, created on first use.
+- `llm_ports.adapters.langfuse.experiments`: `run` and `record_rows` record a graded evaluation as
+  a Langfuse dataset experiment; a run that graded fewer items than it was handed is `invalid`.
+
 ## [1.5.0] - 2026-11-07
 
 ### Added
