@@ -5,7 +5,9 @@ only when the gate passes, and leaves exactly one ledger row per run, whatever h
 holds only what is specific to it (`evidence`, `fit`, `clauses`, `apply`); `run` does the rest.
 
 The second half reads labelled examples the way a judge or a coverage report does: how many
-human labels each topic has, how far a judge agrees with them, and a balanced few-shot pick.
+human labels each topic has, how far a judge agrees with them, and a balanced few-shot pick. The
+last step CONSUMES them: a judge model's verdicts are trusted only when its agreement with the
+human labels, and its seeded-bad replay, earn it (`evals.calibration.trust`).
 """
 
 import asyncio
@@ -15,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from llm_ports.evals import calibration
 from llm_ports.learn import Clause, Example, Fit, Verdict, examples, gate, run
 from llm_ports.learn.stores import JsonlRunLedger, MemoryExampleStore
 
@@ -111,6 +114,21 @@ async def main() -> None:
     for topic, c in cov.items():
         print(f"{topic}: {c.have} human labels, gap {c.gap}")
     print(f"judge vs human on llm:summary: agree {judge.agree:.2f}, kappa {judge.kappa}")
+
+    # Consume: may this judge model's verdicts act? Pool its pairs over every topic (`by` keeps one
+    # model's labels, so a new model never inherits the old one's record) and hold them to both
+    # directions: agreement with the human, and a seeded-bad replay it must fail.
+    pooled = [p for ps in examples.pairs(read.examples, by="9b-judge").values() for p in ps]
+    replay = [
+        {"role": "summary", "kind": "good", "after": "pass"},
+        {"role": "summary", "kind": "tbd", "after": "fail"},
+    ]
+    verdict = calibration.trust(pooled, replay=replay, min_labelled=9)
+    assert not verdict.trusted and verdict.agreement.kappa == 0.0 and "under 0.6" in verdict.why  # passes everything
+    assert (
+        calibration.trust(examples.pairs(read.examples, by="new-judge")["llm:summary"], replay=replay).agreement.n == 0
+    )
+    print(f"trust 9b-judge: {verdict.trusted} ({verdict.why})")
 
 
 asyncio.run(main())

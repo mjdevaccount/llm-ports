@@ -1,6 +1,6 @@
 """The statistics a gate reads: agreement between two labellers, and a multiple-testing mask.
 
-- `cohen_kappa` / `gwet_ac1`: chance-corrected agreement of two labellers on the same binary
+- `cohen_kappa` / `gwet_ac1` / `kappa_ci`: chance-corrected agreement of two labellers on the same binary
   items. Read kappa; read AC1 beside it where one answer dominates (kappa's chance correction
   degenerates there).
 - `bh_fdr`: which of a family of p-values survive false-discovery-rate control, Benjamini-Yekutieli
@@ -19,6 +19,8 @@ from collections.abc import Sequence
 
 #: The positive label of a binary item.
 YES = "yes"
+#: The two-sided 95% normal quantile, `NormalDist().inv_cdf(0.975)`.
+Z95 = 1.959963984540054
 #: `(labeller a, labeller b)` labels of the same items.
 Pairs = Sequence[tuple[str, str]]
 
@@ -50,6 +52,40 @@ def cohen_kappa(pairs: Pairs) -> float | None:
     if pe >= 1.0:
         return None
     return (po - pe) / (1 - pe)
+
+
+def kappa_ci(pairs: Pairs, z: float = Z95) -> tuple[float, float] | None:
+    """Return the confidence interval of Cohen's kappa over binary `(a, b)` label pairs.
+
+    The interval is `kappa +- z * SE`, with SE the large-sample standard error of Fleiss, Cohen and
+    Everitt (1969), the one statsmodels' `cohens_kappa` reports; each end is clipped to [-1, 1].
+
+    Args:
+        pairs: As `cohen_kappa`.
+        z: The normal quantile; `Z95` (default) for a 95% interval.
+
+    Returns:
+        `(low, high)`, or None wherever `cohen_kappa` is None.
+    """
+    k = cohen_kappa(pairs)
+    if k is None:
+        return None
+    n = len(pairs)
+    cells = {
+        (x, y): sum(1 for a, b in pairs if (a == YES) == x and (b == YES) == y) / n
+        for x in (True, False)
+        for y in (True, False)
+    }
+    row = {x: cells[(x, True)] + cells[(x, False)] for x in (True, False)}
+    col = {y: cells[(True, y)] + cells[(False, y)] for y in (True, False)}
+    pe = sum(row[c] * col[c] for c in (True, False))
+    diag = sum(cells[(c, c)] * (1 - (row[c] + col[c]) * (1 - k)) ** 2 for c in (True, False))
+    off = (1 - k) ** 2 * sum(
+        cells[(x, y)] * (col[x] + row[y]) ** 2 for x in (True, False) for y in (True, False) if x != y
+    )
+    var = max(diag + off - (k - pe * (1 - k)) ** 2, 0.0) / (n * (1 - pe) ** 2)
+    se = var**0.5
+    return max(k - z * se, -1.0), min(k + z * se, 1.0)
 
 
 def gwet_ac1(pairs: Pairs) -> float | None:
@@ -109,4 +145,4 @@ def bh_fdr(pvals: Sequence[float | None], alpha: float = 0.10, *, dependent: boo
     return passed
 
 
-__all__ = ["YES", "Pairs", "bh_fdr", "cohen_kappa", "gwet_ac1"]
+__all__ = ["YES", "Z95", "Pairs", "bh_fdr", "cohen_kappa", "gwet_ac1", "kappa_ci"]

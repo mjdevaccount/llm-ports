@@ -2,8 +2,10 @@
 
 - `coverage`: per topic, how many distinct subjects each source labelled, against a target. Every
   topic asked about appears, an unlabelled one included: the gap is the point.
+- `pairs`: per topic, the `(measured, reference)` binary label pairs on the subjects both sources
+  labelled: what every agreement statistic reads, and what a caller pools across topics.
 - `agreement`: per topic, how well each measured source (a judge, a model labeller) agrees with
-  the reference source (a human), as Cohen's kappa and Gwet's AC1 on the subjects both labelled.
+  the reference source (a human), as Cohen's kappa with its 95% interval and Gwet's AC1.
 - `few_shot`: a deterministic, class-balanced pick of examples, to put graded examples of a
   topic in front of a judge.
 
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from llm_ports.learn._types import Example, Source
-from llm_ports.learn.stats import YES, cohen_kappa, gwet_ac1
+from llm_ports.learn.stats import YES, Pairs, cohen_kappa, gwet_ac1, kappa_ci
 
 SOURCES: tuple[Source, ...] = ("human", "model", "judge", "outcome")
 _EPOCH = datetime.min.replace(tzinfo=UTC)
@@ -73,12 +75,23 @@ class Agreement:
         agree: The share of those on which they agree; None when `n` is 0.
         kappa: Cohen's kappa; None where it is undefined (`stats.cohen_kappa`).
         ac1: Gwet's AC1; None under two subjects.
+        kappa_low: The 95% interval's lower end (`stats.kappa_ci`); None where kappa is.
+        kappa_high: Its upper end; None where kappa is.
     """
 
     n: int
     agree: float | None
     kappa: float | None
     ac1: float | None
+    kappa_low: float | None = None
+    kappa_high: float | None = None
+
+    @classmethod
+    def of(cls, pairs: Pairs) -> Agreement:
+        """Return the agreement of `(measured, reference)` pairs; the empty sequence gives `n == 0`."""
+        ci = kappa_ci(pairs)
+        agree = sum(a == b for a, b in pairs) / len(pairs) if pairs else None
+        return cls(len(pairs), agree, cohen_kappa(pairs), gwet_ac1(pairs), *(ci or (None, None)))
 
 
 def latest(examples: Iterable[Example]) -> dict[tuple[str, str, str], Example]:
@@ -132,6 +145,48 @@ def coverage(
     return {t: Coverage(t, dict(counts[t]), _target(t), reference, good[t]) for t in order}
 
 
+def pairs(
+    examples: Iterable[Example],
+    *,
+    reference: Source = "human",
+    measured: Source = "judge",
+    by: str | None = None,
+    positive: str = "good",
+) -> dict[str, list[tuple[str, str]]]:
+    """Return, per topic, the `(measured, reference)` label pairs on the subjects both labelled.
+
+    Each label reads as binary: `"yes"` (`stats.YES`) when it is `positive`, else `"no"`. Pairs are
+    ordered by subject, so the result is deterministic.
+
+    Args:
+        examples: Examples from any source.
+        reference: The source taken as ground truth.
+        measured: The source compared with it.
+        by: When given, only `measured` examples whose `by` is this labeller (one judge model)
+            count; a label with another `by`, or none, is left out.
+        positive: The positive class.
+
+    Returns:
+        `{topic: [(measured, reference), ...]}` for every topic with a reference label, in topic
+        order; a topic where no subject was labelled by both maps to `[]`. Never raises.
+    """
+    # The labeller filter runs before `latest`: another model's newer label on a subject must
+    # not hide this model's label there.
+    kept = examples if by is None else (ex for ex in examples if ex.source != measured or ex.by == by)
+    by_key: dict[tuple[str, str], dict[str, Example]] = defaultdict(dict)
+    for (topic, subject, source), ex in latest(kept).items():
+        by_key[(topic, source)][subject] = ex
+    out: dict[str, list[tuple[str, str]]] = {}
+    for (topic, source), ref in sorted(by_key.items()):
+        if source != reference:
+            continue
+        theirs = by_key.get((topic, measured), {})
+        out[topic] = [
+            (_yes(theirs[s].value, positive), _yes(ref[s].value, positive)) for s in sorted(ref) if s in theirs
+        ]
+    return out
+
+
 def agreement(
     examples: Iterable[Example],
     *,
@@ -147,22 +202,10 @@ def agreement(
     Returns:
         `{topic: {source: Agreement}}`.
     """
-    by: dict[tuple[str, str], dict[str, Example]] = defaultdict(dict)
-    for (topic, subject, source), ex in latest(examples).items():
-        by[(topic, source)][subject] = ex
-    out: dict[str, dict[str, Agreement]] = {}
-    for (topic, source), ref in sorted(by.items()):
-        if source != reference:
-            continue
-        out[topic] = {}
-        for m in measured:
-            theirs = by.get((topic, m), {})
-            pairs = [
-                (_yes(theirs[s].value, positive), _yes(ref[s].value, positive)) for s in sorted(ref) if s in theirs
-            ]
-            agree = sum(a == b for a, b in pairs) / len(pairs) if pairs else None
-            out[topic][m] = Agreement(len(pairs), agree, cohen_kappa(pairs), gwet_ac1(pairs))
-    return out
+    seen = list(examples)
+    each = {m: pairs(seen, reference=reference, measured=m, positive=positive) for m in measured}
+    topics = pairs(seen, reference=reference, measured=reference, positive=positive)
+    return {t: {m: Agreement.of(each[m].get(t, [])) for m in measured} for t in topics}
 
 
 def few_shot(examples: Iterable[Example], k: int, *, topic: str, source: Source = "human") -> list[Example]:
@@ -204,4 +247,4 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-__all__ = ["SOURCES", "Agreement", "Coverage", "agreement", "coverage", "few_shot", "latest"]
+__all__ = ["SOURCES", "Agreement", "Coverage", "agreement", "coverage", "few_shot", "latest", "pairs"]

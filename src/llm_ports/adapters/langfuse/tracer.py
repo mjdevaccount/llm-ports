@@ -118,11 +118,14 @@ class LangfuseGeneration:
         except Exception as exc:
             self._warn("end_failed", exc)
 
-    def score(self, name: str, value: float, comment: str | None = None) -> None:
-        """Attach a numeric score to the generation; never raises."""
+    def score(
+        self, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None
+    ) -> None:
+        """Attach a numeric score to the generation, with its metadata when given; never raises."""
         # The port's value is a float, so the score's data type is `NUMERIC` (summable on a dashboard).
+        kw: dict[str, Any] = {"metadata": dict(metadata)} if metadata is not None else {}
         try:
-            self._gen.score(name=name, value=value, data_type="NUMERIC", comment=comment)
+            self._gen.score(name=name, value=value, data_type="NUMERIC", comment=comment, **kw)
         except Exception as exc:
             self._warn("score_failed", exc)
 

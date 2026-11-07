@@ -74,6 +74,16 @@ def test_score_is_a_float_on_the_generation() -> None:
     assert s.scores == [("claims_kept", 3.0, "c")]
 
 
+def test_score_metadata_reaches_the_generation_and_none_keeps_the_three_argument_call() -> None:
+    t = RecordingTracer()
+    g = t.start_generation(name="n", model="m", provider="p", input="i", metadata={}, session_id=None, prompt_name=None)
+    obs = PortObservation(g)
+    obs.score(name="label.judge-x", value=1, comment=None, metadata={"by": "jm"})
+    obs.score(name="plain", value=0)
+    assert t.generations[0].scores == [("label.judge-x", 1.0, None), ("plain", 0.0, None)]
+    assert t.generations[0].score_metadata == [{"by": "jm"}, None]
+
+
 async def test_observe_opens_one_generation_and_ends_it_once() -> None:
     t = RecordingTracer()
     async with observe(

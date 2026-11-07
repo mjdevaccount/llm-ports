@@ -101,11 +101,13 @@ class RecordedGeneration:
         opened: The keyword arguments `start_generation` received.
         ended: The keyword arguments of `end`, or None while the generation is open.
         scores: Every `(name, value, comment)` passed to `score`, in call order.
+        score_metadata: The `metadata` of each of those scores, in the same order (None where none).
     """
 
     opened: dict[str, Any]
     ended: dict[str, Any] | None = None
     scores: list[tuple[str, float, str | None]] = field(default_factory=list)
+    score_metadata: list[Mapping[str, Any] | None] = field(default_factory=list)
 
     def end(
         self,
@@ -125,9 +127,12 @@ class RecordedGeneration:
             "metadata": metadata,
         }
 
-    def score(self, name: str, value: float, comment: str | None = None) -> None:
-        """Record one score."""
+    def score(
+        self, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None
+    ) -> None:
+        """Record one score and its metadata."""
         self.scores.append((name, value, comment))
+        self.score_metadata.append(metadata)
 
 
 class RecordingTracer:

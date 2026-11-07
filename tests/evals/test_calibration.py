@@ -96,3 +96,48 @@ class TestTallyAndVerdict:
         assert cal.verdict(harsh, floor=0.5)[0] == cal.CALIBRATED
         code, why = cal.verdict(harsh, floor=0.75)
         assert code == cal.FINDING and "a 0.50" in why
+
+
+def _pairs(tp: int, fn: int, fp: int, tn: int) -> list[tuple[str, str]]:
+    """(judge, human): tp judge pass + human good, fn judge fail + human good, ..."""
+    return [("yes", "yes")] * tp + [("no", "yes")] * fn + [("yes", "no")] * fp + [("no", "no")] * tn
+
+
+_CLEAN = [_r("x", "good", "pass"), _r("x", "tbd", "fail")]
+
+
+class TestTrust:
+    def test_no_pairs_is_untrusted_never_an_error(self) -> None:
+        t = cal.trust([], replay=_CLEAN)
+        assert not t.trusted and t.agreement.n == 0 and "0 human-labelled" in t.why
+
+    def test_agreeing_judge_with_a_calibrated_replay_is_trusted(self) -> None:
+        t = cal.trust(_pairs(12, 1, 1, 10), replay=_CLEAN)
+        assert t.trusted and t.seeded == cal.CALIBRATED and t.false_fail == 1 and t.human_good == 13
+        assert "seeded-bad all caught" in t.why
+
+    def test_a_judge_that_fails_good_replies_is_not_trusted(self) -> None:
+        # The measured box judge: failed 11 of 14 human-good replies.
+        t = cal.trust(_pairs(3, 11, 0, 6), replay=_CLEAN)
+        assert not t.trusted and "failed 11/14" in t.why
+
+    def test_a_seeded_bad_pass_vetoes_agreement(self) -> None:
+        t = cal.trust(_pairs(12, 0, 0, 10), replay=[_r("x", "good", "pass"), _r("x", "tbd", "pass")])
+        assert not t.trusted and t.seeded == cal.FINDING and t.why.startswith("seeded-bad")
+
+    def test_a_malformed_replay_row_is_blind_never_an_error(self) -> None:
+        t = cal.trust(_pairs(12, 0, 0, 10), replay=[{"role": "x"}])
+        assert not t.trusted and t.seeded == cal.BLIND and "replay unreadable (KeyError" in t.why
+
+    def test_a_missing_replay_is_untrusted_unless_not_required(self) -> None:
+        assert not cal.trust(_pairs(12, 0, 0, 10)).trusted
+        assert cal.trust(_pairs(12, 0, 0, 10), require_seeded=False).trusted
+
+    def test_the_low_bound_is_stricter_than_the_point(self) -> None:
+        p = _pairs(9, 2, 1, 8)
+        assert cal.trust(p, replay=_CLEAN, min_kappa=0.6).trusted
+        assert not cal.trust(p, replay=_CLEAN, min_kappa=0.6, bound="low").trusted
+
+    def test_one_sided_labels_never_clear_the_floor(self) -> None:
+        t = cal.trust(_pairs(25, 0, 0, 0), replay=_CLEAN)
+        assert not t.trusted and "undefined" in t.why
