@@ -7,6 +7,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-07
+
+### Added
+
+- `llm_ports.forecast`, standard library only: `Forecast` and `Resolved`; `score` (Brier, log
+  loss, skill over the base rate, `overconfidence`), `reliability` and `ece`; the `Calibrator`
+  port with `Insufficient` and `PiecewiseLinear` (a fitted monotone map, JSON round-trip);
+  `HedgeMap`, the probability each source's hedge word has earned (beta-binomial shrinkage
+  toward the word's pooled rate); the `Combiner` port and `LogitPool` (equal-weight log-odds
+  pool, optional extremizing). A `forecast-standalone` import contract keeps it liftable.
+  Rationale: ADR-0013.
+- Adapters, one extra each and grouped as `forecast` (not in `all`): `adapters.scoringrules`
+  (`brier_scores`, `interval_scores`, `crps_normal`), `adapters.sklearn.IsotonicCalibrator`,
+  `adapters.venn_abers.VennAbersCalibrator` (small-n, with a `(p0, p1)` bracket) and
+  `adapters.river.RiverLogitPool` (online logistic logit pool with silent-voice flags).
+- The forecasts guide and `examples/forecasts.py`.
+
+### Changed
+
+- The coverage floor rises to 97.9%.
+
 ## [1.10.0] - 2026-11-07
 
 ### Added

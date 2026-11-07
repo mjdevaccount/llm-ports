@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "1.10.0"
+version = "1.11.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -57,7 +57,16 @@ langfuse = ["langfuse>=5.0.2,<6"]
 otel = ["opentelemetry-api>=1.30", "opentelemetry-semantic-conventions>=0.58b0"]
 # `adapters.sqlglot` (the read-only AST guard for agent-written SQL).
 sql = ["sqlglot>=30.22"]
-# Every extra but `lettucedetect`, whose model weighs hundreds of MB.
+# `adapters.scoringrules` (interval score, CRPS), `adapters.sklearn` (the isotonic Calibrator),
+# `adapters.venn_abers` (the small-n Calibrator), `adapters.river` (the online logit-pool Combiner).
+# Each pulls numpy and scipy; `forecast` installs all four.
+scoringrules = ["scoringrules>=0.11"]
+sklearn = ["scikit-learn>=1.9"]
+venn-abers = ["venn-abers>=1.5.4", "scikit-learn>=1.9"]
+river = ["river>=0.26"]
+forecast = ["llm-ports[scoringrules,sklearn,venn-abers,river]"]
+# Every extra but `lettucedetect` (its model weighs hundreds of MB) and the `forecast` four (the
+# numpy/scipy/pandas stack, which a caller that only calls models never needs).
 all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql]"]
 
 [build-system]
@@ -88,6 +97,10 @@ dev = [
     "pre-commit>=4.7",
     "import-linter>=2.15",
     "pytest-examples>=0.0.18",
+    "scoringrules>=0.11",
+    "scikit-learn>=1.9",
+    "venn-abers>=1.5.4",
+    "river>=0.26",
 ]
 docs = [
     "mkdocs-material>=9.8.0",
@@ -132,7 +145,7 @@ include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "layers"
-name = "layers: adapters | testing > evals | rag | provenance > call > grounding | prompts | observability > ports | learn"
+name = "layers: adapters | testing > evals | rag | provenance > call > grounding | prompts | observability > ports | learn | forecast"
 type = "layers"
 containers = ["llm_ports"]
 layers = [
@@ -140,7 +153,7 @@ layers = [
     "evals | rag | provenance",
     "call",
     "grounding | prompts | observability",
-    "ports | learn",
+    "ports | learn | forecast",
 ]
 
 [[tool.importlinter.contracts]]
@@ -163,6 +176,26 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+id = "forecast-standalone"
+name = "forecast imports nothing else from llm_ports (it can be lifted into any codebase)"
+type = "forbidden"
+source_modules = ["llm_ports.forecast"]
+forbidden_modules = [
+    "llm_ports.adapters",
+    "llm_ports.call",
+    "llm_ports.evals",
+    "llm_ports.grounding",
+    "llm_ports.learn",
+    "llm_ports.observability",
+    "llm_ports.ports",
+    "llm_ports.prompts",
+    "llm_ports.provenance",
+    "llm_ports.rag",
+    "llm_ports.testing",
+    "llm_ports._extras",
+]
+
+[[tool.importlinter.contracts]]
 id = "adapter-independence"
 name = "adapters do not import each other"
 type = "independence"
@@ -173,7 +206,11 @@ modules = [
     "llm_ports.adapters.otel",
     "llm_ports.adapters.pydantic_ai",
     "llm_ports.adapters.pydantic_evals",
+    "llm_ports.adapters.river",
+    "llm_ports.adapters.scoringrules",
+    "llm_ports.adapters.sklearn",
     "llm_ports.adapters.sqlglot",
+    "llm_ports.adapters.venn_abers",
 ]
 
 [[tool.importlinter.contracts]]
@@ -183,6 +220,7 @@ type = "forbidden"
 source_modules = [
     "llm_ports.call",
     "llm_ports.evals",
+    "llm_ports.forecast",
     "llm_ports.learn",
     "llm_ports.grounding",
     "llm_ports.observability",
@@ -196,11 +234,18 @@ forbidden_modules = [
     "httpx2",
     "langfuse",
     "lettucedetect",
+    "numpy",
     "opentelemetry",
+    "pandas",
     "pydantic_ai",
     "pydantic_evals",
+    "river",
+    "scipy",
+    "scoringrules",
+    "sklearn",
     "sqlglot",
     "tenacity",
+    "venn_abers",
 ]
 
 [tool.pytest.ini_options]
@@ -223,7 +268,7 @@ strict = true
 python_version = "3.12"
 
 [[tool.mypy.overrides]]
-module = ["lettucedetect.*"]
+module = ["lettucedetect.*", "scoringrules.*", "sklearn.*", "venn_abers.*"]
 ignore_missing_imports = true
 
 # Dead code: `vulture` runs in the `lint` job over the package and its tests (tests count as use).
@@ -246,5 +291,5 @@ branch = true
 
 [tool.coverage.report]
 # The floor is the measured branch-coverage total; raise it when coverage rises, never lower it.
-fail_under = 97.1
+fail_under = 97.9
 precision = 1

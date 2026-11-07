@@ -74,6 +74,7 @@ nav:
       - guides/print-gate.md
       - guides/judge-and-refute.md
       - guides/learning-loops.md
+      - guides/forecasts.md
       - guides/rag.md
       - guides/opentelemetry.md
       - guides/openai-compatible.md
@@ -85,6 +86,7 @@ nav:
       - api/observability.md
       - api/evals.md
       - api/learn.md
+      - api/forecast.md
       - api/rag.md
       - api/provenance.md
       - api/testing.md
@@ -103,6 +105,7 @@ nav:
       - adr/0010-a-standalone-learning-loop-core.md
       - adr/0011-label-names-follow-the-stores-own-rule.md
       - adr/0012-a-judge-earns-trust-from-labels.md
+      - adr/0013-forecast-scoring-in-a-standalone-core.md
   - Design:
       - design/LEARNING-LOOP-CORE.md
       - design/EVAL-LABELS-CONSOLIDATION.md

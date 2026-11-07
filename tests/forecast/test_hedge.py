@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from llm_ports.forecast import HedgeMap
+from llm_ports.forecast.hedge import DEFAULT_STRENGTH, MAX_STRENGTH, normalise
+
+
+def rows(source: str, hedge: str, hits: int, n: int) -> list[tuple[str, str, bool]]:
+    return [(source, hedge, i < hits) for i in range(n)]
+
+
+def test_normalise() -> None:
+    assert normalise("  Very   LIKELY ") == "very likely"
+
+
+def test_the_same_word_means_different_things_from_different_sources() -> None:
+    data = rows("a", "likely", 160, 200) + rows("b", "Likely", 60, 200) + rows("c", "likely", 110, 200)
+    hm = HedgeMap.fit(data)
+    pa, pb, pc = hm.p("a", "likely"), hm.p("b", "LIKELY"), hm.p("c", "likely")
+    assert pa is not None and pb is not None and pc is not None
+    assert pa > pc > pb
+    assert pa == pytest.approx(0.8, abs=0.02)  # lots of data: barely shrunk
+    assert hm.strengths["likely"] < MAX_STRENGTH
+
+
+def test_a_thin_source_is_shrunk_toward_the_pool() -> None:
+    data = rows("a", "could", 30, 100) + rows("b", "could", 35, 100) + rows("thin", "could", 2, 2)
+    hm = HedgeMap.fit(data)
+    thin = hm.p("thin", "could")
+    assert thin is not None and thin < 0.6  # two lucky calls do not make "could" mean 1.0
+    assert hm.p("never-used-it", "could") == pytest.approx(hm.pooled["could"])
+
+
+def test_agreeing_sources_are_pooled_and_a_single_source_uses_the_fallback() -> None:
+    agree = HedgeMap.fit(rows("a", "maybe", 50, 100) + rows("b", "maybe", 50, 100))
+    assert agree.strengths["maybe"] == MAX_STRENGTH
+    single = HedgeMap.fit(rows("a", "watch for", 3, 10))
+    assert single.strengths["watch for"] == DEFAULT_STRENGTH
+    fixed = HedgeMap.fit(rows("a", "x", 1, 2) + rows("b", "x", 0, 2), strength=4.0)
+    assert fixed.strengths["x"] == 4.0
+
+
+def test_an_unknown_word_has_no_probability_and_empty_hedges_are_skipped() -> None:
+    hm = HedgeMap.fit([("a", "  ", True), ("a", "likely", True)])
+    assert hm.p("a", "certain") is None
+    assert [r.hedge for r in hm.rows()] == ["likely"]
+
+
+def test_rows_and_json_round_trip() -> None:
+    hm = HedgeMap.fit(rows("a", "likely", 7, 10) + rows("b", "likely", 3, 10))
+    [ra, rb] = hm.rows()
+    assert (ra.source, ra.n, ra.hits) == ("a", 10, 7) and rb.pooled == hm.pooled["likely"]
+    back = HedgeMap.from_dict(json.loads(json.dumps(hm.as_dict())))
+    assert back.p("a", "likely") == hm.p("a", "likely")
+
+
+@pytest.mark.parametrize("data", [{}, {"cells": [["a"]], "pooled": {}}, {"cells": [], "pooled": []}])
+def test_from_dict_refuses_what_as_dict_never_wrote(data: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        HedgeMap.from_dict(data)
