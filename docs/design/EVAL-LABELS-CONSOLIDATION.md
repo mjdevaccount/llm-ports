@@ -131,11 +131,11 @@ Human verdict labels on LLM replies: **~20**. That is the number this design exi
 Two label shapes, one store:
 
 1. **Verdict labels** (was this reply good?) are Langfuse **scores** on the production
-   generation observation. Human: score name `label:<role>`, source `ANNOTATION`, written in
+   generation observation. Human: score name `label-<role>`, source `ANNOTATION`, written in
    the Langfuse annotation-queue UI. Strong model: the same name, source `API`, metadata
    `{"labeller": "model", "by": "<model id>"}`. The deployed judge keeps its existing
    `<role>.llm_judge` score. One categorical score config per role (`good` / `bad`), one
-   annotation queue per role (`label:<role>`).
+   annotation queue per role (`label-<role>`).
 2. **Reference outputs** (the right answer for this input) are Langfuse **dataset items** with
    `expected_output`, one dataset per role named `golden:<role>`, `source_observation_id` set when
    the item came from production. The five existing datasets keep their names (see PR 2 notes).
@@ -183,7 +183,7 @@ Why Langfuse and not a table or jsonl:
   raises; each returns a named outcome (ADR-0001), e.g. `could_not_reach` with the reason.
 - Adapter `adapters/langfuse/labels.py` `LangfuseLabelStore`: get-or-create the per-role score
   config and annotation queue, add observations to the queue, write model labels as API scores,
-  read `label:<role>` and `<role>.llm_judge` scores back as `Label`s.
+  read `label-<role>` and `<role>.llm_judge` scores back as `Label`s.
 - `adapters/langfuse/experiments.py`: `run` / `record_rows`, moved from trade-data
   `scripts/_langfuse_run.py` (record an offline-graded eval as a dataset experiment; an item the
   SDK dropped is a named outcome, never a shrunken ratio).
@@ -218,7 +218,7 @@ Not in llm-ports: which roles, the targets, the Gemini budget, the schedule. Tho
   labels are counted SEPARATELY and never pass for human ones; `agreement` measures the strong model
   against the human labels before any of its labels are trusted for a role.
 - **Seed the store** once from what exists: `judge_calibration.jsonl` (20 human verdicts with span
-  ids) -> `label:<role>` scores; `churn_golden_labeled.jsonl` (203) -> dataset
+  ids) -> `label-<role>` scores; `churn_golden_labeled.jsonl` (203) -> dataset
   `golden:churn.extract`; then the jsonl files are deleted and their readers switched.
 - **Coverage** (`GET /llm/labels/coverage`): `labels.coverage` over the role registry
   (`service/platform/llm_roles.py`, 34 roles) + `quant.autopsy_calibration` for trade.autopsy, and
@@ -264,6 +264,12 @@ labelling itself happens in Langfuse's queue UI (no new UI is built for it).
   not generic enough to move; it stays a trade-data grader candidate.
 - **Golden-set seeding is `experiments.seed` (1.9.0)**, idempotent by item id, replacing the
   consumer's three hand-rolled dataset-item loops.
+- **Label names use `-`, not `:` (1.9.1).** Langfuse refuses a score-config name outside
+  letters, digits, `_`, space, `.`, `(`, `)`, `-` (1-80), and a human label's score is named after
+  its config, so `label:<role>` failed the first config create with a 400 and the first queue run
+  enqueued nothing. Names are now `label-<role>`, `label.model-<role>`, `label.judge-<role>`;
+  reads accept both spellings, and the adapter refuses a role whose name the server would refuse
+  before writing anything.
 
 ## Not in scope
 

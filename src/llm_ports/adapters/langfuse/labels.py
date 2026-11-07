@@ -4,13 +4,15 @@
 topics `llm:<role>` (`evals.labels.topic`). An example is a score on the labelled generation,
 named by source and role:
 
-- `label:<role>`: a HUMAN label, given in Langfuse's annotation-queue UI against a categorical
+- `label-<role>`: a HUMAN label, given in Langfuse's annotation-queue UI against a categorical
   score config of the same name (`good` / `bad`). This adapter creates the config and the queue
   and never writes this name.
-- `label.model:<role>`: a stronger model's label, written by `put`.
-- `label.judge:<role>`: the production judge's verdict as a label, written by `put`.
+- `label.model-<role>`: a stronger model's label, written by `put`.
+- `label.judge-<role>`: the production judge's verdict as a label, written by `put`.
 
-Every role gets one score config and one annotation queue, both named `label:<role>`, created on
+The separator is `-` because Langfuse refuses a score-config name outside `CONFIG_NAME` (no `:`);
+reads also accept the earlier `label:<role>` spelling, so scores written under it stay readable.
+Every role gets one score config and one annotation queue, both named `label-<role>`, created on
 first `enqueue`. `enqueue` skips a reply the queue already holds (pending or done), and `queued`
 reads what it holds, so a nightly draw neither duplicates items nor grows the backlog unbounded. `put` writes each score under a deterministic id (source, role, subject), so a
 relabel replaces the earlier score instead of adding a second one. The SDK is synchronous; each
@@ -26,6 +28,9 @@ Invariants:
     - A score this adapter cannot read as an example (another name, an unknown value, no
       observation subject) is skipped, never guessed.
     - A topic that is not `llm:<role>` holds no examples here and is refused by `put`/`enqueue`.
+    - A role whose label name Langfuse would refuse (`CONFIG_NAME`) is refused here as a
+      `request_fault` before any write, never sent to fail remotely.
+    - A failure reason carries the server's own validation message when it sends one.
 
 Rationale: ADR-0010.
 """
@@ -34,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from collections.abc import Iterator, Sequence
 from datetime import datetime
 from typing import Any, Literal
@@ -52,6 +58,11 @@ Labeller = Literal["human", "model", "judge"]
 #: The score name prefix of each source.
 PREFIX: dict[Labeller, str] = {"human": "label", "model": "label.model", "judge": "label.judge"}
 _BY_PREFIX: dict[str, Labeller] = {v: k for k, v in PREFIX.items()}
+#: Between a label's source prefix and its role.
+SEP = "-"
+_LEGACY_SEP = ":"
+#: The score-config names Langfuse accepts: letters, digits, `_`, space, `.`, `(`, `)`, `-`, 1-80 long.
+CONFIG_NAME = re.compile(r"[\w .()-]{1,80}")
 #: The categorical values a human picks, and the numeric value Langfuse books each under.
 CATEGORIES: tuple[dict[str, str | float], ...] = ({"label": "good", "value": 1.0}, {"label": "bad", "value": 0.0})
 #: Scores read per page.
@@ -61,14 +72,43 @@ _FIELDS = "details,subject,annotation"
 
 def score_name(source: Labeller, role: str) -> str:
     """Return the score name a `source`'s label on a `role` reply is stored under."""
-    return f"{PREFIX[source]}:{role}"
+    return f"{PREFIX[source]}{SEP}{role}"
+
+
+def _names(source: Labeller, role: str) -> tuple[str, str]:
+    """Return the current and the earlier (`:`) spelling of a label score name."""
+    return score_name(source, role), f"{PREFIX[source]}{_LEGACY_SEP}{role}"
 
 
 def parse_name(name: str) -> tuple[Labeller, str] | None:
-    """Return `(source, role)` for a label score name, or None for any other score."""
-    prefix, sep, role = name.partition(":")
-    who = _BY_PREFIX.get(prefix)
-    return (who, role) if sep and role and who else None
+    """Return `(source, role)` for a label score name in either spelling, or None for any other score."""
+    for prefix in sorted(_BY_PREFIX, key=len, reverse=True):
+        for sep in (SEP, _LEGACY_SEP):
+            head = prefix + sep
+            if name.startswith(head) and len(name) > len(head):
+                return _BY_PREFIX[prefix], name[len(head) :]
+    return None
+
+
+def _bad_name(role: str) -> str | None:
+    """Return why Langfuse would refuse `role`'s label names, or None when every source's name is valid."""
+    for who in PREFIX:
+        name = score_name(who, role)
+        if CONFIG_NAME.fullmatch(name) is None:
+            return f"label name {name!r} is not a Langfuse score-config name (letters, digits, _ .()- , 1-80)"
+    return None
+
+
+def _reason(exc: BaseException) -> str:
+    """Return `failure_reason(exc)` plus the server's first validation message, when it sent one."""
+    base = failure_reason(exc)
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return base
+    errors = body.get("error")
+    first = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
+    msg = first.get("message") or body.get("message")
+    return f"{base}: {str(msg)[:200]}" if msg else base
 
 
 def _value(d: Any) -> str | None:
@@ -107,8 +147,11 @@ def _refusal(examples: Sequence[Example]) -> str | None:
     for ex in examples:
         if ex.source not in ("model", "judge"):
             return f"a {ex.source} label is not written by code (a human labels in the annotation UI)"
-        if role_of(ex.topic) is None:
+        role = role_of(ex.topic)
+        if role is None:
             return f"topic {ex.topic!r} is not a model reply's (llm:<role>)"
+        if (bad := _bad_name(role)) is not None:
+            return bad
         if ex.value not in ("good", "bad"):
             return f"label {ex.value!r} is not good or bad"
         if not ex.ref.get("trace"):
@@ -209,11 +252,13 @@ class LangfuseExampleStore:
         role = role_of(topic)
         if role is None:
             return Written(0, "request_fault", f"topic {topic!r} is not a model reply's (llm:<role>)")
+        if (bad := _bad_name(role)) is not None:
+            return Written(0, "request_fault", bad)
         done = [0]
         try:
             await asyncio.to_thread(self._enqueue, role, subjects, done)
         except Exception as exc:  # the store's failure is the outcome
-            return Written(done[0], "unavailable", failure_reason(exc))
+            return Written(done[0], "unavailable", _reason(exc))
         return Written(done[0], "ok")
 
     async def queued(self, topic: str) -> Queued:
@@ -227,7 +272,7 @@ class LangfuseExampleStore:
         try:
             return await asyncio.to_thread(self._queued, role)
         except Exception as exc:  # an unreadable queue is never an empty one
-            return Queued(outcome="unavailable", reason=failure_reason(exc))
+            return Queued(outcome="unavailable", reason=_reason(exc))
 
     def _put(self, examples: Sequence[Example], done: list[int]) -> None:
         for ex in examples:
@@ -262,7 +307,7 @@ class LangfuseExampleStore:
         try:
             await asyncio.to_thread(self._put, examples, done)
         except Exception as exc:  # the store's failure is the outcome
-            return Written(done[0], "unavailable", failure_reason(exc))
+            return Written(done[0], "unavailable", _reason(exc))
         return Written(done[0], "ok")
 
     def _pages(self, names: str, since: datetime | None) -> Iterator[Any]:
@@ -288,14 +333,24 @@ class LangfuseExampleStore:
         A topic that is not `llm:<role>` contributes nothing; an `outcome` source reads empty.
         """
         roles = [r for t in topics if (r := role_of(t)) is not None]
-        names = ",".join(score_name(who, r) for r in roles for who in PREFIX if source is None or who == source)
+        names = ",".join(n for r in roles for who in PREFIX if source is None or who == source for n in _names(who, r))
         if not names:
             return ExamplesRead((), "ok")
         try:
             got = await asyncio.to_thread(self._read, names, since, source)
         except Exception as exc:  # an unreadable store is never an empty one
-            return ExamplesRead((), "unavailable", failure_reason(exc))
+            return ExamplesRead((), "unavailable", _reason(exc))
         return ExamplesRead(got, "ok")
 
 
-__all__ = ["CATEGORIES", "PREFIX", "Labeller", "LangfuseExampleStore", "example_of_score", "parse_name", "score_name"]
+__all__ = [
+    "CATEGORIES",
+    "CONFIG_NAME",
+    "PREFIX",
+    "SEP",
+    "Labeller",
+    "LangfuseExampleStore",
+    "example_of_score",
+    "parse_name",
+    "score_name",
+]

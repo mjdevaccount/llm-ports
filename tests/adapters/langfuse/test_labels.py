@@ -4,6 +4,7 @@ outcome."""
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -29,6 +30,20 @@ def _score(name: str, value: Any, obs: str = "o1", trace: str = "t1", kind: str 
     )
 
 
+#: The server's own rule for a score-config name (Langfuse `packages/shared/src/domain/score-configs.ts`),
+#: copied here so the double refuses what the server refuses, independent of the adapter's check.
+_SERVER_CONFIG_NAME = re.compile(r"[\w .()-]{1,80}")
+
+
+class ServerRefused(Exception):
+    """Shaped like the SDK's API error: a status code and the server's JSON body."""
+
+    def __init__(self, body: dict[str, Any]) -> None:
+        super().__init__(f"status_code: 400, body: {body}")
+        self.status_code = 400
+        self.body = body
+
+
 class FakeApi:
     def __init__(self, scores: list[Any], configs: list[Any] | None = None, queues: list[Any] | None = None) -> None:
         self.created: list[str] = []
@@ -44,6 +59,10 @@ class FakeApi:
             return SimpleNamespace(data=pages[i], meta=SimpleNamespace(cursor=nxt))
 
         def create_config(**kw: Any) -> SimpleNamespace:
+            if _SERVER_CONFIG_NAME.fullmatch(kw["name"]) is None:
+                raise ServerRefused(
+                    {"message": "Invalid request data", "error": [{"message": "Name contains invalid characters"}]}
+                )
             self.created.append("config:" + kw["name"])
             return SimpleNamespace(id="cfg-new")
 
@@ -90,10 +109,41 @@ def test_it_is_the_core_store_and_the_queue() -> None:
 
 
 def test_score_names_parse_both_ways_and_other_scores_are_not_labels() -> None:
-    assert lf.score_name("model", "summarize") == "label.model:summarize"
+    assert lf.score_name("model", "summarize") == "label.model-summarize"
+    assert lf.parse_name("label-summarize") == ("human", "summarize")
+    assert lf.parse_name("label.judge-a") == ("judge", "a")
+    assert lf.parse_name("label.model-x.y_z") == ("model", "x.y_z")
+    assert lf.parse_name("label-model-x") == ("human", "model-x")
+    assert lf.parse_name("faithfulness") is None and lf.parse_name("label-") is None
+    # the earlier `:` spelling still reads, so scores written under it are not lost
     assert lf.parse_name("label:summarize") == ("human", "summarize")
-    assert lf.parse_name("label.judge:a") == ("judge", "a")
-    assert lf.parse_name("faithfulness") is None and lf.parse_name("label:") is None
+    assert lf.parse_name("label.judge:a") == ("judge", "a") and lf.parse_name("label:") is None
+
+
+@pytest.mark.parametrize("role", ["summarize", "deep_extract.mentions", "curation.deep_research", "day_brief.map"])
+def test_every_label_name_is_one_the_server_accepts(role: str) -> None:
+    for who in lf.PREFIX:
+        assert _SERVER_CONFIG_NAME.fullmatch(lf.score_name(who, role)), (who, role)
+
+
+async def test_a_role_the_server_would_refuse_is_refused_before_any_write() -> None:
+    api = FakeApi([])
+    client = FakeClient(api)
+    store = lf.LangfuseExampleStore(client)
+    got = await store.enqueue(topic("a:b"), [("o1", "t1")])
+    assert (got.written, got.outcome) == (0, "request_fault") and "score-config name" in (got.reason or "")
+    wrote = await store.put([_ex(tp="llm:" + "x" * 80)])
+    assert (wrote.written, wrote.outcome) == (0, "request_fault")
+    assert api.created == [] and api.items == [] and client.written == []
+
+
+async def test_a_server_refusal_names_the_servers_reason() -> None:
+    api = FakeApi([])
+    api.score_configs.create = lambda **kw: (_ for _ in ()).throw(
+        ServerRefused({"message": "Invalid request data", "error": [{"message": "Name contains invalid characters"}]})
+    )
+    got = await lf.LangfuseExampleStore(FakeClient(api)).enqueue(topic("a"), [("o1", "t1")])
+    assert got.outcome == "unavailable" and "Name contains invalid characters" in (got.reason or "")
 
 
 def test_example_of_score_reads_value_kinds_and_skips_what_it_cannot_read() -> None:
@@ -133,7 +183,7 @@ async def test_examples_pages_filters_by_source_and_ignores_other_topics() -> No
     assert len(api.reads) == 2  # two pages
     human = await store.examples([topic("a")], source="human")
     assert {e.source for e in human.examples} == {"human"}
-    assert api.reads[-1]["name"] == "label:a"
+    assert api.reads[-1]["name"] == "label-a,label:a"  # both spellings
     assert (await store.examples(["trend:1d"])).examples == ()
     assert (await store.examples([topic("a")], source="outcome")).examples == ()
 
@@ -147,7 +197,7 @@ async def test_put_writes_model_and_judge_scores_under_a_stable_id() -> None:
     store = lf.LangfuseExampleStore(client)
     got = await store.put([_ex("model"), _ex("judge", value="good")])
     assert (got.written, got.outcome) == (2, "ok") and client.flushed == 1
-    assert [w["name"] for w in client.written] == ["label.model:a", "label.judge:a"]
+    assert [w["name"] for w in client.written] == ["label.model-a", "label.judge-a"]
     first = client.written[0]
     assert (first["trace_id"], first["observation_id"], first["value"]) == ("t1", "o1", "bad")
     again = FakeClient(FakeApi([]))
@@ -173,22 +223,22 @@ async def test_put_refuses_a_batch_it_cannot_write_and_writes_none(ex: Example, 
 
 
 async def test_enqueue_finds_or_creates_the_config_and_queue_once() -> None:
-    api = FakeApi([], configs=[SimpleNamespace(name="label:a", id="cfg-a")])
+    api = FakeApi([], configs=[SimpleNamespace(name="label-a", id="cfg-a")])
     store = lf.LangfuseExampleStore(FakeClient(api))
     got = await store.enqueue(topic("a"), [("o1", "t1"), ("o2", "t1")])
     assert (got.written, got.outcome) == (2, "ok")
-    assert api.created == ["queue:label:a:cfg-a"] and api.items == [("q-new", "o1"), ("q-new", "o2")]
+    assert api.created == ["queue:label-a:cfg-a"] and api.items == [("q-new", "o1"), ("q-new", "o2")]
     await store.enqueue(topic("a"), [("o3", "t1")])
-    assert api.created == ["queue:label:a:cfg-a"]  # cached
+    assert api.created == ["queue:label-a:cfg-a"]  # cached
 
-    api2 = FakeApi([], queues=[SimpleNamespace(name="label:b", id="q-b")])
+    api2 = FakeApi([], queues=[SimpleNamespace(name="label-b", id="q-b")])
     store2 = lf.LangfuseExampleStore(FakeClient(api2))
     assert (await store2.enqueue(topic("b"), [("o1", "t1")])).ok
     assert api2.created == [] and api2.items == [("q-b", "o1")]
 
     api3 = FakeApi([])
     assert (await lf.LangfuseExampleStore(FakeClient(api3)).enqueue(topic("c"), [])).ok
-    assert api3.created == ["config:label:c", "queue:label:c:cfg-new"]
+    assert api3.created == ["config:label-c", "queue:label-c:cfg-new"]
 
 
 async def test_enqueue_refuses_a_non_llm_topic() -> None:
@@ -209,7 +259,7 @@ async def test_every_server_failure_is_an_outcome_never_a_raise() -> None:
 
 
 async def test_enqueue_skips_what_the_queue_already_holds() -> None:
-    api = FakeApi([], queues=[SimpleNamespace(name="label:a", id="q-a")])
+    api = FakeApi([], queues=[SimpleNamespace(name="label-a", id="q-a")])
     store = lf.LangfuseExampleStore(FakeClient(api))
     assert (await store.enqueue(topic("a"), [("o1", "t1"), ("o1", "t1")])).written == 1
     got = await store.enqueue(topic("a"), [("o1", "t1"), ("o2", "t1")])
@@ -218,7 +268,7 @@ async def test_enqueue_skips_what_the_queue_already_holds() -> None:
 
 
 async def test_queued_splits_pending_from_done_and_pages() -> None:
-    api = FakeApi([], queues=[SimpleNamespace(name="label:a", id="q-a")])
+    api = FakeApi([], queues=[SimpleNamespace(name="label-a", id="q-a")])
     api.items = [("q-a", f"o{i}") for i in range(lf.PAGE + 1)] + [("q-other", "x")]
     api.done = {"o0": "COMPLETED"}
     got = await lf.LangfuseExampleStore(FakeClient(api)).queued(topic("a"))
