@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-11-07
+
+### Fixed
+
+- `llm_ports.adapters.langfuse.labels`: label score names are `label-<role>`, `label.model-<role>`
+  and `label.judge-<role>`. The `:` spelling is not a valid Langfuse score-config name, so the
+  first `enqueue` for any role failed with a 400 and created no queue. Reads accept both spellings,
+  so scores already written under `label.judge:<role>` stay readable.
+- A role whose label name Langfuse would refuse is now a `request_fault` from `enqueue` and `put`
+  before any write (new `CONFIG_NAME`), and an `unavailable` reason carries the server's own
+  validation message instead of only the status code.
+- `examples` splits its score-name filter into `NAMES_PER_READ` names per request, so the query
+  string stays bounded as roles grow. Rationale: ADR-0011.
+
 ## [1.9.0] - 2026-11-07
 
 ### Added
