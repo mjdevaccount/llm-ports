@@ -17,6 +17,10 @@ Built-in graders, for structured outputs (a dict or pydantic value under a gramm
 - `numbers_from_inputs`: figures in the reply's prose that no part of the prompt rendered, digit
   runs by value and spelled numbers alike (`numbers.loose`): the number law, per call.
 - `echo`: the share of the reply's sentences copied verbatim from the prompt.
+- `cites_url`: the distinct http(s) URLs the reply carries, in any string field. A web-fetching
+  tier's reply that cites nothing cannot be checked against its pages. Web calls only.
+- `no_refusal`: the stock phrases of an ungrounded refusal ("I don't have real-time access", "as of
+  my training data", "please consult ..."). An honest "the sources do not cover X" is not matched.
 
 A consumer adds its own graders by passing a table (`{**GRADERS, "mine": fn}`) to `score_all`,
 `board_graders` or `call.Hooks(graders=...)`. This package never mutates `GRADERS`.
@@ -50,6 +54,17 @@ _QUOTE_MAX = 60  # the copied sentence `echo` quotes in its reason
 _SENTENCE = re.compile(r"[.!?\n]+")
 _WS = re.compile(r"\s+")
 _INDEX = re.compile(r"\[\d+\]")  # `items[3].price` -> `items[].price`: the field, not the row
+_URL = re.compile(r"https?://[^\s)\]>\"'`]+")
+#: Whole-claim refusal phrases; kept narrow so a stray word in honest prose never matches.
+_REFUSAL = re.compile(
+    r"\b(?:i (?:do not|don'?t|cannot|can'?t) (?:have )?(?:access|browse|real-?time)"
+    r"|unable to (?:provide|retrieve|access|browse)"
+    r"|as of my (?:last )?(?:training|knowledge)"
+    r"|my (?:training|knowledge) (?:data|cutoff)"
+    r"|please (?:check|consult|refer to)"
+    r"|recommend (?:checking|consulting|visiting))\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -205,11 +220,28 @@ def echo(prompt: str, value: Any, _role: Role) -> CallScore:
     )
 
 
+def cites_url(_prompt: str, value: Any, _role: Role) -> CallScore:
+    """Count the distinct http(s) URLs in the reply's string fields. Passes at one or more.
+
+    A web call only (`WEB_ONLY_GRADERS`): a text call has no pages to cite.
+    """
+    urls = {u.rstrip(".,;:") for s in prose(value) for u in _URL.findall(s)}
+    return CallScore("cites_url", float(len(urls)), bool(urls), "" if urls else "the reply cites no URL")
+
+
+def no_refusal(_prompt: str, value: Any, _role: Role) -> CallScore:
+    """Count the ungrounded-refusal phrases in the reply's prose. Passes only at zero."""
+    hits = [m.group(0) for s in prose(value) for m in _REFUSAL.finditer(s)]
+    return CallScore("no_refusal", float(len(hits)), not hits, f"refusal: {hits[:2]}" if hits else "")
+
+
 #: The built-in graders by name; a `Role` names its graders as strings (data, comparable, printable).
 GRADERS: dict[str, CallGrader] = {
     "schema_complete": schema_complete,
     "numbers_from_inputs": numbers_from_inputs,
     "echo": echo,
+    "cites_url": cites_url,
+    "no_refusal": no_refusal,
 }
 
 
@@ -219,17 +251,21 @@ GRADERS: dict[str, CallGrader] = {
 #: read's figures come off the image, a research reply's off the pages. `call.generate` drops these
 #: for any call with `images=` or `web=True`; a text-only call keeps every grader its role names.
 TEXT_ONLY_GRADERS: frozenset[str] = frozenset({"numbers_from_inputs"})
+#: Graders that hold only on a web-fetching call: `cites_url` fails every honest text-only reply,
+#: which has no pages to cite. `call.generate` drops these for any call without `web=True`.
+WEB_ONLY_GRADERS: frozenset[str] = frozenset({"cites_url"})
 
 
 def graders_for_inputs(graders: tuple[str, ...], *, has_images: bool, has_web: bool = False) -> tuple[str, ...]:
     """Return the graders that can see this call's inputs, in their given order.
 
-    Pure. A text-only call keeps all of them; an image beside the prompt or a web-fetching tier
-    removes `TEXT_ONLY_GRADERS`.
+    Pure. An image beside the prompt or a web-fetching tier removes `TEXT_ONLY_GRADERS`; a call
+    without a web-fetching tier removes `WEB_ONLY_GRADERS`.
     """
-    if has_images or has_web:
-        return tuple(g for g in graders if g not in TEXT_ONLY_GRADERS)
-    return graders
+    drop = (TEXT_ONLY_GRADERS if has_images or has_web else frozenset()) | (
+        frozenset() if has_web else WEB_ONLY_GRADERS
+    )
+    return tuple(g for g in graders if g not in drop)
 
 
 def score_one(
@@ -284,12 +320,15 @@ __all__ = [
     "ECHO_MIN_CHARS",
     "GRADERS",
     "TEXT_ONLY_GRADERS",
+    "WEB_ONLY_GRADERS",
     "CallGrader",
     "CallScore",
     "board_graders",
+    "cites_url",
     "echo",
     "graders_for_inputs",
     "leaves",
+    "no_refusal",
     "nullable_paths",
     "numbers_from_inputs",
     "prose",

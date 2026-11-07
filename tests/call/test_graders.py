@@ -140,7 +140,37 @@ class TestBoardShape:
         assert board["schema_complete"]({"prompt": PROMPT, "value": {"a": "x"}}) == (True, "")
 
     def test_the_built_in_names_are_this_modules_functions(self) -> None:
-        assert set(GRADERS) == set(cg.GRADERS)
+        assert set(GRADERS) | {"cites_url", "no_refusal"} == set(cg.GRADERS)
+        assert all(cg.GRADERS[n] is getattr(cg, n) for n in cg.GRADERS)
+
+
+class TestWebGraders:
+    """The research-tier checks: a web reply cites its pages, no reply refuses on stock phrases."""
+
+    def test_cites_url_counts_distinct_urls_in_any_string_field(self) -> None:
+        v = {"summary": "Up 2% (https://a.example/x).", "sources": ["https://a.example/x", "http://b.example/y."]}
+        s = cg.cites_url("", v, ROLE)
+        assert (s.value, s.passed, s.reason) == (2.0, True, "")
+
+    def test_cites_url_fails_a_reply_with_no_url(self) -> None:
+        """MUST FIRE: a reply with a bare domain and no scheme cites nothing checkable."""
+        s = cg.cites_url("", {"summary": "per reuters.com the print was hot"}, ROLE)
+        assert (s.value, s.passed, s.reason) == (0.0, False, "the reply cites no URL")
+
+    def test_no_refusal_fires_on_stock_refusals(self) -> None:
+        for text in (
+            "I don't have access to real-time data.",
+            "I cannot browse the web, sorry.",
+            "As of my last training update the price was 100.",
+            "Please consult a financial advisor.",
+        ):
+            s = cg.no_refusal("", {"summary": text}, ROLE)
+            assert not s.passed and s.value >= 1 and s.reason.startswith("refusal:"), text
+
+    def test_no_refusal_passes_an_honest_gap(self) -> None:
+        """MUST NOT FIRE: saying the sources are silent is grounded, not a refusal."""
+        s = cg.no_refusal("", {"summary": "The sources do not cover the guidance cut; access fees rose 3%."}, ROLE)
+        assert (s.value, s.passed) == (0.0, True)
 
 
 class TestGradersForInputs:
@@ -160,3 +190,21 @@ class TestGradersForInputs:
     def test_a_text_call_keeps_every_grader(self) -> None:
         assert cg.graders_for_inputs(self.STRUCTURED, has_images=False) == self.STRUCTURED
         assert cg.graders_for_inputs((), has_images=True) == ()
+
+    def test_the_web_only_set_is_the_citation_check(self) -> None:
+        assert {"cites_url"} == cg.WEB_ONLY_GRADERS
+
+    def test_a_call_without_web_drops_cites_url_and_a_web_call_keeps_it(self) -> None:
+        """MUST FIRE both ways: a text call never fails for citing no pages; a web call is held to it."""
+        names = ("schema_complete", "cites_url", "no_refusal", "numbers_from_inputs")
+        assert cg.graders_for_inputs(names, has_images=False) == (
+            "schema_complete",
+            "no_refusal",
+            "numbers_from_inputs",
+        )
+        assert cg.graders_for_inputs(names, has_images=True) == ("schema_complete", "no_refusal")
+        assert cg.graders_for_inputs(names, has_images=False, has_web=True) == (
+            "schema_complete",
+            "cites_url",
+            "no_refusal",
+        )
