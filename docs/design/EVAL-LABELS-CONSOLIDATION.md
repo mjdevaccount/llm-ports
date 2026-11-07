@@ -251,6 +251,20 @@ labelling itself happens in Langfuse's queue UI (no new UI is built for it).
 5. trade-ui: LABELS card.
 6. mattpc-llm-stack: fold `evals/` (dataset + graders in trade-data), keep the routing probe.
 
+### Deviations as built
+
+- **The web output checks became CALL graders, not `service/evals/web_graders.py`.** "Cites a
+  URL" and "no refusal" hold for any research tier, so they are generic: `cites_url` and
+  `no_refusal` in `llm_ports.call.graders` (1.8.0), with `cites_url` in `WEB_ONLY_GRADERS` so a
+  call without `web=True` drops it. Scoring every production reply at call time beats an offline
+  `GauntletEvaluator` pass over a sample, and the existing `LlmGraderFailureRate` rule watches it
+  with no new alert. trade-data's seven box-web structured roles carry them; before enabling,
+  14 days of live replies were measured: `narrative.research` 119/119 cited a URL, `event.brief`
+  0/9 (every stored brief has `sources = []`), a defect the grader now surfaces. "No filler" was
+  not generic enough to move; it stays a trade-data grader candidate.
+- **Golden-set seeding is `experiments.seed` (1.9.0)**, idempotent by item id, replacing the
+  consumer's three hand-rolled dataset-item loops.
+
 ## Not in scope
 
 No fine-tuning or training run: the data comes first. No new judge model decision (a sibling
