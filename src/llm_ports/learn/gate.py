@@ -113,9 +113,7 @@ def check(name: str, passed: bool | None, value: Value = None, *, role: Role = "
     return Clause(name, passed, value, role=role)
 
 
-def decide(
-    gate: str, clauses: Iterable[Clause], *, subject: str = "", unevaluated: Unevaluated = "fail"
-) -> Verdict:
+def decide(gate: str, clauses: Iterable[Clause], *, subject: str = "", unevaluated: Unevaluated = "fail") -> Verdict:
     """Return the verdict of one gate over its evaluated clauses (rules in the module docstring).
 
     Args:

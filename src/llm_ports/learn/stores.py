@@ -81,7 +81,7 @@ class JsonlRunLedger:
             path: The file.
             now: The clock that stamps each row; injectable for tests.
         """
-        self.path = Path(path)
+        self.path: Path = Path(path)
         self._now = now
 
     async def append(
@@ -140,7 +140,7 @@ class JsonlExampleStore:
 
     def __init__(self, path: str | Path) -> None:
         """Use the store at `path` (created on first put)."""
-        self.path = Path(path)
+        self.path: Path = Path(path)
 
     async def examples(
         self, topics: Sequence[str], *, since: datetime | None = None, source: Source | None = None

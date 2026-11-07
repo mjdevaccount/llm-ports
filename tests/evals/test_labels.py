@@ -96,7 +96,13 @@ def test_agreement_uses_shared_replies_and_is_none_where_undefined() -> None:
 def test_label_of_maps_a_verdict_and_refuses_to_mint_a_human() -> None:
     v = JudgeVerdict(passed=False, score=0.2, reason="invented a figure", judge="pydantic_evals")
     lab = lb.label_of(v, role="a", subject="o1", trace="t1")
-    assert (lab.value, lab.labeller, lab.by, lab.reason, lab.trace) == ("bad", "model", "pydantic_evals", "invented a figure", "t1")
+    assert (lab.value, lab.labeller, lab.by, lab.reason, lab.trace) == (
+        "bad",
+        "model",
+        "pydantic_evals",
+        "invented a figure",
+        "t1",
+    )
     assert lb.label_of(v, role="a", subject="o1", by="gemini", labeller="judge").by == "gemini"
     with pytest.raises(ValueError, match="never a human"):
         lb.label_of(v, role="a", subject="o1", labeller="human")

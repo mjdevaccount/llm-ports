@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -104,3 +105,29 @@ async def test_union_reads_every_store_and_fails_whole() -> None:
     partial = await stores.union(stores.MemoryExampleStore(EX), _Down()).examples(["a"])
     assert partial.outcome == "unavailable" and partial.examples == ()
     assert "store 1 (_Down): down" in (partial.reason or "")
+
+
+async def test_lines_that_are_not_rows_are_skipped(tmp_path: Path) -> None:
+    good = {"kind": "k", "subject": "", "params": {}, "metrics": {}, "at": T0.isoformat()}
+    lines = [
+        "",
+        "[1, 2]",
+        '{"kind": "k", "at": "not a date", "params": {}, "metrics": {}}',
+        '{"kind": "k", "params": [], "metrics": {}, "at": "' + T0.isoformat() + '"}',
+        json.dumps(good),
+    ]
+    (tmp_path / "r.jsonl").write_text(chr(10).join(lines), encoding="utf-8")
+    got = await stores.JsonlRunLedger(tmp_path / "r.jsonl").latest("k")
+    assert got.ok and got.row is not None and got.row.at == T0
+    missing = await stores.JsonlRunLedger(tmp_path / "none.jsonl").latest("k")
+    assert missing.ok and missing.row is None, "a ledger not yet written is empty, not unavailable"
+    bad_examples = ['{"topic": "a", "subject": "1", "value": "good", "source": "oracle"}', "7"]
+    (tmp_path / "ex.jsonl").write_text(chr(10).join(bad_examples), encoding="utf-8")
+    read = await stores.JsonlExampleStore(tmp_path / "ex.jsonl").examples(["a"])
+    assert read.ok and read.examples == ()
+
+
+async def test_an_example_that_is_not_json_is_refused(tmp_path: Path) -> None:
+    odd = Example("a", "1", object(), "human")  # type: ignore[arg-type]  # deliberately not JSON-able
+    got = await stores.JsonlExampleStore(tmp_path / "ex.jsonl").put([odd])
+    assert got.outcome == "request_fault" and got.written == 0

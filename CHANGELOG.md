@@ -7,6 +7,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `llm_ports.learn`: the learning-loop core, standard library only (ADR-0010). `Clause` (with a
+  `role`: `bar`, `floor`, `veto`), `Verdict` (`pass | fail | insufficient | could_not_run`, every
+  clause kept, `blocking`), `Example` (a label from a `human`, `model`, `judge` or `outcome`) and
+  `LedgerRow`. `gate`: `at_least`, `at_most`, `equals`, `check`, `decide(gate, clauses,
+  unevaluated=)`, `could_not_run`. `loop.run(loop, ledger)` drives a `Loop`'s `evidence`, `fit`,
+  `clauses` and `apply` and records exactly one row per run under `learn_verdict`, never raising;
+  `loop.record` records a gate run outside a loop. `examples`: `coverage`, `agreement`,
+  `few_shot`. `stats`: `cohen_kappa`, `gwet_ac1`, `bh_fdr` (Benjamini-Yekutieli by default).
+  `stores`: `MemoryRunLedger`, `JsonlRunLedger`, `MemoryExampleStore`, `JsonlExampleStore`,
+  `union`. Guide `docs/guides/learning-loops.md`, example `examples/learning_loop.py`.
+
+### Changed
+
+- `evals.calibration.cohen_kappa` and `gwet_ac1` now live in `learn.stats` and are re-exported
+  unchanged.
+
 ## [1.4.0] - 2026-11-06
 
 ### Added
