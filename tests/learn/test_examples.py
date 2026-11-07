@@ -54,7 +54,8 @@ class TestAgreement:
         ]
         got = ex.agreement(rows)["a"]
         assert (got["judge"].n, got["judge"].agree) == (2, 0.5)
-        assert (got["model"].n, got["model"].agree, got["model"].kappa) == (0, None, None)
+        assert (got["model"].n, got["model"].agree, got["model"].kappa, got["model"].ac1) == (0, None, None, None)
+        assert got["judge"].ac1 is not None and round(got["judge"].ac1, 6) == 0.2, "po 0.5, pe 0.375"
 
     def test_a_topic_without_a_reference_label_is_absent(self) -> None:
         assert ex.agreement([lab("a", "1", "good", "judge")]) == {}

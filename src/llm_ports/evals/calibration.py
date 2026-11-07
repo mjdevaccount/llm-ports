@@ -41,7 +41,6 @@ FIGURE = " Target 7,431.5 by the 19th, up 38.2%."
 CALIBRATED, FINDING, BLIND = 0, 1, 2
 
 
-
 def _strings(obj: Any, path: tuple[Any, ...] = ()) -> Iterator[tuple[tuple[Any, ...], str]]:
     if isinstance(obj, str):
         yield path, obj
