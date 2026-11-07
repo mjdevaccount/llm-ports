@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-07
+
+### Added
+
+- `llm_ports.evals.labels.LabelQueue.queued(topic)` and its result type `Queued` (`pending`,
+  `done`, `seen`, a named outcome): what a topic's review queue already holds, so a scheduled draw
+  can skip it and bound the backlog. `LangfuseExampleStore.queued` reads the role's annotation
+  queue items (paged); a role with no queue reads empty and creates nothing.
+
+### Changed
+
+- `LangfuseExampleStore.enqueue` skips a reply the queue already holds (pending or done) and
+  returns how many were newly queued, so re-running the same deterministic draw adds no duplicate
+  items. A custom `LabelQueue` implementation now also needs `queued`.
+
 ## [1.6.0] - 2026-11-07
 
 ### Added
@@ -409,7 +424,8 @@ dependency floors.
   named by content sha, per-call graders, `generate()` with named outcomes and `Hooks`, the
   pydantic-ai `Generator` adapter, and test doubles.
 
-[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/mjdevaccount/llm-ports/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/mjdevaccount/llm-ports/compare/v1.3.0...v1.4.0

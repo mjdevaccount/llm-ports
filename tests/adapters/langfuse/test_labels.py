@@ -51,12 +51,20 @@ class FakeApi:
             self.created.append("queue:" + kw["name"] + ":" + ",".join(kw["score_config_ids"]))
             return SimpleNamespace(id="q-new")
 
+        def list_items(q: str, **kw: Any) -> SimpleNamespace:
+            self.item_reads.append(kw["page"])
+            held = [SimpleNamespace(object_id=o, status=self.done.get(o, "PENDING")) for qq, o in self.items if qq == q]
+            return SimpleNamespace(data=held[(kw["page"] - 1) * kw["limit"] : kw["page"] * kw["limit"]])
+
+        self.item_reads: list[int] = []
+        self.done: dict[str, str] = {}
         self.scores = SimpleNamespace(get_many=get_many)
         self.score_configs = SimpleNamespace(get=lambda **kw: SimpleNamespace(data=cfgs), create=create_config)
         self.annotation_queues = SimpleNamespace(
             list_queues=lambda **kw: SimpleNamespace(data=qs),
             create_queue=create_queue,
             create_queue_item=lambda q, **kw: self.items.append((q, kw["object_id"])),
+            list_queue_items=list_items,
         )
 
 
@@ -196,3 +204,33 @@ async def test_every_server_failure_is_an_outcome_never_a_raise() -> None:
     assert (wrote.outcome, wrote.written) == ("unavailable", 0)
     queued = await store.enqueue(topic("a"), [("o1", "t1")])
     assert queued.outcome == "unavailable"
+    held = await store.queued(topic("a"))
+    assert (held.outcome, held.seen) == ("unavailable", frozenset())
+
+
+async def test_enqueue_skips_what_the_queue_already_holds() -> None:
+    api = FakeApi([], queues=[SimpleNamespace(name="label:a", id="q-a")])
+    store = lf.LangfuseExampleStore(FakeClient(api))
+    assert (await store.enqueue(topic("a"), [("o1", "t1"), ("o1", "t1")])).written == 1
+    got = await store.enqueue(topic("a"), [("o1", "t1"), ("o2", "t1")])
+    assert (got.written, got.outcome) == (1, "ok")
+    assert api.items == [("q-a", "o1"), ("q-a", "o2")]
+
+
+async def test_queued_splits_pending_from_done_and_pages() -> None:
+    api = FakeApi([], queues=[SimpleNamespace(name="label:a", id="q-a")])
+    api.items = [("q-a", f"o{i}") for i in range(lf.PAGE + 1)] + [("q-other", "x")]
+    api.done = {"o0": "COMPLETED"}
+    got = await lf.LangfuseExampleStore(FakeClient(api)).queued(topic("a"))
+    assert got.ok and got.done == {"o0"} and len(got.pending) == lf.PAGE
+    assert got.seen == {f"o{i}" for i in range(lf.PAGE + 1)}
+    assert api.item_reads == [1, 2]
+
+
+async def test_queued_creates_nothing_and_refuses_a_non_llm_topic() -> None:
+    api = FakeApi([])
+    store = lf.LangfuseExampleStore(FakeClient(api))
+    none = await store.queued(topic("a"))
+    assert none.ok and none.seen == frozenset() and api.created == []
+    bad = await store.queued("trend:1d")
+    assert bad.outcome == "request_fault" and not bad.ok

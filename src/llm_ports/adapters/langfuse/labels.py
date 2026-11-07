@@ -11,7 +11,8 @@ named by source and role:
 - `label.judge:<role>`: the production judge's verdict as a label, written by `put`.
 
 Every role gets one score config and one annotation queue, both named `label:<role>`, created on
-first `enqueue`. `put` writes each score under a deterministic id (source, role, subject), so a
+first `enqueue`. `enqueue` skips a reply the queue already holds (pending or done), and `queued`
+reads what it holds, so a nightly draw neither duplicates items nor grows the backlog unbounded. `put` writes each score under a deterministic id (source, role, subject), so a
 relabel replaces the earlier score instead of adding a second one. The SDK is synchronous; each
 call runs in a worker thread.
 
@@ -38,7 +39,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from llm_ports._extras import extra
-from llm_ports.evals.labels import role_of, topic
+from llm_ports.evals.labels import Queued, role_of, topic
 from llm_ports.learn import Example, ExamplesRead, Written
 from llm_ports.learn._types import Source
 from llm_ports.ports.outcomes import failure_reason
@@ -147,7 +148,7 @@ class LangfuseExampleStore:
             self._configs[name] = cfg.id
         return self._configs[name]
 
-    def _queue_id(self, role: str) -> str:
+    def _queue_id(self, role: str, *, create: bool = True) -> str | None:
         name = score_name("human", role)
         page = 1
         while name not in self._queues:
@@ -159,20 +160,52 @@ class LangfuseExampleStore:
                 break
             page += 1
         if name not in self._queues:
+            if not create:
+                return None
             q = self._c.api.annotation_queues.create_queue(
                 name=name, score_config_ids=[self._config_id(role)], description=self._description
             )
             self._queues[name] = q.id
         return self._queues[name]
 
+    def _items(self, queue: str) -> Iterator[Any]:
+        page = 1
+        while True:
+            got = self._c.api.annotation_queues.list_queue_items(queue, page=page, limit=PAGE)
+            yield from got.data
+            if len(got.data) < PAGE:
+                return
+            page += 1
+
+    def _queued(self, role: str) -> Queued:
+        queue = self._queue_id(role, create=False)
+        if queue is None:
+            return Queued()
+        pending: set[str] = set()
+        done: set[str] = set()
+        for item in self._items(queue):
+            status = str(getattr(item, "status", "") or "").upper()
+            (done if status == "COMPLETED" else pending).add(str(item.object_id))
+        return Queued(frozenset(pending), frozenset(done))
+
     def _enqueue(self, role: str, subjects: Sequence[tuple[str, str]], done: list[int]) -> None:
         queue = self._queue_id(role)
+        if queue is None:  # unreachable: create=True finds or makes the queue
+            return
+        held = {str(item.object_id) for item in self._items(queue)}
         for subject, _trace in subjects:
+            if subject in held:
+                continue
             self._c.api.annotation_queues.create_queue_item(queue, object_id=subject, object_type="OBSERVATION")
+            held.add(subject)
             done[0] += 1
 
     async def enqueue(self, topic: str, subjects: Sequence[tuple[str, str]]) -> Written:
-        """Add each `(observation id, trace id)` to the role's annotation queue. Never raises."""
+        """Add each `(observation id, trace id)` the role's annotation queue does not hold yet.
+
+        Returns:
+            How many were newly queued, or a failure outcome. Never raises.
+        """
         role = role_of(topic)
         if role is None:
             return Written(0, "request_fault", f"topic {topic!r} is not a model reply's (llm:<role>)")
@@ -182,6 +215,19 @@ class LangfuseExampleStore:
         except Exception as exc:  # the store's failure is the outcome
             return Written(done[0], "unavailable", failure_reason(exc))
         return Written(done[0], "ok")
+
+    async def queued(self, topic: str) -> Queued:
+        """Read the observation ids the role's annotation queue holds, pending and done. Never raises.
+
+        A role with no queue yet reads `ok` and empty; nothing is created by reading.
+        """
+        role = role_of(topic)
+        if role is None:
+            return Queued(outcome="request_fault", reason=f"topic {topic!r} is not a model reply's (llm:<role>)")
+        try:
+            return await asyncio.to_thread(self._queued, role)
+        except Exception as exc:  # an unreadable queue is never an empty one
+            return Queued(outcome="unavailable", reason=failure_reason(exc))
 
     def _put(self, examples: Sequence[Example], done: list[int]) -> None:
         for ex in examples:
