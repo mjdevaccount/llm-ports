@@ -21,6 +21,14 @@ DECISIONS: tuple[Decision, ...] = ("pass", "fail", "insufficient", "could_not_ru
 #: Who produced a label: a person, a model labelling offline, a production judge, or the world
 #: (an outcome resolved mechanically, such as a forward return).
 Source = Literal["human", "model", "judge", "outcome"]
+#: What a clause's failure means. `bar`: measured and did not clear (`fail`, unless a floor
+#: failed, when the measurement is noise). `floor`: a sample floor or an unproven condition
+#: (`insufficient`). `veto`: a disqualifier (`fail`, whatever else holds).
+Role = Literal["bar", "floor", "veto"]
+ROLES: tuple[Role, ...] = ("bar", "floor", "veto")
+#: The ledger-row metric key a recorded verdict lives under (`Verdict.as_dict`). Its own name:
+#: a consumer's ledger may already use `gate` and `verdict` for other shapes.
+VERDICT_KEY = "learn_verdict"
 #: How a store call ended.
 StoreOutcome = Literal["ok", "unavailable", "request_fault"]
 #: A clause value: a number, a label, or None when it could not be computed.
@@ -44,8 +52,9 @@ class Clause:
         value: The measured value; None when it could not be computed.
         threshold: The bar it was held to; None for a boolean check.
         op: How `value` was compared to `threshold` (`>=`, `<=`, `==`); "" for a boolean check.
-        floor: True for a sample-size clause: failing it means "not enough evidence yet"
-            (`insufficient`), not "measured and failed".
+        role: What failing it means: `bar` (default), `floor` or `veto` (see `Role`). The gate
+            sets it when it evaluates the clause, so one condition may be a `veto` in one branch
+            and a `floor` in another.
 
     Invariants:
         - A None `passed` is never read as a pass (`gate.decide` fails it closed).
@@ -56,7 +65,7 @@ class Clause:
     value: Value = None
     threshold: Value = None
     op: str = ""
-    floor: bool = False
+    role: Role = "bar"
 
     def as_dict(self) -> dict[str, Any]:
         """Return the clause as a JSON-able mapping."""
@@ -66,7 +75,7 @@ class Clause:
             "value": _finite(self.value),
             "threshold": _finite(self.threshold),
             "op": self.op,
-            "floor": self.floor,
+            "role": self.role,
         }
 
     @classmethod
@@ -77,13 +86,14 @@ class Clause:
             KeyError: `raw` has no `name`.
         """
         passed = raw.get("passed")
+        role = raw.get("role", "bar")
         return cls(
             name=str(raw["name"]),
             passed=passed if isinstance(passed, bool) else None,
             value=raw.get("value"),
             threshold=raw.get("threshold"),
             op=str(raw.get("op", "")),
-            floor=bool(raw.get("floor", False)),
+            role=cast(Role, role) if role in ROLES else "bar",
         )
 
 
@@ -96,8 +106,8 @@ class Verdict:
         subject: What was judged (a model, a symbol, a role); "" when the gate has one subject.
         decision: `pass`, `fail`, `insufficient` or `could_not_run`.
         clauses: Every clause, in the order the gate evaluated them.
-        blocker: The first clause that kept the decision from `pass`; None on `pass` and on
-            `could_not_run`.
+        blocker: The first clause, in order, that set the decision; None on `pass` and on
+            `could_not_run`. Every other clause that did not pass is in `blocking`.
         reason: One line for a person: why it passed, what blocked it, or why nothing ran.
 
     Invariants:
@@ -116,8 +126,13 @@ class Verdict:
         """True when `decision == "pass"`."""
         return self.decision == "pass"
 
+    @property
+    def blocking(self) -> tuple[Clause, ...]:
+        """Every clause that did not pass (failed or not evaluated), in order."""
+        return tuple(c for c in self.clauses if c.passed is not True)
+
     def as_dict(self) -> dict[str, Any]:
-        """Return the verdict as a JSON-able mapping (what a ledger row stores under `gate`)."""
+        """Return the verdict as a JSON-able mapping (what a ledger row stores under `VERDICT_KEY`)."""
         return {
             "gate": self.gate,
             "subject": self.subject,
@@ -231,8 +246,7 @@ class LedgerRow:
         kind: The loop's run kind.
         subject: What the run was about; "" when the loop has one subject.
         params: The knobs the run used.
-        metrics: What it measured; a gated run carries `verdict` (the decision) and `gate`
-            (`Verdict.as_dict`).
+        metrics: What it measured; a gated run carries `Verdict.as_dict` under `VERDICT_KEY`.
         at: When it was recorded.
     """
 
@@ -245,8 +259,14 @@ class LedgerRow:
     @property
     def verdict(self) -> Verdict | None:
         """The recorded verdict, or None for an ungated (informational) run."""
-        raw = self.metrics.get("gate")
+        raw = self.metrics.get(VERDICT_KEY)
         return Verdict.from_dict(raw) if isinstance(raw, Mapping) else None
+
+    @property
+    def decision(self) -> Decision | None:
+        """The recorded verdict's decision, or None for an ungated run."""
+        verdict = self.verdict
+        return verdict.decision if verdict is not None else None
 
 
 @dataclass(frozen=True)
@@ -274,11 +294,14 @@ class RowRead:
 
 __all__ = [
     "DECISIONS",
+    "ROLES",
+    "VERDICT_KEY",
     "Clause",
     "Decision",
     "Example",
     "ExamplesRead",
     "LedgerRow",
+    "Role",
     "RowRead",
     "Source",
     "StoreOutcome",

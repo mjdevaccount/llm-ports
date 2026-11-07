@@ -1,6 +1,6 @@
 # The learning-loop core: one spine, one gate, one ledger
 
-Status: DESIGN, 2026-11-07. Supersedes the scope of `EVAL-LABELS-CONSOLIDATION.md`, which stays
+Status: DESIGN, 2026-11-07, revision 2 (answers the review). Supersedes the scope of `EVAL-LABELS-CONSOLIDATION.md`, which stays
 as the detail of ONE loop kind (LLM labels, §LLM labels below). Owner of the decision: this file.
 Facts read from `origin/main` of each repo on 2026-11-07 (trade-data `6e941731`, trade-ui,
 ci-kit, work-timeline) with `git show` / `git grep`; every load-bearing claim carries its
@@ -9,7 +9,7 @@ ci-kit, work-timeline) with `git show` / `git grep`; every load-bearing claim ca
 ## What was asked, in priority order
 
 1. **Centralize the core in one good home**: portable, zero EDGE imports, storage behind a port,
-   usable in an unrelated codebase.
+   usable in an unrelated codebase, including a portable Postgres ledger (Decision 2).
 2. **Make a new loop cheap**: this doc states the cost in files and lines; the first new consumer
    (a multi-symbol daily trend loop) measures it.
 3. **Then fan out**: existing loops adopt it, judges and copilot read the shared store.
@@ -45,6 +45,10 @@ labelled-example contract, the statistics.
 | hazard exit / hold duration | paths | MFE timing | `fit_hazard_exit.py`, `learn_hold_duration.py` | concordance > 0.53 / eff_n ≥ 30 | same |
 | meta-label | features | take/skip outcome | `signals/meta_label.py` | identity under 40 samples | same |
 | config / exit grids | replay | graded path | grid | `signals/promotion_gate.py` `evaluate_gate` (not wired live) | wiring |
+| level-source champion / challenger | level events | reaction hits | — | `domain/promotion.py` `evaluate` (promote / hold / reject) | ledger row |
+| level calibration | level reactions | reaction / no reaction | `calibrate_level_reactions.py` | `signals/level_calibration.py` coarse gate cell | standard verdict |
+| weight ledger | learned weights | — | — | `quant.weight_ledger` (mig 074), versioned, operator opt-in to apply | the APPLY stage of the picker loop: read, not replaced |
+| pattern ladder | detectors | base rates | — | `PATTERN-GATE.md` ladder (SEALED) | wrap only |
 | Pattern Lexicon | detectors | base rates | — | `PATTERN-GATE.md` (SEALED) | wrap only |
 | Daily Card | card | session outcome | — | `CARD-SYSTEM-GATE.md` (SEALED) | wrap only |
 | Setup Radar | setups | forward return | — | `setup_radar.py` `wilson_lb` (:284) | gate, ledger |
@@ -56,10 +60,22 @@ labelled-example contract, the statistics.
 
 Gates in use today, three shapes and no shared type: `promotion_gate.GateVerdict(promote,
 clauses, blocker)` (`signals/promotion_gate.py:69`), `domain/promotion.PromotionDecision`
-(`domain/promotion.py:71`, a None clause fails closed), `llm_judge_trust.Trust(model, trusted,
-reason, kappa…)` (`platform/llm_judge_trust.py:53`), plus `earned()` booleans in each fit usecase.
-The Research Ledger (`signals/research_ledger.py`) then re-derives an earn state per run kind from
-each kind's ad-hoc `metrics`, because no run states its verdict the same way.
+(`domain/promotion.py:71`: `promote | hold | reject`; a clause that could not be evaluated
+gives HOLD, a clause that LOOKED and disqualified gives REJECT, and REJECT wins over HOLD),
+`llm_judge_trust.Trust(model, trusted, reason, kappa…)` (`platform/llm_judge_trust.py:53`), plus
+`earned()` booleans in each fit usecase. The Research Ledger (`signals/research_ledger.py`) then
+re-derives an earn state per run kind from each kind's ad-hoc `metrics`, because no run states
+its verdict the same way. llm-ports itself has two more: `evals.calibration.verdict` (a judge's
+calibration verdict) and `provenance.GateVerdict` (a grounding gate's). Both stay: they are
+LLM-shaped results, not loop gates; `evals.calibration` builds on `learn.stats` (Decision 1).
+
+The ledger is already in use under the name this core must NOT take: `metrics.gate` holds
+`{promote, blocker, clauses: dict[str, bool]}`, written by `compiler/regrade.py:126` and
+`strategy/lever_grid.py:284`, read by `research_ledger._promote_gate` (:125-129, AUTHORITATIVE),
+`regrade.verdict_of` (:139), `jobs/handlers/replay.py:315,366`, `strategy/hunt.py:150`, copilot's
+chat tune agent and trade-ui `TuneChatPanel.tsx:62-65`. And `metrics.verdict` is not one
+vocabulary: `supported | refuted | inconclusive` (regrade), `probe_pass | probe_fail`
+(`rag_eval`), free text (`ou_meanrev_diag`). Decision 3 therefore writes under a new key.
 
 ## Decision 1 — the core's home: `llm_ports.learn`
 
@@ -95,33 +111,66 @@ implementations: `MemoryRunLedger` and `JsonlRunLedger` (stdlib, in the core, so
 anywhere with zero setup), and trade-data's `LearnRunsLedger` over `LearnRunsRepo` (adapter,
 trade-data). An MLflow adapter is an optional extra when an outside user asks for it.
 
+**A portable Postgres ledger** (requirement 6) is a later llm-ports adapter, `adapters/postgres/`
+behind a `postgres` extra (`psycopg`), owning one table of the same shape as `quant.learn_runs`
+(`run_kind, subject, params jsonb, metrics jsonb, created_at`). It is NOT in slice 1: the core
+proves the port with two stdlib ledgers first, and the first outside user who wants Postgres
+gets the adapter. trade-data keeps its own adapter over `LearnRunsRepo` either way: its table has
+grants, FKs and readers a generic adapter must not own.
+
 ## Decision 3 — ONE gate: evidence in, verdict + audit row out
 
 ```text
-Clause(name, value, threshold, op, passed: bool | None)      passed None = not evaluable
-Verdict(gate, subject, decision, clauses, blocker, n)        frozen, JSON-able
+Clause(name, passed: bool | None, value, threshold, op, role)   passed None = not evaluable
+role    ∈ bar | floor | veto                                     default bar
+Verdict(gate, subject, decision, clauses, blocker, reason)      frozen, JSON-able
 decision ∈ pass | fail | insufficient | could_not_run
-decide(gate, subject, clauses, *, floor=("n",)) -> Verdict   strict AND; first failing clause = blocker
+decide(gate, clauses, *, subject="", unevaluated="fail") -> Verdict
 ```
 
-- **Fails closed.** A clause that is None is not a pass: a None on a floor clause (sample size)
-  gives `insufficient`, a None elsewhere gives `fail` with that clause as blocker. Same rule as
-  `domain/promotion.py` and `promotion_gate._ok` (:78).
-- **Vocabulary = the one already in the ledger.** `pass | fail | could_not_run` is what
-  `churn_eval` writes (`usecases/churn_eval.py:150-161`) and what `quant.prompt_eval_run` CHECKs
-  (mig344); `insufficient` is the Research Ledger's existing state. A recorded verdict sets
-  `metrics.verdict = decision` and `metrics.gate = Verdict` in full, so every existing
-  `latest_with_verdict` reader keeps working and the Research Ledger reads any gated kind
-  generically (`pass`→earned, `fail`→not_earned, `insufficient`, `could_not_run`→error; a run
-  with no verdict stays `informational`).
-- **Audit = the ledger row.** `learn.record(ledger, kind, verdict, params, metrics)` appends one
-  row. A gate is a pure function `evidence -> Verdict`; there is no base class to inherit.
+`decide`, in order (first rule that applies wins; the blocker is the first clause, in the order
+given, that the rule names):
+
+1. no clauses → `could_not_run`.
+2. a `veto` clause evaluated False → `fail` (we looked and it disqualifies, whatever the sample).
+3. a `floor` clause not True (False or None) → `insufficient` (a sample floor not met: anything
+   else measured on that sample is noise, so a failing `bar` is not yet a `fail`).
+4. `unevaluated="fail"` (default): any clause not True → `fail`. `unevaluated="insufficient"`:
+   a clause evaluated False → `fail`, else a clause that is None → `insufficient`.
+5. otherwise `pass`.
+
+- **Fails closed.** A None clause is never a pass under either policy. The default (`fail`) is
+  `promotion_gate._ok` (:78) and the strict AND of each fit's `earned()`; `insufficient` is the
+  domain/promotion law ("a conjunct that could not be evaluated has not been satisfied", HOLD).
+- **promote / hold / reject map exactly**: `domain/promotion` adopts with `min_sample`,
+  `reaction_lift` when the lift is positive but not robust, and `deflated_bar` as `floor`
+  (failing = unproven = HOLD), `displacement` and `reaction_lift` with no lift at all as `veto`
+  (REJECT), and `unevaluated="insufficient"`. Then `pass`=promote, `insufficient`=hold,
+  `fail`=reject, and REJECT-beats-HOLD is rule 2 before rule 3. The clause's role is set by the
+  gate when it evaluates the clause, so one clause can be a `veto` in one branch and a `floor` in
+  another, as `reaction_lift` is there.
+- **Every clause is kept, not only the blocker.** `Verdict.clauses` holds every clause in order
+  and `Verdict.blocking` lists every clause that is not True, so a surface renders all reasons
+  (what `PromotionDecision.reasons` lists) and the clause map that "cannot hide a skipped
+  conjunct" (`domain/promotion.py:79-88`).
+- **Its own key in the ledger: `metrics.learn_verdict`.** A recorded run writes
+  `metrics.learn_verdict = Verdict.as_dict()` (its `decision` is the verdict) and never writes
+  `metrics.gate` or `metrics.verdict`, whose readers are listed above. A kind that already
+  writes those keeps writing them; nothing reading them changes. The Research Ledger gains ONE
+  generic branch: a row with `learn_verdict` maps `pass`→earned, `fail`→not_earned,
+  `insufficient`→insufficient, `could_not_run`→error, checked after the existing
+  `_promote_gate` branch so a kind with both keeps today's state. A row with neither stays
+  `informational`. `latest_with_verdict` is unchanged; `LearnRunsLedger.latest(decisions=...)`
+  filters on `metrics->'learn_verdict'->>'decision'`.
+- **Audit = the ledger row.** `loop.run` (and `loop.record` for a gate run outside a `Loop`)
+  appends one row. A gate is a pure function `evidence -> clauses`; there is no base class.
 - **Existing gates adopt by returning clauses**, thresholds unchanged: `promotion_gate`,
-  `domain/promotion`, each fit's `earned()`, `eval_metrics._blockers`, `llm_judge_trust.assess`.
-- **Sealed gates are wrapped, never changed.** The card and pattern gates keep their code and
-  documents; an adapter in trade-data reads their DECIDED outputs and records them as `Verdict`s
-  (`gate="card-system"`, `"pattern"`), so they appear on the same ledger and page. The pattern
-  code's `bh_fdr` (`signals/pattern_stats.py:57`) is NOT replaced by the lifted one.
+  `domain/promotion`, each fit's `earned()`, `eval_metrics._blockers`, `llm_judge_trust.assess`,
+  the level-calibration coarse gate cell.
+- **Sealed gates are wrapped, never changed.** The card and pattern gates (and the pattern
+  ladder) keep their code and documents; an adapter in trade-data reads their DECIDED outputs and
+  records them as `Verdict`s (`gate="card-system"`, `"pattern"`), so they appear on the same
+  ledger and page. The pattern code's `bh_fdr` (`signals/pattern_stats.py:57`) is NOT replaced.
 
 ## Decision 4 — the training-data contract and its read surface
 
@@ -147,41 +196,66 @@ Example(topic, subject, value, source, by, at, reason="", ref={})
 - **The read surface for judges and copilot** ("all of this could be used by the judge"):
   `few_shot` hands an LLM judge graded examples of its own role; copilot's existing
   `get_similar_setups` (pgvector over decision reflections) stays the similarity search and gains
-  an `ExampleStore` adapter, not a second index. Similarity search is NOT in the core (it needs a
-  vector store); the core defines `SimilarExamples` as an optional Protocol only.
+  an `ExampleStore` adapter, not a second index. Copilot's event tools (`get_event_performance`,
+  `get_calendar`, `get_structural_events`, `get_market_moments`) are evidence READERS for the
+  event-study and trend loops: a loop's `evidence()` calls the same usecases they call, never a
+  copy. Similarity search is NOT in the core (it needs a vector store); a `SimilarExamples`
+  Protocol is added when its first adapter is, not before.
 
-## Decision 5 — the engine: trade-data's learning plane, generic parts lifted
+## Decision 5 — the engine: trade-data's learning plane, only agreement + FDR math lifted
 
 "We have a training engine already": the engine IS trade-data's learning plane, and stays there:
 `FIT_REGISTRY` dispatch (`usecases/fit_registry.py`, `POST /admin/run/fit/{model}`), admin-run
 declarations with `learn_kind` (`admin/admin_run_declarations_*.py`), Windmill schedules, the loop
-registry with its `loop-stalled` watchdog, the ledger. Nothing of that moves; it gains the core's
-types. What lifts is pure math that is duplicated today:
+registry with its `loop-stalled` watchdog, the weight ledger, the run ledger. Nothing of that
+moves; it gains the core's types. What lifts is only math that has ONE definition:
 
-| function | copies on trade-data main | lifts to |
+| function | today | in the core |
 |---|---|---|
-| Wilson interval | `domain/stats.py:17`, `signals/level_calibration.py:93`, `signals/setup_radar.py:284` (`wilson_lb`, z=1.28) | `learn.stats.wilson` |
-| Benjamini-Hochberg | `signals/eval_metrics.py:272` (+ `pattern_stats.py:57`, sealed: stays) | `learn.stats.bh_fdr` |
-| effective n | `eval_metrics.py:148,178`, `sample_weighting.py:121`, `calibrate_level_reactions.py:45` | `learn.stats.effective_n` (the variants that are one formula) |
-| kappa / AC1 | llm-ports `evals/calibration.py` | `learn.stats` (re-exported) |
-| reliability / ECE / Brier, Platt with slope refusal, purged CV | `signals/picker_calibration.py`, `prob_calibration.py`, `domain/stats.py:38`, `purged_cv` | lifted in the slice whose consumer needs them (the trend loop), not before |
+| kappa / AC1 | llm-ports `evals/calibration.py:54,75` | `learn.stats.cohen_kappa`, `gwet_ac1`; re-exported from `evals.calibration` |
+| false-discovery control | `signals/eval_metrics.py:272` (+ `pattern_stats.py:57`, sealed: stays) | `learn.stats.bh_fdr`, **Benjamini-Yekutieli by default** (valid under any dependence between tests, the estate's correlated signals), `dependent=False` for plain Benjamini-Hochberg (independent tests) |
 
-A lift is byte-for-byte on numbers: trade-data's own tests run against the lifted function before
-its copy is deleted. Fit usecases (they read tables) are NOT lifted.
+NOT lifted, on evidence: **Wilson** is already one scipy shim in trade-data (`domain/stats.py`;
+`level_calibration` and `setup_radar` delegate to it, consolidation B3), so a lift would add a
+second copy, not remove one. **Effective n** is three DIFFERENT estimators (consolidation F4:
+autocorrelation-adjusted, Kish weights, cluster count), not one formula with three spellings.
+Reliability / ECE / Brier, Platt, purged CV lift in the slice whose consumer needs them (the
+trend loop), with the same test. A lift is byte-for-byte on numbers: trade-data's own tests run
+against the lifted function before its copy is deleted. Fit usecases (they read tables) are NOT
+lifted.
 
 ## Decision 6 — ONE registry, ONE view of when training runs
 
 - **The registry is `service/platform/loops.py`** and its generated `docs/LEARNING-LOOPS.md` +
   `GET /ops/loops` (`admin/ops_router.py:36`). Not forked. A loop built on the core declares its
   `LoopSpec` the same way; a helper derives its `score` slot (`quant.learn_runs` where
-  `run_kind=<kind>`, precedent `loop_registrants_llm.py:53`).
-- **"When does training run" is a JOIN of four records that already exist**, not a new store:
-  admin-run declarations name the `learn_kind` each run stamps (12 already do,
-  `admin_run_declarations_replay.py:30-165`); the Windmill tree holds the cron (next run);
-  `ops.work` (written through `work-timeline`) holds each run's start, end and status;
-  `quant.learn_runs` holds its result and verdict. One read, `GET /research/schedule`, joins them
-  per kind: last run, its status, its verdict, next run, and a MISSED flag (a scheduled run with no
-  `ops.work` row in its window, the rule `Slot.work_name` already encodes, `loops.py:107`).
+  `run_kind=<kind>`, precedent `loop_registrants_llm.py:53`). `docs/LEARNING-LOOPS.md` (every
+  loop), `docs/design/LEARNING-LOOP-OVERVIEW.md` (the picker loop in depth) and
+  `docs/AUTOMATION-TIMELINE.md` (what runs when) each gain one paragraph pointing here; none is
+  replaced.
+- **A loop's run kind rides its declaration, not its route.** `AdminRunSpec.kind` is the first
+  path segment only (`platform/admin_run.py:52`), and `spec_for` resolves
+  `/admin/run/fit/{model}` to `fit` (:74-82), so a route-level `learn_kind` cannot name a
+  per-model loop. Each `FIT_REGISTRY` entry therefore declares its own `learn_kind` (a
+  `FitSpec(name, fit, read, learn_kind)` replacing the bare `(fit, read)` tuple), the fit
+  dispatcher stamps that kind, and its `ops.work` row is named `fit.<model>`, not `fit`
+  (today an HTTP run is named by its root segment, so every fit loop would hide behind one
+  name: PLAUSIBLE per the review, slice 3 verifies and fixes it before any MISSED flag reads it).
+  "Every learn kind" is then ONE read, `learn_kinds()`: admin-run declarations with a
+  `learn_kind` plus `FIT_REGISTRY` specs.
+- **"When does training run" is a JOIN of records that already exist**, not a new store:
+  `learn_kinds()` names each kind and its trigger; the LIVE schedules come from Windmill through
+  `adapters/windmill_ops.list_schedules` (`windmill_ops.py:75`, already read by
+  `usecases/automation_status.py:80`), never the `windmill/` tree (it is not in the image); box
+  timers are named as triggers but carry no next-run in this view; `ops.work` holds each run's
+  start, end and status; `quant.learn_runs` holds its result and verdict. One read,
+  `GET /research/schedule`, joins them per kind: last run, status, verdict, next run, and a
+  MISSED flag (a scheduled run with no `ops.work` row in its window, the rule `Slot.work_name`
+  already encodes, `loops.py:107`). A kind with no schedule says `manual` (every `FIT_REGISTRY`
+  model today, `loop_registrants.py:85,94,102`), never blank.
+- **The view is keyed by registered loop, not by run kind**: a loop in `loops.py` with no
+  `learn_runs` stamp (hazard exit today) shows as a row with `no ledger row`, so it is visible
+  instead of absent.
 - **The view is the existing Research Ledger page** (trade-ui `#/research`, `src/routes.tsx:462`),
   which already lists every kind with its earn state. It gains last / next / missed columns. No new
   page.
@@ -199,12 +273,27 @@ its home.
 
 | module | holds |
 |---|---|
-| `learn` (types) | `Example`, `Clause`, `Verdict`, `Decision`, `Run`, `Outcome` types for the store calls |
-| `learn.gate` | `clause(...)` helpers (`at_least`, `at_most`, `between`), `decide`, `record` |
-| `learn.stats` | `wilson`, `bh_fdr`, `effective_n`, `cohen_kappa`, `gwet_ac1` |
-| `learn.examples` | `coverage`, `agreement`, `few_shot`, `union` |
-| `learn.ledger` | `RunLedger`, `ExampleStore`, `SimilarExamples` Protocols; `MemoryRunLedger`, `JsonlRunLedger`, `JsonlExampleStore` |
-| `learn.loop` | `Loop` Protocol (`examples() -> fit() -> gate()`), `run(loop, ledger) -> Run`: exactly one ledger row per run, every exit included (a stage that fails records `could_not_run` with its reason; never raises) |
+| `learn` (types) | `Example`, `Clause`, `Verdict`, `Decision`, `LedgerRow`, store results (`ExamplesRead`, `RowRead`, `Written`) |
+| `learn.gate` | clause helpers (`at_least`, `at_most`, `equals`, `check`), `decide`, `could_not_run` (pure) |
+| `learn.stats` | `bh_fdr` (BY default), `cohen_kappa`, `gwet_ac1` |
+| `learn.examples` | `coverage`, `agreement`, `few_shot` |
+| `learn.stores` | `MemoryRunLedger`, `JsonlRunLedger`, `MemoryExampleStore`, `JsonlExampleStore`, `union` |
+| ports | `RunLedger`, `ExampleStore`, `WritableExampleStore`, `Loop`, `Fit` Protocols / values |
+| `learn.loop` | `run(loop, ledger) -> Run`; `record(ledger, kind, verdict)` for a gate run outside a loop |
+
+**The loop has four stages: `evidence → fit → clauses → apply`.** `run` drives the first three,
+decides the verdict, then calls `loop.apply(verdict, fit)`, so what a loop does with its verdict
+(store the fitted map on `pass`, the identity on anything else, as `fit_prob_calibration` does
+inside `compute` today via `earned()`) is a named stage, not buried in the fit. `apply` returns
+what it did (`"stored"`, `"held"`, ...), recorded in the same row. A stage that raises becomes
+`could_not_run` with the stage named (an `apply` that raises after a `pass` is recorded as
+`apply_failed` in the row, keeping the verdict). Exactly one ledger row per run, every exit
+included; `run` never raises. A loop that wants no action implements `apply` as a no-op. The
+legacy per-model routes keep their own path until slice 5 moves each onto `run`; until then they
+stamp through `stamp_run` as today.
+
+**Async**: the Protocols are `async` (the stores a loop reads are async; trade-data is asyncio),
+`fit` and `clauses` stay synchronous (pure). A synchronous backend runs its calls in a thread.
 
 Every function is pure or behind a Protocol; no clock without injection; no I/O outside the JSONL
 adapters. Docs: guide `docs/guides/learning-loops.md` with an executed, self-asserting example
@@ -219,12 +308,16 @@ After slice 3 (below), a new loop in trade-data is:
 | `service/learn/<loop>.py` | new | the `Loop`: read evidence (a repo call), fit, return clauses: ≤ 120 lines |
 | `tests/learn/test_<loop>.py` | new | pure tests of fit + clauses |
 | `windmill/u/admin/<loop>.schedule.yaml` + `.flow` | new | the cron and the thin POST, copied |
-| `service/usecases/fit_registry.py` | +1 line | registers it (dispatched by the existing `POST /admin/run/fit/{model}`) |
-| `service/admin/admin_run_declarations_learn.py` | +1 line | `declare(..., learn_kind=<kind>)` |
+| `service/usecases/fit_registry.py` | +1 line | `register_loop(<Loop factory>)`: a slice-3 helper builds the `FitSpec` (`fit` = `run(loop, ledger)`, `read` = the ledger's latest `pass`, `learn_kind` = `loop.kind`), dispatched by the existing `POST /admin/run/fit/{model}` |
 | `service/usecases/loop_registrants.py` | +1 entry | the `LoopSpec` (score slot derived) |
 
 **Zero migrations, zero routes, zero UI code**: the ledger is `learn_runs`, the route is the fit
-route, the Research Ledger page lists any kind and its schedule. Budget: ≤ 7 files, ≤ 250 lines
+route, the Research Ledger page lists any kind and its schedule. A cross-sectional loop (many
+symbols, one verdict) ignores the dispatcher's `symbol` argument, as the scope-global slippage
+fit already does (`fit_registry.py` `_fit_slippage`), and puts its universe in `params`. The
+budget holds only for a loop that stores nothing beyond its ledger row (its fitted `model` lives
+in `metrics`); a loop that needs a per-symbol table pays one migration and one repository, stated
+in its PR. Budget: ≤ 7 files, ≤ 250 lines
 including tests. The trend loop's PR reports its `git diff --stat` against this budget; a miss is
 a core defect to fix, not a number to restate.
 
@@ -232,6 +325,11 @@ a core defect to fix, not a number to restate.
 
 - import-linter contract `learn-standalone`: `llm_ports.learn` imports no other `llm_ports`
   module and no third-party package.
+- `import llm_ports.learn` still runs `llm_ports/__init__` (pydantic, jinja2, pyyaml), so the
+  contract alone does not prove portability. `tests/contract/test_learn_standalone.py` copies
+  `src/llm_ports/learn/` into a temporary directory as a top-level package, rewrites its
+  `llm_ports.learn` imports, and runs it in a subprocess whose `sys.modules` must then hold no
+  third-party module: the "lift it into another codebase" claim, executed.
 - `tests/contract/test_core_imports.py` gains a leg: a bare install imports `llm_ports.learn` and
   runs the guide's example with the JSONL ledger.
 - The deployment-vocabulary pre-commit hook already rejects EDGE names in `src/llm_ports/`.
@@ -242,21 +340,25 @@ a core defect to fix, not a number to restate.
 | silent failure | lands in | watched from outside by |
 |---|---|---|
 | a loop stops running | no `learn_runs` row / no `ops.work` row in window | `loop-stalled` watchdog (exists) via the derived score slot; MISSED flag on the schedule view |
-| a loop runs but cannot decide (data gone, store down) | `metrics.verdict = could_not_run` with reason | Research Ledger shows `error`; `GET /research/schedule` counts consecutive `could_not_run` per kind, exported as `edge_learn_could_not_run_streak{kind}`; alert at ≥ 3 (trade-infra) |
+| a loop runs but cannot decide (data gone, store down) | `metrics.learn_verdict.decision = could_not_run` with reason | Research Ledger shows `error`; a `/metrics` collector (`service/observability/learn_gauge.py`, precedent `day_brief_gauge.py`) computes `edge_learn_could_not_run_streak{kind}` from the ledger at every Prometheus scrape, independent of any page being open; alert at ≥ 3 (trade-infra) |
+| a loop never earns: stuck at `insufficient` forever (the sample never grows) | `learn_verdict.decision = insufficient`, every run | the same collector exports `edge_learn_days_insufficient{kind}` (days since the kind's first consecutive `insufficient`); alert at ≥ 30 days, so a floor that cannot be reached is named rather than waited on |
+| an `apply` fails after a pass | `metrics.learn_apply = apply_failed` | the collector's `edge_learn_apply_failed_total{kind}`; alert > 0 |
 | a gate silently passes on missing evidence | impossible by construction: None fails closed | unit tests of `decide` both directions (a pass and every fail mode) |
 | a ledger write fails | `stamp_run` swallows it today (`learn_ledger.py:45-54`) | `run()` returns the ledger outcome; the trade-data runner counts `edge_learn_ledger_write_failed_total{kind}`; alert > 0 |
 | a lifted statistic changes a number | n/a | trade-data's existing tests run against the lifted function before the copy is deleted |
 
 ## Slices (PRs), in order
 
-1. **llm-ports: `llm_ports.learn` core** (types, gate, stats, examples, ledger, loop runner, JSONL
-   adapters, testing fakes, standalone contract, guide, ADR-0010, API page) → release 1.5.0.
+1. **llm-ports: `llm_ports.learn` core** (types, gate, stats, examples, stores, loop runner with
+   its `apply` stage, standalone contract, guide, ADR-0010, API page) → release 1.5.0.
 2. **llm-ports: LLM labels on the core**: re-scope WIP `04678fd` (below) → 1.6.0.
-3. **trade-data: adoption plumbing**: pin; `LearnRunsLedger` adapter; `run()` behind
-   `POST /admin/run/fit/{model}`; Research Ledger reads `metrics.gate` generically; derived score
-   slot; delete the Wilson / BH / effective-n copies (not `pattern_stats`); the two failure gauges.
-4. **trade-data + trade-ui + trade-infra: schedule view**: `GET /research/schedule`, Research
-   Ledger columns, the `could_not_run` streak alert.
+3. **trade-data: adoption plumbing**: pin; `LearnRunsLedger` adapter; `FitSpec` with
+   `learn_kind` + `register_loop`; `ops.work` named `fit.<model>`; `learn_kinds()`; Research
+   Ledger reads `metrics.learn_verdict` generically; derived score slot; `eval_metrics` BH copy
+   replaced by `learn.stats.bh_fdr(dependent=False)` (numbers unchanged; not `pattern_stats`); the
+   `learn_gauge` collector.
+4. **trade-data + trade-ui + trade-infra: schedule view**: `GET /research/schedule` (Windmill
+   via `list_schedules`, keyed by registered loop), Research Ledger columns, the three alerts.
 5. **trade-data: existing gates return `Verdict`s**: promotion_gate, domain/promotion, fit
    `earned()`s, llm_judge_trust; sealed-gate wrappers. Thresholds unchanged.
 6. **trade-data: LLM label loop** (original Step 4): queue, coverage, LABELS card (§LLM labels).
@@ -292,7 +394,13 @@ changes:
 - `training-engine-inventory.md` §6 says `llm_judge_trust` is not on main. It is: trade-data#2823
   merged as `6e941731`, and `service/platform/llm_judge_trust.py` (109 lines) is on main.
 - `eval-labels-design-review.md` (the prior reviewer's findings) is an empty file on disk; its
-  findings are not recoverable. This doc gets a fresh review.
+  findings are not recoverable. This doc got a fresh review (`learning-loop-core-design-review.md`
+  in the session notes, DO NOT SHIP, 11 findings); this revision answers each: 1 →
+  `learn_verdict` (Decision 3), 2 + 3 → `FitSpec.learn_kind`, `list_schedules` (Decision 6), 4 →
+  lift only kappa/AC1/BY (Decision 5), 5 → standalone lifted-copy test, other verdict types named,
+  6 → roles + `unevaluated` policy, 7 → `apply` stage, 8 → scrape-time collector, 9 → async
+  stated, 10 → cross-sectional + budget scope, 11 → inventory rows, event tools, sibling docs,
+  Postgres adapter, view keyed by loop.
 
 ## Not in scope
 

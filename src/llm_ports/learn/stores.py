@@ -35,7 +35,7 @@ def _utcnow() -> datetime:
 def _matches(row: LedgerRow, kind: str, subject: str | None, decisions: Sequence[Decision] | None) -> bool:
     if row.kind != kind or (subject is not None and row.subject != subject):
         return False
-    return decisions is None or row.metrics.get("verdict") in decisions
+    return decisions is None or row.decision in decisions
 
 
 def _wanted(ex: Example, topics: Sequence[str], since: datetime | None, source: Source | None) -> bool:

@@ -1,20 +1,24 @@
-"""Run a learning loop once: evidence, fit, gate, and exactly one ledger row, whatever happens.
+"""Run a learning loop once: evidence, fit, gate, apply, and exactly one ledger row, whatever happens.
 
-`run` is the part every loop used to rewrite: it drives a `Loop`'s three stages, decides the
-verdict with `gate.decide`, and records the run. A stage that raises does not escape: the run is
-recorded as `could_not_run` with the stage and the exception's type and message, because a run
-that left no row is indistinguishable from a run that never happened.
+`run` is the part every loop used to rewrite: it drives a `Loop`'s stages, decides the verdict
+with `gate.decide`, lets the loop act on it, and records the run. A stage that raises does not
+escape: the run is recorded as `could_not_run` with the stage and the exception's type and
+message, because a run that left no row is indistinguishable from a run that never happened.
+An `apply` that raises keeps the verdict and is recorded as `apply_failed`.
 
 Ledger row written for every run:
 
 - `params`: the loop's `params`.
-- `metrics`: the fit's `metrics`, then `verdict` (the decision), `gate` (`Verdict.as_dict`),
-  `model` (the fit's `model`) and `seconds`. Those four keys are reserved: they replace a fit
-  metric of the same name.
+- `metrics`: the fit's `metrics`, then the reserved keys `RESERVED`: `learn_verdict`
+  (`Verdict.as_dict`), `learn_model` (the fit's `model`), `learn_apply` (what `apply` returned,
+  `apply_failed`, or "" when it was not called), `learn_apply_reason` and `learn_seconds`. A fit
+  metric of a reserved name is replaced.
+
+`record` writes the same verdict row for a gate run outside a `Loop`.
 
 Invariants:
-    - Exactly one `RunLedger.append` per call.
-    - Never raises for a loop's failure or a ledger's; both are in the returned `Run`.
+    - Exactly one `RunLedger.append` per call of `run` or `record`.
+    - Never raises for a loop's failure or a ledger's; both are in the returned value.
 
 Rationale: ADR-0010.
 """
@@ -22,16 +26,16 @@ Rationale: ADR-0010.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from llm_ports.learn._protocols import Fit, Loop, RunLedger
-from llm_ports.learn._types import Verdict, Written
-from llm_ports.learn.gate import could_not_run, decide
+from llm_ports.learn._types import VERDICT_KEY, Verdict, Written
+from llm_ports.learn.gate import Unevaluated, could_not_run, decide
 
 #: Metric keys `run` writes; a fit metric of the same name is replaced.
-RESERVED = ("verdict", "gate", "model", "seconds")
+RESERVED = (VERDICT_KEY, "learn_model", "learn_apply", "learn_apply_reason", "learn_seconds")
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,7 @@ class Run:
         subject: The loop's subject.
         verdict: The gate's verdict (`could_not_run` when a stage failed).
         fit: The fit, or None when the run stopped before it finished.
+        applied: What `apply` returned; `apply_failed` when it raised; "" when not called.
         recorded: The ledger's answer to the row this run wrote.
         seconds: Wall time of the stages, excluding the ledger write.
     """
@@ -51,48 +56,88 @@ class Run:
     subject: str
     verdict: Verdict
     fit: Fit | None
+    applied: str
     recorded: Written
     seconds: float
+
+
+def _error(stage: str, exc: Exception) -> str:
+    """Return one line naming a failed stage and its exception."""
+    return f"{stage}: {type(exc).__name__}: {exc}"[:500]
+
+
+async def record(
+    ledger: RunLedger,
+    kind: str,
+    verdict: Verdict,
+    *,
+    params: Mapping[str, Any] | None = None,
+    metrics: Mapping[str, Any] | None = None,
+) -> Written:
+    """Record one gate verdict as a ledger row, for a gate run outside a `Loop`.
+
+    Args:
+        ledger: Where the run is recorded.
+        kind: The run kind.
+        verdict: The verdict; its `subject` is the row's subject.
+        params: The knobs the gate used.
+        metrics: What it measured; `VERDICT_KEY` is set from `verdict`.
+
+    Returns:
+        The ledger's answer. Never raises.
+    """
+    row = dict(metrics or {})
+    row[VERDICT_KEY] = verdict.as_dict()
+    try:
+        return await ledger.append(kind, subject=verdict.subject, params=dict(params or {}), metrics=row)
+    except Exception as exc:  # a ledger that broke its never-raise contract is still answered
+        return Written(0, "unavailable", _error("ledger raised", exc))
 
 
 async def run[E](loop: Loop[E], ledger: RunLedger, *, clock: Callable[[], float] = time.monotonic) -> Run:
     """Run `loop` once and record it in `ledger`.
 
     Args:
-        loop: The loop.
+        loop: The loop. An `unevaluated` attribute, when present, is passed to `gate.decide`.
         ledger: Where the run is recorded.
         clock: A monotonic clock in seconds, for `seconds`; injectable for tests.
 
     Returns:
-        The run. Never raises for a stage's exception (recorded as `could_not_run`) or a ledger
-        failure (`Run.recorded` carries it).
+        The run. Never raises for a stage's exception (recorded as `could_not_run`, or as
+        `apply_failed` for `apply`) or a ledger failure (`Run.recorded` carries it).
     """
     start = clock()
     fit: Fit | None = None
     stage = "evidence"
+    policy: Unevaluated = "insufficient" if getattr(loop, "unevaluated", "fail") == "insufficient" else "fail"
     try:
         evidence = await loop.evidence()
         stage = "fit"
         fit = loop.fit(evidence)
         stage = "clauses"
-        verdict = decide(loop.kind, loop.clauses(fit, evidence), subject=loop.subject)
+        verdict = decide(loop.kind, loop.clauses(fit, evidence), subject=loop.subject, unevaluated=policy)
     except Exception as exc:  # a loop's own failure becomes a recorded could_not_run
-        verdict = could_not_run(loop.kind, f"{stage}: {type(exc).__name__}: {exc}"[:500], subject=loop.subject)
+        verdict = could_not_run(loop.kind, _error(stage, exc), subject=loop.subject)
         if stage != "clauses":
             fit = None
+    applied, apply_reason = "", ""
+    if fit is not None and verdict.decision != "could_not_run":
+        try:
+            applied = await loop.apply(verdict, fit)
+        except Exception as exc:  # the verdict stands; the failed action is on the record
+            applied, apply_reason = "apply_failed", _error("apply", exc)
     seconds = clock() - start
     metrics: dict[str, Any] = dict(fit.metrics) if fit is not None else {}
     metrics.update(
-        verdict=verdict.decision,
-        gate=verdict.as_dict(),
-        model=dict(fit.model) if fit is not None else {},
-        seconds=round(seconds, 3),
+        {
+            "learn_model": dict(fit.model) if fit is not None else {},
+            "learn_apply": applied,
+            "learn_apply_reason": apply_reason,
+            "learn_seconds": round(seconds, 3),
+        }
     )
-    try:
-        recorded = await ledger.append(loop.kind, subject=loop.subject, params=dict(loop.params), metrics=metrics)
-    except Exception as exc:  # a ledger that broke its never-raise contract is still recorded
-        recorded = Written(0, "unavailable", f"ledger raised {type(exc).__name__}: {exc}"[:500])
-    return Run(loop.kind, loop.subject, verdict, fit, recorded, seconds)
+    recorded = await record(ledger, loop.kind, verdict, params=loop.params, metrics=metrics)
+    return Run(loop.kind, loop.subject, verdict, fit, applied, recorded, seconds)
 
 
-__all__ = ["RESERVED", "Run", "run"]
+__all__ = ["RESERVED", "Run", "record", "run"]
