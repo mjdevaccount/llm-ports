@@ -97,7 +97,7 @@ lint = [
     "actionlint-py==1.7.12.25",
     "twine>=7.0",
     "vulture>=2.14",
-    "zizmor==1.31.1",
+    "zizmor==1.32.0",
 ]
 # `mypy --strict` and `pyright --verifytypes` (the `types` CI job), with the stubs mypy reads.
 types = [
