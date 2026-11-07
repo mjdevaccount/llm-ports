@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-07
+
+### Added
+
+- `llm_ports.adapters.langfuse.experiments.seed` and its result `Seeded`: write a golden set into a
+  Langfuse dataset, creating it when missing. An item's id is the caller's or `input_id(input)` (a
+  SHA-256 of the canonical JSON), and Langfuse upserts by id, so a re-seed rewrites rather than
+  duplicates. A failed write is an `invalid` outcome naming the shortfall; an unreadable dataset is
+  `unavailable`. Never raises.
+
 ## [1.8.0] - 2026-11-07
 
 ### Added

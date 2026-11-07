@@ -85,3 +85,86 @@ def test_a_run_that_raises_is_unavailable() -> None:
     run = _record(Boom(["a", "b"]))
     assert run.outcome == "unavailable" and run.handed == 2 and run.graded == 0
     assert run.reason is not None and "TimeoutError" in run.reason
+
+
+class SeedClient:
+    """The dataset writes `seed` makes: an upsert-by-id store; `refuse` names ids whose write fails."""
+
+    def __init__(self, *, exists: bool = False, readable: bool = True, refuse: frozenset[str] = frozenset()) -> None:
+        self.exists, self.readable, self.refuse = exists, readable, refuse
+        self.items: dict[str, dict[str, Any]] = {}
+        self.created: list[dict[str, Any]] = []
+        self.flushed = 0
+
+    def create_dataset(self, **kw: Any) -> None:
+        if self.exists:
+            raise RuntimeError("dataset already exists")
+        self.created.append(kw)
+        self.exists = True
+
+    def get_dataset(self, name: str) -> SimpleNamespace:
+        if not self.readable:
+            raise ConnectionError("store down")
+        return SimpleNamespace(name=name, items=list(self.items.values()))
+
+    def create_dataset_item(self, **kw: Any) -> None:
+        if kw["id"] in self.refuse:
+            raise ConnectionError(f"write {kw['id']} refused")
+        self.items[kw["id"]] = kw
+
+    def flush(self) -> None:
+        self.flushed += 1
+
+
+GOLDEN = [{"q": "a", "want": 1}, {"q": "b", "want": 2}]
+
+
+def _seed(c: Any, **kw: Any) -> ex.Seeded:
+    return ex.seed(
+        c,
+        dataset="g1",
+        items=GOLDEN,
+        input=lambda r: {"q": r["q"]},
+        expected=lambda r: {"want": r["want"]},
+        description="golden",
+        **kw,
+    )
+
+
+def test_seed_creates_the_dataset_and_writes_every_item_under_its_input_hash() -> None:
+    c = SeedClient()
+    got = _seed(c)
+    assert got.ok and (got.handed, got.written, got.reason) == (2, 2, None)
+    assert c.created == [{"name": "g1", "description": "golden"}] and c.flushed == 1
+    assert got.ids == (ex.input_id({"q": "a"}), ex.input_id({"q": "b"}))
+    assert c.items[got.ids[0]]["expected_output"] == {"want": 1} and "metadata" not in c.items[got.ids[0]]
+
+
+def test_a_reseed_upserts_rather_than_duplicating() -> None:
+    c = SeedClient()
+    first, second = _seed(c), _seed(c)  # the second create_dataset raises "exists": not fatal
+    assert first.ids == second.ids and second.ok and len(c.items) == 2
+
+
+def test_input_id_ignores_key_order_and_tells_inputs_apart() -> None:
+    assert ex.input_id({"a": 1, "b": 2}) == ex.input_id({"b": 2, "a": 1}) != ex.input_id({"a": 1})
+    assert len(ex.input_id("x")) == 32
+
+
+def test_a_caller_id_wins_over_the_hash() -> None:
+    got = _seed(SeedClient(), item_id=lambda r: f"id-{r['q']}", metadata=lambda r: {"src": "t"})
+    assert got.ids == ("id-a", "id-b")
+
+
+def test_a_failed_write_is_invalid_naming_the_shortfall_and_the_rest_still_land() -> None:
+    bad = ex.input_id({"q": "a"})
+    c = SeedClient(refuse=frozenset({bad}))
+    got = _seed(c)
+    assert got.outcome == "invalid" and (got.written, got.ids) == (1, (ex.input_id({"q": "b"}),))
+    assert got.reason is not None and got.reason.startswith("1/2 items not written")
+
+
+def test_an_unreadable_dataset_is_unavailable_and_writes_nothing() -> None:
+    c = SeedClient(exists=True, readable=False)
+    got = _seed(c)
+    assert got.outcome == "unavailable" and got.written == 0 and not c.items and not got.ok

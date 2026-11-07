@@ -1,5 +1,7 @@
 """Record a graded evaluation as a Langfuse dataset experiment (extra `[langfuse]`).
 
+`seed` writes a golden set into a dataset, idempotently: each item's id is the caller's or a hash
+of its input, and Langfuse upserts an item by id, so a re-seed rewrites rather than duplicates.
 `run` drives the SDK's own experiment runner (`Langfuse.run_experiment`): it opens one trace per
 dataset item, links the trace to the item, and books each grade as a score on it. `record_rows`
 records rows already graded offline (a golden-set run that graded a recording) as one run on a
@@ -26,6 +28,8 @@ Rationale: ADR-0001.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -160,4 +164,108 @@ def record_rows(
     return run(client, run_name=run_name, items=items, task=task, grade=graded, metadata=metadata)
 
 
-__all__ = ["ExperimentRun", "Grade", "record_rows", "run"]
+@dataclass(frozen=True)
+class Seeded:
+    """What `seed` returns.
+
+    Attributes:
+        outcome: `ok` when every item was written; `invalid` when some writes failed;
+            `unavailable` when the dataset could be neither created nor read.
+        handed: Items `seed` was handed.
+        written: Items the store accepted.
+        ids: The id of every item written, in input order.
+        reason: One line naming the failure; None on `ok`.
+    """
+
+    outcome: Outcome
+    handed: int
+    written: int = 0
+    ids: tuple[str, ...] = ()
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
+        return self.outcome == "ok"
+
+
+def input_id(value: Any) -> str:
+    """A stable id for a dataset item: the first 32 hex digits of the SHA-256 of its canonical JSON.
+
+    Args:
+        value: The item's input; any JSON-serialisable value (a non-JSON leaf is stringified).
+
+    Returns:
+        The id; equal inputs (key order aside) give equal ids. Never raises.
+    """
+    blob = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
+
+def seed(
+    client: Any,
+    *,
+    dataset: str,
+    items: Sequence[Mapping[str, Any]],
+    input: Callable[[Mapping[str, Any]], Any],  # the SDK's own field name
+    expected: Callable[[Mapping[str, Any]], Any] | None = None,
+    metadata: Callable[[Mapping[str, Any]], Any] | None = None,
+    item_id: Callable[[Mapping[str, Any]], str] | None = None,
+    description: str | None = None,
+) -> Seeded:
+    """Write `items` into `dataset`, creating the dataset when missing; a re-seed upserts.
+
+    Args:
+        client: A Langfuse SDK 5 client.
+        dataset: The dataset's name.
+        items: The golden rows, in any shape the projections read.
+        input: A row to the item's input.
+        expected: A row to the item's expected output; omitted, none is written.
+        metadata: A row to the item's metadata; omitted, none is written.
+        item_id: A row to the item's id; omitted, `input_id` of the item's input, so the same input
+            is the same item across seeds.
+        description: The dataset's description, written on creation.
+
+    Returns:
+        `ok` with every id when every item was written; `invalid` naming the shortfall when some
+        writes failed; `unavailable` when the dataset could be neither created nor read. Never
+        raises.
+
+    Invariants:
+        - Idempotent: seeding the same rows twice leaves one item per id.
+        - A failed write never stops the rest; the outcome counts it.
+    """
+    try:
+        client.create_dataset(name=dataset, description=description)
+    except Exception as exc:  # the name may already exist; only an unreadable dataset is fatal
+        try:
+            client.get_dataset(dataset)
+        except Exception:
+            return Seeded("unavailable", len(items), reason=failure_reason(exc))
+    ids: list[str] = []
+    failed: list[str] = []
+    for row in items:
+        value = input(row)
+        iid = item_id(row) if item_id else input_id(value)
+        kw: dict[str, Any] = {"dataset_name": dataset, "id": iid, "input": value}
+        if expected is not None:
+            kw["expected_output"] = expected(row)
+        if metadata is not None:
+            kw["metadata"] = metadata(row)
+        try:
+            client.create_dataset_item(**kw)
+        except Exception as exc:  # one write failing is counted, not fatal
+            failed.append(failure_reason(exc))
+            continue
+        ids.append(iid)
+    try:
+        client.flush()
+    except Exception as exc:  # a flush that fails leaves the writes unconfirmed
+        return Seeded("invalid", len(items), len(ids), tuple(ids), f"flush failed: {failure_reason(exc)}")
+    if failed:
+        reason = f"{len(failed)}/{len(items)} items not written: {failed[0]}"
+        return Seeded("invalid", len(items), len(ids), tuple(ids), reason)
+    return Seeded("ok", len(items), len(ids), tuple(ids))
+
+
+__all__ = ["ExperimentRun", "Grade", "Seeded", "input_id", "record_rows", "run", "seed"]
