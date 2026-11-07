@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
 
-from llm_ports.learn import Example, Written
+from llm_ports.learn import Example, StoreOutcome, Written
 from llm_ports.learn.examples import Coverage
 from llm_ports.ports import JudgeVerdict
 
@@ -65,6 +65,38 @@ class Candidate:
     judged: str | None = None
 
 
+@dataclass(frozen=True)
+class Queued:
+    """What `LabelQueue.queued` returns: the subjects a topic's queue holds.
+
+    Attributes:
+        pending: Subjects waiting for a human.
+        done: Subjects a human has completed.
+        outcome: `ok`, `unavailable` when the queue could not be read, or `request_fault` for a
+            topic that is not a model reply's.
+        reason: One line naming the failure; None on `ok`.
+
+    Invariants:
+        - An unreadable queue is `unavailable`, never an empty one.
+        - A topic with no queue yet is `ok` and empty.
+    """
+
+    pending: frozenset[str] = frozenset()
+    done: frozenset[str] = frozenset()
+    outcome: StoreOutcome = "ok"
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
+        return self.outcome == "ok"
+
+    @property
+    def seen(self) -> frozenset[str]:
+        """Every subject the queue holds, pending or done: what `draw` should skip."""
+        return self.pending | self.done
+
+
 @runtime_checkable
 class LabelQueue(Protocol):
     """A review surface where a human labels queued replies (an annotation queue)."""
@@ -77,7 +109,16 @@ class LabelQueue(Protocol):
             subjects: `(subject, trace)` pairs.
 
         Returns:
-            How many landed; enqueueing a subject twice is not an error. Never raises.
+            How many were newly queued; a subject the queue already holds is skipped, not added
+            twice and not an error. Never raises.
+        """
+        ...
+
+    async def queued(self, topic: str) -> Queued:
+        """Read the subjects a topic's queue holds, so a caller can skip them and bound the backlog.
+
+        Returns:
+            The pending and done subjects, or an `unavailable` outcome. Never raises.
         """
         ...
 
@@ -179,4 +220,4 @@ def label_of(
     )
 
 
-__all__ = ["PREFIX", "Candidate", "LabelQueue", "draw", "label_of", "role_of", "topic"]
+__all__ = ["PREFIX", "Candidate", "LabelQueue", "Queued", "draw", "label_of", "role_of", "topic"]
