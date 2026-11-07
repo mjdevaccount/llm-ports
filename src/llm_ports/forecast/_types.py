@@ -1,5 +1,24 @@
 """The forecast values: what a voice said would happen, and what did.
 
+Field names follow forecasting-platform vocabulary (Metaculus, Good Judgment), schema.org's
+`Claim` / `ClaimReview`, and W3C PROV for provenance. Where they name the same thing differently:
+
+| field | Metaculus / GJ | schema.org | W3C PROV |
+|---|---|---|---|
+| `Forecast.author` | forecaster | `Claim.author` | `wasAttributedTo` |
+| `Forecast.subject` | the question's subject | `Claim.about` | |
+| `Forecast.kind` | `question.type` | | |
+| `Forecast.forecast_time` | forecast time | `Claim.datePublished` | |
+| `Forecast.resolve_time` | `scheduled_resolve_time` | | |
+| `Forecast.text` | | `Claim.text` | |
+| `Forecast.resolution_criteria` | `resolution_criteria` | | |
+| `Forecast.probability` | probability | | |
+| `Forecast.was_generated_by` | | | `wasGeneratedBy` |
+| `Forecast.used` | | | `used` |
+| `Resolved.claim_reviewed` | | `ClaimReview.claimReviewed` | |
+| `Resolved.resolution` | `resolution` | `ClaimReview.reviewRating` | |
+| `Resolved.actual_resolve_time` | `actual_resolve_time` | `ClaimReview.datePublished` | |
+
 Invariants:
     - Standard library only: this package imports nothing else from `llm_ports` and no vendor.
     - Every value is frozen.
@@ -13,6 +32,10 @@ import math
 import numbers
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal, get_args
+
+#: How a forecast resolved: it happened, it did not, or it can no longer be graded.
+Resolution = Literal["yes", "no", "annulled"]
 
 
 def finite_real(v: object) -> bool:
@@ -25,14 +48,14 @@ def finite_real(v: object) -> bool:
         return False
 
 
-def valid_p(p: float) -> bool:
+def valid_p(p: object) -> bool:
     """Return True when `p` is a finite real probability in [0, 1] (a bool is not a probability).
 
     Any `numbers.Real` counts (`int`, `float`, NumPy floating scalars, `Fraction`); `Decimal`
     is not a `numbers.Real` and is refused. A caller that accepts `p` reads it through `float`.
     Never raises.
     """
-    return finite_real(p) and 0.0 <= float(p) <= 1.0
+    return finite_real(p) and 0.0 <= float(p) <= 1.0  # type: ignore[arg-type]  # finite_real proved it Real
 
 
 @dataclass(frozen=True)
@@ -40,52 +63,57 @@ class Forecast:
     """One gradeable statement a voice made about a future event.
 
     A forecast is a record of what was said, not an input to a decision: its probability is the
-    voice's own (`p`), its verbal confidence is kept as written (`hedge`), and a calibrator or a
-    `HedgeMap` turns either into a probability the voice has earned.
+    voice's own (`probability`), its verbal confidence is kept as written (`hedge`), and a
+    calibrator or a `HedgeMap` turns either into a probability the voice has earned.
 
     Attributes:
-        producer: Who asserted it (an author, a model role, an assembler).
+        author: Who asserted it (an author, a model role, an assembler).
         subject: What it is about (an instrument, an event key).
         kind: What shape of claim it is (`direction`, `level`, `range`, `event`, ...).
-        asserted_at: When it was asserted; only text available then may back it.
-        resolves_at: When the world settles it; never before `asserted_at`.
-        evidence: The span the forecast was read from, verbatim.
-        p: The probability the voice stated, or None when it stated only words.
+        forecast_time: When it was asserted; only text available then may back it.
+        resolve_time: When the world settles it; never before `forecast_time`.
+        text: The span the forecast was read from, verbatim.
+        probability: The probability the voice stated, or None when it stated only words.
         hedge: The verbal confidence as written (`likely`, `could`), or None.
-        extracted_by: What transcribed it (a prompt pack and its sha), or None when the producer
-            wrote it directly.
+        resolution_criteria: How the outcome is read, or None when `kind` implies it.
+        was_generated_by: What transcribed it (a prompt pack and its sha), or None when the
+            author wrote it directly.
+        used: What the transcription read (source document ids); empty when none are recorded.
 
     Raises:
-        ValueError: At construction, for a `p` outside [0, 1] or not finite, a `resolves_at`
-            before `asserted_at` (or one naive and one aware), an empty `evidence`, `producer`, `subject` or `kind`, or a
-            forecast with neither `p` nor `hedge`.
+        ValueError: At construction, for a `probability` outside [0, 1] or not finite, a
+            `resolve_time` before `forecast_time` (or one naive and one aware), an empty `text`,
+            `author`, `subject` or `kind`, or a forecast with neither `probability` nor `hedge`.
     """
 
-    producer: str
+    author: str
     subject: str
     kind: str
-    asserted_at: datetime
-    resolves_at: datetime
-    evidence: str
-    p: float | None = None
+    forecast_time: datetime
+    resolve_time: datetime
+    text: str
+    probability: float | None = None
     hedge: str | None = None
-    extracted_by: str | None = None
+    resolution_criteria: str | None = None
+    was_generated_by: str | None = None
+    used: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not (self.producer and self.subject and self.kind):
-            raise ValueError("Forecast needs a producer, a subject and a kind")
-        if not self.evidence.strip():
-            raise ValueError("Forecast needs a non-empty evidence span")
+        if not (self.author and self.subject and self.kind):
+            raise ValueError("Forecast needs an author, a subject and a kind")
+        if not self.text.strip():
+            raise ValueError("Forecast needs a non-empty text span")
         try:
-            backwards = self.resolves_at < self.asserted_at
+            backwards = self.resolve_time < self.forecast_time
         except TypeError as exc:
-            raise ValueError("Forecast.asserted_at and resolves_at must both be naive or both aware") from exc
+            raise ValueError("Forecast.forecast_time and resolve_time must both be naive or both aware") from exc
         if backwards:
-            raise ValueError("Forecast.resolves_at is before asserted_at")
-        if self.p is None and not (self.hedge and self.hedge.strip()):
+            raise ValueError("Forecast.resolve_time is before forecast_time")
+        if self.probability is None and not (self.hedge and self.hedge.strip()):
             raise ValueError("Forecast needs a probability or a hedge")
-        if self.p is not None and not valid_p(self.p):
-            raise ValueError(f"Forecast.p must be a finite probability in [0, 1], got {self.p!r}")
+        if self.probability is not None and not valid_p(self.probability):
+            raise ValueError(f"Forecast.probability must be a finite probability in [0, 1], got {self.probability!r}")
+        object.__setattr__(self, "used", tuple(self.used))
 
 
 @dataclass(frozen=True)
@@ -93,14 +121,27 @@ class Resolved:
     """A forecast and what the world did.
 
     Attributes:
-        forecast: The forecast.
-        outcome: True when the forecast event happened.
-        resolved_at: When the outcome was read.
+        claim_reviewed: The forecast.
+        resolution: `yes` when the forecast event happened, `no` when it did not, `annulled`
+            when it can no longer be graded (the question was voided).
+        actual_resolve_time: When the outcome was read.
+
+    Raises:
+        ValueError: At construction, for a `resolution` that is not `yes`, `no` or `annulled`.
     """
 
-    forecast: Forecast
-    outcome: bool
-    resolved_at: datetime
+    claim_reviewed: Forecast
+    resolution: Resolution
+    actual_resolve_time: datetime
+
+    def __post_init__(self) -> None:
+        if self.resolution not in get_args(Resolution):
+            raise ValueError(f"Resolved.resolution must be yes, no or annulled, got {self.resolution!r}")
+
+    @property
+    def outcome(self) -> bool | None:
+        """True for `yes`, False for `no`, None for `annulled` (not gradeable)."""
+        return None if self.resolution == "annulled" else self.resolution == "yes"
 
 
-__all__ = ["Forecast", "Resolved", "finite_real", "valid_p"]
+__all__ = ["Forecast", "Resolution", "Resolved", "finite_real", "valid_p"]

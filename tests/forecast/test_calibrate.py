@@ -4,17 +4,24 @@ import json
 
 import pytest
 
-from llm_ports.forecast import Calibrated, Insufficient, PiecewiseLinear
-from llm_ports.forecast.calibrate import usable
+from llm_ports.forecast import Insufficient, PiecewiseLinear
+from llm_ports.forecast.calibrate import proba_rows, usable
 
 
 def test_piecewise_linear_interpolates_and_clamps() -> None:
     m = PiecewiseLinear(xs=(0.2, 0.6), ys=(0.1, 0.5), n=40)
-    assert isinstance(m, Calibrated)
     assert m(0.0) == 0.1 and m(1.0) == 0.5
     assert m(0.4) == pytest.approx(0.3)
     assert m(0.6) == 0.5
     assert m(float("nan")) == 0.5  # neutral, not a knot
+
+
+def test_piecewise_linear_predicts_in_the_scikit_learn_layout() -> None:
+    m = PiecewiseLinear(xs=(0.2, 0.6), ys=(0.1, 0.5))
+    assert m.predict([0.0, 0.4]) == pytest.approx([0.1, 0.3])
+    rows = m.predict_proba([0.4])
+    assert rows[0] == pytest.approx((0.7, 0.3))
+    assert proba_rows([0.25]) == [(0.75, 0.25)]
 
 
 def test_piecewise_linear_round_trips_through_json() -> None:
@@ -50,6 +57,11 @@ def test_usable_drops_invalid_and_names_the_shortfall() -> None:
     assert isinstance(short, Insufficient) and short.n == 1 and "< 2" in short.reason
     one = usable([0.1, 0.2, 0.3], [True, True, True], need=2)
     assert isinstance(one, Insufficient) and one.reason == "one outcome only"
+
+
+def test_usable_refuses_unaligned_inputs() -> None:
+    got = usable([0.1, 0.9, 0.5], [False, True], need=1)
+    assert isinstance(got, Insufficient) and got.n == 0 and "3 items" in got.reason
 
 
 def test_knots_are_stored_as_float() -> None:

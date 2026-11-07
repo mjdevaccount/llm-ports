@@ -1,7 +1,7 @@
 """Verbal confidence, learned per source: what "likely" from one voice has meant.
 
 A voice that writes "likely" does not state a number, and two voices mean different things by
-the same word. `HedgeMap` learns, from resolved forecasts, the probability each `(source, hedge)`
+the same word. `HedgeMap` (a scikit-learn estimator) learns, from resolved forecasts, the probability each `(source, hedge)`
 has earned. A source with few resolved uses of a word is shrunk toward the word's pooled rate
 across every source (beta-binomial shrinkage), so one lucky call does not make "could" mean 0.9.
 
@@ -25,9 +25,10 @@ from __future__ import annotations
 import numbers
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Self
 
+from llm_ports.forecast._estimator import Params
 from llm_ports.forecast._types import finite_real, valid_p
 
 #: The prior strength used when it cannot be estimated (fewer than two sources use the word).
@@ -97,57 +98,69 @@ def _valid_strength(s: object) -> bool:
     return finite_real(s) and float(s) > 0  # type: ignore[arg-type]  # finite_real proved it Real
 
 
-@dataclass(frozen=True)
-class HedgeMap:
-    """The probability each `(source, hedge)` has earned.
+class HedgeMap(Params):
+    """The probability each `(source, hedge)` has earned: a scikit-learn estimator.
 
-    Build with `HedgeMap.fit`; read with `p`.
+    `fit(X, y)` learns from resolved forecasts, `X` rows of `(source, hedge)` and `y` whether each
+    happened; `probability(source, hedge)` and `predict_proba(X)` read the fitted map.
+
+    Args:
+        strength: A fixed prior strength for every word (any finite real > 0, stored as float);
+            None (default) estimates it per word.
 
     Attributes:
-        cells: `(source, hedge) -> (hits, n)`.
-        pooled: `hedge -> pooled hit rate` (Jeffreys-smoothed).
-        strengths: `hedge -> prior strength` used for that word.
-
-    Raises:
-        ValueError: At construction, for a cell whose counts are not `0 <= hits <= n`, a pooled
-            rate that is not in [0, 1], or a strength that is not finite and > 0.
+        strength: As given.
+        cells_: `(source, hedge) -> (hits, n)`. Set by `fit` or `from_dict`.
+        pooled_: `hedge -> pooled hit rate` (Jeffreys-smoothed).
+        strengths_: `hedge -> prior strength` used for that word.
     """
 
-    cells: Mapping[tuple[str, str], tuple[int, int]]
-    pooled: Mapping[str, float]
-    strengths: Mapping[str, float] = field(default_factory=dict)
+    cells_: dict[tuple[str, str], tuple[int, int]]
+    pooled_: dict[str, float]
+    strengths_: dict[str, float]
 
-    def __post_init__(self) -> None:
-        if not all(_count(k) and _count(n) and k <= n for k, n in self.cells.values()):
-            raise ValueError("HedgeMap.cells must hold integer (hits, n) with 0 <= hits <= n")
-        if not all(valid_p(v) for v in self.pooled.values()):
-            raise ValueError("HedgeMap.pooled rates must be probabilities in [0, 1]")
-        if not all(_valid_strength(v) for v in self.strengths.values()):
-            raise ValueError("HedgeMap.strengths must be finite and > 0")
-        # Stored as plain int/float, so `p` and `as_dict` never mix numeric types.
-        object.__setattr__(self, "cells", {key: (int(k), int(n)) for key, (k, n) in self.cells.items()})
-        object.__setattr__(self, "pooled", {w: float(v) for w, v in self.pooled.items()})
-        object.__setattr__(self, "strengths", {w: float(v) for w, v in self.strengths.items()})
+    def __init__(self, strength: float | None = None) -> None:
+        self.strength = strength
 
-    @classmethod
-    def fit(cls, rows: Iterable[tuple[str, str, bool]], *, strength: float | None = None) -> HedgeMap:
+    def _set(
+        self,
+        cells: Mapping[tuple[str, str], tuple[int, int]],
+        pooled: Mapping[str, float],
+        strengths: Mapping[str, float],
+    ) -> Self:
+        if not all(_count(k) and _count(n) and k <= n for k, n in cells.values()):
+            raise ValueError("HedgeMap cells must hold integer (hits, n) with 0 <= hits <= n")
+        if not all(valid_p(v) for v in pooled.values()):
+            raise ValueError("HedgeMap pooled rates must be probabilities in [0, 1]")
+        if not all(_valid_strength(v) for v in strengths.values()):
+            raise ValueError("HedgeMap strengths must be finite and > 0")
+        # Stored as plain int/float, so `probability` and `as_dict` never mix numeric types.
+        self.cells_ = {key: (int(k), int(n)) for key, (k, n) in cells.items()}
+        self.pooled_ = {w: float(v) for w, v in pooled.items()}
+        self.strengths_ = {w: float(v) for w, v in strengths.items()}
+        return self
+
+    def fit(self, X: Iterable[tuple[str, str]], y: Iterable[bool]) -> Self:
         """Learn the map from resolved forecasts.
 
         Args:
-            rows: `(source, hedge, outcome)`; a row whose hedge is empty or not a string is skipped.
-            strength: A fixed prior strength for every word (any finite real > 0, stored as
-                float); None (default) estimates it per word.
+            X: `(source, hedge)` rows; a row whose hedge is empty or not a string is skipped.
+            y: Whether each event happened, aligned with `X`.
 
         Returns:
-            The fitted map.
+            The estimator.
 
         Raises:
-            ValueError: For a `strength` that is not finite and > 0.
+            ValueError: For a `strength` that is not finite and > 0, or `X` and `y` of
+                different lengths.
         """
-        if strength is not None and not _valid_strength(strength):
-            raise ValueError(f"HedgeMap.fit strength must be finite and > 0, got {strength!r}")
+        if self.strength is not None and not _valid_strength(self.strength):
+            raise ValueError(f"HedgeMap strength must be finite and > 0, got {self.strength!r}")
+        rows, outcomes = list(X), list(y)
+        if len(rows) != len(outcomes):
+            raise ValueError(f"HedgeMap.fit: X has {len(rows)} rows, y has {len(outcomes)}")
         counts: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
-        for source, hedge, outcome in rows:
+        for (source, hedge), outcome in zip(rows, outcomes, strict=True):
             if not isinstance(hedge, str):
                 continue
             key = normalise(hedge)
@@ -165,51 +178,66 @@ class HedgeMap:
             k = sum(c[0] for c in cells.values())
             n = sum(c[1] for c in cells.values())
             pooled[word] = (k + 0.5) / (n + 1.0)
-            strengths[word] = float(strength) if strength is not None else _strength(cells, k / n, DEFAULT_STRENGTH)
-        return cls(cells={key: (c[0], c[1]) for key, c in counts.items()}, pooled=pooled, strengths=strengths)
+            strengths[word] = (
+                float(self.strength) if self.strength is not None else _strength(cells, k / n, DEFAULT_STRENGTH)
+            )
+        return self._set({key: (c[0], c[1]) for key, c in counts.items()}, pooled, strengths)
 
-    def p(self, source: str, hedge: str) -> float | None:
+    def probability(self, source: str, hedge: str) -> float | None:
         """Return the probability `hedge` from `source` has earned.
 
         A source that never used the word resolved gets the word's pooled rate.
 
         Returns:
-            The probability, or None for a word no source has used resolved (or a hedge that is
-            not a string). Never raises.
+            The probability, or None for a word no source has used resolved, a hedge that is
+            not a string, or an unfitted map. Never raises.
         """
         if not isinstance(hedge, str):
             return None
         word = normalise(hedge)
-        m = self.pooled.get(word)
+        pooled: dict[str, float] = getattr(self, "pooled_", {})
+        m = pooled.get(word)
         if m is None:
             return None
-        k, n = self.cells.get((source, word), (0, 0))
-        s = self.strengths.get(word, DEFAULT_STRENGTH)
+        k, n = self.cells_.get((source, word), (0, 0))
+        s = self.strengths_.get(word, DEFAULT_STRENGTH)
         return (k + m * s) / (n + s)
 
+    def predict_proba(self, X: Iterable[tuple[str, str]]) -> list[tuple[float, float] | None]:
+        """Return `(P(no), P(yes))` per `(source, hedge)` row; None for a word with no probability.
+
+        Never raises.
+        """
+        out: list[tuple[float, float] | None] = []
+        for source, hedge in X:
+            p = self.probability(source, hedge)
+            out.append(None if p is None else (1.0 - p, p))
+        return out
+
     def rows(self) -> tuple[HedgeRow, ...]:
-        """Return every fitted cell, by source then hedge, for a readout."""
+        """Return every fitted cell, by source then hedge, for a readout; empty when unfitted."""
         out = []
-        for (source, word), (k, n) in sorted(self.cells.items()):
-            p = self.p(source, word)
+        for (source, word), (k, n) in sorted(getattr(self, "cells_", {}).items()):
+            p = self.probability(source, word)
             assert p is not None  # every cell's word is pooled
-            out.append(HedgeRow(source=source, hedge=word, n=n, hits=k, p=p, pooled=self.pooled[word]))
+            out.append(HedgeRow(source=source, hedge=word, n=n, hits=k, p=p, pooled=self.pooled_[word]))
         return tuple(out)
 
     def as_dict(self) -> dict[str, Any]:
-        """Return the map as a JSON-ready dict; `from_dict` reads it back."""
+        """Return the fitted map as a JSON-ready dict; `from_dict` reads it back."""
         return {
-            "cells": [[s, w, k, n] for (s, w), (k, n) in sorted(self.cells.items())],
-            "pooled": dict(sorted(self.pooled.items())),
-            "strengths": dict(sorted(self.strengths.items())),
+            "cells": [[s, w, k, n] for (s, w), (k, n) in sorted(getattr(self, "cells_", {}).items())],
+            "pooled": dict(sorted(getattr(self, "pooled_", {}).items())),
+            "strengths": dict(sorted(getattr(self, "strengths_", {}).items())),
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> HedgeMap:
-        """Build a map from `as_dict` output.
+        """Build a fitted map from `as_dict` output.
 
         Raises:
-            ValueError: For a dict that is not `as_dict` output, or one the constructor rejects.
+            ValueError: For a dict that is not `as_dict` output, or counts, rates or strengths
+                out of range.
         """
         try:
             cells = {(str(s), str(w)): (int(k), int(n)) for s, w, k, n in data["cells"]}
@@ -217,7 +245,7 @@ class HedgeMap:
             strengths = {str(w): float(v) for w, v in data.get("strengths", {}).items()}
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise ValueError(f"not a HedgeMap dict: {exc}") from exc
-        return cls(cells=cells, pooled=pooled, strengths=strengths)
+        return cls()._set(cells, pooled, strengths)
 
 
 __all__ = ["DEFAULT_STRENGTH", "MAX_STRENGTH", "HedgeMap", "HedgeRow", "normalise"]

@@ -24,6 +24,8 @@ own way of reading "likely".
   calls models must not install it.
 - A fitted map must be applied where no fitting library is installed, and stored as data.
 - The library's rule: a failure is a named outcome, never an exception across a port.
+- A seam a well-known library already defines should keep that library's names, so its models
+  drop in and its readers need no translation.
 
 ## Considered options
 
@@ -47,6 +49,17 @@ contract, like `learn-standalone`), so it can be lifted into any codebase; a con
 out of `all`, which stays the set a model-calling caller needs. The stdlib Brier score is checked
 against scoringrules' in the adapter tests.
 
+Each seam takes an existing standard's names rather than new ones. Calibrators and `HedgeMap`
+are scikit-learn estimators (`fit(X, y)` returns the estimator, `predict_proba(X)` gives
+`(P(no), P(yes))` rows, `get_params` / `set_params`, fitted state in `_`-suffixed attributes);
+the core reimplements only the parameter protocol (`forecast._estimator.Params`), since it imports
+no third-party library. Combiners are River classifiers (`learn_one(x, y)`,
+`predict_proba_one(x)`). Scores follow scoringrules (`brier_score(obs, fct)`, observation first,
+lower is better). `Forecast` and `Resolved` take Metaculus / Good Judgment question fields,
+schema.org `Claim` / `ClaimReview` and W3C PROV, with one mapping table where they differ. A
+refused fit stays a named outcome: it is recorded as `Insufficient` in `insufficient_` and the
+prediction returns None, so the port still never raises.
+
 ### Consequences
 
 - Good: a calibration map fitted offline is applied anywhere from its JSON.
@@ -54,4 +67,9 @@ against scoringrules' in the adapter tests.
 - Bad: `HedgeMap`'s method-of-moments prior strength is crude at two or three sources; it falls
   back to a fixed strength below two sources and to near-full pooling when the sources agree
   within binomial noise. A hierarchical fit would be better and needs a heavier dependency.
-- Bad: `VennAbersFit` holds the vendor model and is not serialisable; refit it from the history.
+- Good: a scikit-learn, venn-abers or MAPIE calibrator and a River classifier satisfy the ports
+  unwrapped; `sklearn.base.clone` works on the llm-ports estimators.
+- Bad: a fitted `VennAbersCalibrator` holds the vendor model and is not serialisable; refit it
+  from the history.
+- Bad: a dropped-in third-party estimator raises on its own failures; only the llm-ports
+  implementations carry the never-raises contract.

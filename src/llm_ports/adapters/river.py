@@ -3,12 +3,13 @@
 `RiverLogitPool` regresses the outcome on each voice's log-odds, one feature per voice, plus a
 silent flag per voice it has heard before and that did not speak this time: a voice's silence
 can carry information. It learns one event at a time, so its weights follow drift without a
-nightly refit. Until it has heard `warmup` outcomes it does not combine (None), so a caller falls
-back to its baseline rather than read an untrained model.
+nightly refit. Until it has heard `warmup` outcomes it does not combine (`{}`), so a caller falls
+back to its baseline rather than read an untrained model. It speaks the `Combiner` protocol,
+River's own: `predict_proba_one(x)` and `learn_one(x, y)`, with `x` as `voice -> probability`.
 
 Invariants:
-    - Never raises across the port: a River failure leaves the state unchanged (`learn`) or
-      returns None (`combine`).
+    - Never raises across the port: a River failure leaves the state unchanged (`learn_one`) or
+      returns `{}` (`predict_proba_one`).
     - A combined probability is in [0, 1].
 
 Rationale: ADR-0013.
@@ -22,7 +23,7 @@ from typing import Any
 
 from llm_ports._extras import extra
 from llm_ports.forecast._types import valid_p
-from llm_ports.forecast.combine import logit
+from llm_ports.forecast.combine import logit, proba_one
 
 with extra("river"):
     from river import linear_model, optim
@@ -40,7 +41,7 @@ class RiverLogitPool:
     Args:
         lr: The SGD learning rate.
         l2: The L2 penalty on the weights.
-        warmup: Outcomes heard before `combine` answers; `WARMUP` by default.
+        warmup: Outcomes heard before `predict_proba_one` answers; `WARMUP` by default.
 
     Attributes:
         seen: Outcomes heard so far.
@@ -56,36 +57,36 @@ class RiverLogitPool:
         self.failures: int = 0
         self.voices: set[str] = set()
 
-    def _features(self, ps: Mapping[str, float]) -> dict[str, float]:
-        x = {f"voice:{v}": logit(p, FEATURE_EPS) for v, p in ps.items() if valid_p(p)}
+    def _features(self, x: Mapping[str, float]) -> dict[str, float]:
+        f = {f"voice:{v}": logit(p, FEATURE_EPS) for v, p in x.items() if valid_p(p)}
         for v in self.voices:
-            if f"voice:{v}" not in x:
-                x[f"silent:{v}"] = 1.0
-        return x
+            if f"voice:{v}" not in f:
+                f[f"silent:{v}"] = 1.0
+        return f
 
-    def combine(self, ps: Mapping[str, float]) -> float | None:
-        """Return the combined probability; None before warmup or with no usable voice. Never raises."""
-        x = self._features(ps)
-        if self.seen < self._warmup or not any(k.startswith("voice:") for k in x):
-            return None
+    def predict_proba_one(self, x: Mapping[str, float]) -> dict[bool, float]:
+        """Return `{False: P(no), True: P(yes)}`; `{}` before warmup or with no usable voice. Never raises."""
+        f = self._features(x)
+        if self.seen < self._warmup or not any(k.startswith("voice:") for k in f):
+            return {}
         try:
-            p = float(self._model.predict_proba_one(x).get(True, math.nan))
+            p = float(self._model.predict_proba_one(f).get(True, math.nan))
         except (ValueError, ArithmeticError, KeyError):
-            return None
-        return p if valid_p(p) else None
+            return {}
+        return proba_one(p) if valid_p(p) else {}
 
-    def learn(self, ps: Mapping[str, float], outcome: bool) -> None:
+    def learn_one(self, x: Mapping[str, float], y: bool) -> None:
         """Update the weights on one resolved event; an event with no usable voice is ignored. Never raises."""
-        x = self._features(ps)
-        if not any(k.startswith("voice:") for k in x):
+        f = self._features(x)
+        if not any(k.startswith("voice:") for k in f):
             return
         try:
-            self._model.learn_one(x, bool(outcome))
+            self._model.learn_one(f, bool(y))
         except (ValueError, ArithmeticError, KeyError):
             self.failures += 1
             return
         self.seen += 1
-        self.voices.update(v for v, p in ps.items() if valid_p(p))
+        self.voices.update(v for v, p in x.items() if valid_p(p))
 
     def weights(self) -> dict[str, float]:
         """Return the current feature weights (`voice:<v>`, `silent:<v>`) for a readout."""

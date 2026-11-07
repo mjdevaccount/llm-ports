@@ -1,7 +1,11 @@
 """Calibration: map a voice's stated probability to the probability it has earned.
 
-- `Calibrator`: the port. `fit(p, outcomes)` returns a `Calibrated` map, or `Insufficient` when
-  there are too few resolved forecasts to fit one.
+- `Calibrator`: the port, the scikit-learn estimator protocol. `fit(X, y)` returns the
+  estimator; `predict_proba(X)` returns one `(P(no), P(yes))` row per stated probability, the
+  column order of a binary scikit-learn classifier. A scikit-learn, venn-abers or MAPIE
+  calibrator satisfies it unwrapped.
+- `Insufficient`: why a fit produced no map (too few resolved forecasts, one outcome only); a
+  calibrator here records it in `insufficient_` and its `predict_proba` returns None.
 - `PiecewiseLinear`: a monotone map held as knots, applied with the standard library and
   serialised as JSON, so a map fitted offline (an isotonic fit, `adapters.sklearn`) is applied
   where no fitting library is installed.
@@ -18,18 +22,9 @@ from __future__ import annotations
 import bisect
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Self
 
 from llm_ports.forecast._types import valid_p
-
-
-@runtime_checkable
-class Calibrated(Protocol):
-    """A fitted calibration map."""
-
-    def __call__(self, p: float) -> float:
-        """Return the calibrated probability for a stated `p`, in [0, 1]. Never raises."""
-        ...
 
 
 @dataclass(frozen=True)
@@ -48,41 +43,57 @@ class Insufficient:
 
 
 class Calibrator(Protocol):
-    """Fits a calibration map from resolved forecasts."""
+    """Fits a calibration map from resolved forecasts (the scikit-learn estimator protocol)."""
 
-    def fit(self, p: Sequence[float], outcomes: Sequence[bool]) -> Calibrated | Insufficient:
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
+        """Return the constructor parameters by name."""
+        ...
+
+    def set_params(self, **params: Any) -> Self:
+        """Set constructor parameters by name and return the estimator."""
+        ...
+
+    def fit(self, X: Sequence[float], y: Sequence[bool]) -> Self:
         """Fit a map from stated probabilities and what happened.
 
         Args:
-            p: Stated probabilities.
-            outcomes: Whether each event happened, aligned with `p`.
+            X: Stated probabilities.
+            y: Whether each event happened, aligned with `X`.
 
         Returns:
-            The fitted map, or `Insufficient`. Never raises.
+            The estimator. A llm-ports calibrator never raises; too little data is recorded in
+            `insufficient_`.
         """
         ...
 
+    def predict_proba(self, X: Sequence[float]) -> list[tuple[float, float]] | None:
+        """Return `(P(no), P(yes))` per stated probability, or None with no usable fit."""
+        ...
 
-def usable(p: Sequence[float], outcomes: Sequence[bool], need: int) -> tuple[list[float], list[bool]] | Insufficient:
+
+def usable(X: Sequence[float], y: Sequence[bool], need: int) -> tuple[list[float], list[bool]] | Insufficient:
     """Return the aligned pairs a fitter may use, or why it may not.
 
     A pair with an invalid probability is dropped. A fit needs at least `need` pairs and both
     outcomes present.
 
     Args:
-        p: Stated probabilities.
-        outcomes: Outcomes aligned with `p`; extra items on either side are ignored.
+        X: Stated probabilities.
+        y: Outcomes aligned with `X`; sequences of different lengths are not aligned, so
+            nothing is usable.
         need: The fitter's floor.
 
     Returns:
         `(probabilities, outcomes)`, or `Insufficient`. Never raises.
     """
+    if len(X) != len(y):
+        return Insufficient(n=0, need=need, reason=f"X has {len(X)} items, y has {len(y)}")
     xs: list[float] = []
     ys: list[bool] = []
-    for x, y in zip(p, outcomes, strict=False):
+    for x, o in zip(X, y, strict=True):
         if valid_p(x):
             xs.append(float(x))
-            ys.append(bool(y))
+            ys.append(bool(o))
     if len(xs) < need:
         return Insufficient(n=len(xs), need=need, reason=f"{len(xs)} usable pairs < {need}")
     if all(ys) or not any(ys):
@@ -90,11 +101,17 @@ def usable(p: Sequence[float], outcomes: Sequence[bool], need: int) -> tuple[lis
     return xs, ys
 
 
+def proba_rows(ps: Sequence[float]) -> list[tuple[float, float]]:
+    """Return `(1 - p, p)` per probability: the two-column `predict_proba` layout."""
+    return [(1.0 - p, p) for p in ps]
+
+
 @dataclass(frozen=True)
 class PiecewiseLinear:
     """A monotone non-decreasing calibration map held as knots.
 
-    Between knots the map interpolates linearly; outside them it holds the end value.
+    Between knots the map interpolates linearly; outside them it holds the end value. It is the
+    fitted map, not a fitter: `IsotonicCalibrator.fit` returns one in `map_`.
 
     Attributes:
         xs: Knot inputs, strictly increasing, in [0, 1].
@@ -139,6 +156,14 @@ class PiecewiseLinear:
         x0, x1, y0, y1 = self.xs[i - 1], self.xs[i], self.ys[i - 1], self.ys[i]
         return y0 + (y1 - y0) * (p - x0) / (x1 - x0)
 
+    def predict(self, X: Sequence[float]) -> list[float]:
+        """Return the calibrated probability per stated probability. Never raises."""
+        return [self(p) for p in X]
+
+    def predict_proba(self, X: Sequence[float]) -> list[tuple[float, float]]:
+        """Return `(P(no), P(yes))` per stated probability. Never raises."""
+        return proba_rows(self.predict(X))
+
     def as_dict(self) -> dict[str, Any]:
         """Return the map as a JSON-ready dict; `from_dict` reads it back."""
         return {"xs": list(self.xs), "ys": list(self.ys), "n": self.n}
@@ -158,4 +183,4 @@ class PiecewiseLinear:
             raise ValueError(f"not a PiecewiseLinear dict: {exc}") from exc
 
 
-__all__ = ["Calibrated", "Calibrator", "Insufficient", "PiecewiseLinear", "usable"]
+__all__ = ["Calibrator", "Insufficient", "PiecewiseLinear", "proba_rows", "usable"]
