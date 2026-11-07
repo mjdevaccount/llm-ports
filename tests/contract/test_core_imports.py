@@ -22,13 +22,20 @@ VENDORS = (
     "httpx2",
     "langfuse",
     "lettucedetect",
+    "numpy",
     "openai",
     "opentelemetry",
+    "pandas",
     "pydantic_ai",
     "pydantic_evals",
+    "river",
+    "scipy",
+    "scoringrules",
+    "sklearn",
     "sqlglot",
     "torch",
     "transformers",
+    "venn_abers",
 )
 #: Modules that need an extra, by path prefix.
 NEEDS_AN_EXTRA = ("llm_ports.adapters", "llm_ports.testing.langfuse")
@@ -39,7 +46,11 @@ ADAPTERS = {
     "llm_ports.adapters.otel": ("otel", "opentelemetry"),
     "llm_ports.adapters.pydantic_ai": ("pydantic-ai", "pydantic_ai"),
     "llm_ports.adapters.pydantic_evals": ("evals", "pydantic_evals"),
+    "llm_ports.adapters.river": ("river", "river"),
+    "llm_ports.adapters.scoringrules": ("scoringrules", "scoringrules"),
+    "llm_ports.adapters.sklearn": ("sklearn", "sklearn"),
     "llm_ports.adapters.sqlglot": ("sql", "sqlglot"),
+    "llm_ports.adapters.venn_abers": ("venn-abers", "numpy"),
     "llm_ports.testing.langfuse": ("langfuse", "httpx"),  # needs httpx at import, the SDK when built
 }
 
@@ -86,6 +97,7 @@ def test_the_walk_sees_the_core_layers_and_no_adapter() -> None:
     assert top >= {
         "call",
         "evals",
+        "forecast",
         "grounding",
         "learn",
         "observability",

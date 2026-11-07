@@ -7,6 +7,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-07
+
+### Added
+
+- `llm_ports.forecast`, standard library only: `Forecast` and `Resolved` (Metaculus / Good
+  Judgment, schema.org `Claim` / `ClaimReview` and W3C PROV field names; `resolution` is
+  `yes` / `no` / `annulled`); `score(obs, fct)` (`brier_score`, `log_score`, `brier_skill_score`,
+  `overconfidence`; scoringrules' names and argument order), `reliability` and `ece`; the
+  `Calibrator` port (the scikit-learn estimator protocol: `fit(X, y)`, `predict_proba(X)`,
+  `get_params` / `set_params`) with `Insufficient` and `PiecewiseLinear` (a fitted monotone map,
+  JSON round-trip); `HedgeMap`, a scikit-learn estimator for the probability each source's hedge
+  word has earned (beta-binomial shrinkage toward the word's pooled rate); the `Combiner` port
+  (River's `learn_one(x, y)` / `predict_proba_one(x)`) and `LogitPool` (equal-weight log-odds
+  pool, optional extremizing). A `forecast-standalone` import contract keeps it liftable.
+  Rationale: ADR-0013.
+- Adapters, one extra each and grouped as `forecast` (not in `all`): `adapters.scoringrules`
+  (`brier_score`, `interval_score`, `crps_normal`), `adapters.sklearn.IsotonicCalibrator`
+  (optional `sample_weight`), `adapters.venn_abers.VennAbersCalibrator` (small-n, with a
+  `(p0, p1)` bracket from `predict_interval`) and `adapters.river.RiverLogitPool` (online
+  logistic logit pool with silent-voice flags).
+- The forecasts guide and `examples/forecasts.py`.
+
+### Changed
+
+- The coverage floor rises to 97.9%.
+
 ## [1.10.0] - 2026-11-07
 
 ### Added

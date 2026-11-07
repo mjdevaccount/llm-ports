@@ -67,3 +67,27 @@
 ::: llm_ports.adapters.lettucedetect
     options:
       show_root_heading: false
+
+## `llm_ports.adapters.scoringrules`
+
+::: llm_ports.adapters.scoringrules
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.sklearn`
+
+::: llm_ports.adapters.sklearn
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.venn_abers`
+
+::: llm_ports.adapters.venn_abers
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.river`
+
+::: llm_ports.adapters.river
+    options:
+      show_root_heading: false

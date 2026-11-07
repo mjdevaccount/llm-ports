@@ -22,3 +22,4 @@ named in its record.
 | [0010](0010-a-standalone-learning-loop-core.md) | A standalone learning-loop core (`llm_ports.learn`): one gate, one run ledger port, one labelled-example contract |
 | [0011](0011-label-names-follow-the-stores-own-rule.md) | Label score names follow Langfuse's score-config rule (`label-<role>`); reads accept the old `:` spelling |
 | [0012](0012-a-judge-earns-trust-from-labels.md) | A judge earns trust from human labels per judge model (`calibration.trust`, `kappa_ci`, `score` metadata) |
+| [0013](0013-forecast-scoring-in-a-standalone-core.md) | Forecast scoring in a standalone core (`llm_ports.forecast`); fitters and non-binary scores in four adapters |
