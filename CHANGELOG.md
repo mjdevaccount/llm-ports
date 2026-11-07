@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format is based on
 - A role whose label name Langfuse would refuse is now a `request_fault` from `enqueue` and `put`
   before any write (new `CONFIG_NAME`), and an `unavailable` reason carries the server's own
   validation message instead of only the status code.
+- `examples` splits its score-name filter into `NAMES_PER_READ` names per request, so the query
+  string stays bounded as roles grow. Rationale: ADR-0011.
 
 ## [1.9.0] - 2026-11-07
 

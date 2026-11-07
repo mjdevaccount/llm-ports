@@ -20,3 +20,4 @@ named in its record.
 | [0008](0008-prompt-packs-named-by-content-sha.md) | Prompt packs live in the repo and are named by a content sha |
 | [0009](0009-httpx2-client-under-the-pydantic-ai-adapter.md) | The pydantic-ai adapter hands its provider an httpx2 client and bridges a legacy httpx transport |
 | [0010](0010-a-standalone-learning-loop-core.md) | A standalone learning-loop core (`llm_ports.learn`): one gate, one run ledger port, one labelled-example contract |
+| [0011](0011-label-names-follow-the-stores-own-rule.md) | Label score names follow Langfuse's score-config rule (`label-<role>`); reads accept the old `:` spelling |

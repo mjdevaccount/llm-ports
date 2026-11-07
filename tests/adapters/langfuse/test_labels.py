@@ -144,6 +144,28 @@ async def test_a_server_refusal_names_the_servers_reason() -> None:
     )
     got = await lf.LangfuseExampleStore(FakeClient(api)).enqueue(topic("a"), [("o1", "t1")])
     assert got.outcome == "unavailable" and "Name contains invalid characters" in (got.reason or "")
+    api.score_configs.create = lambda **kw: (_ for _ in ()).throw(ServerRefused({"message": "line one\n" + "x" * 500}))
+    long = await lf.LangfuseExampleStore(FakeClient(api)).enqueue(topic("b"), [("o1", "t1")])
+    assert "line one" in (long.reason or "") and "\n" not in (long.reason or "") and len(long.reason or "") <= 200
+
+
+def test_the_length_rule_counts_as_the_server_does() -> None:
+    fits = "a" * (lf.CONFIG_NAME_MAX - len("label.model-"))
+    assert lf._bad_name(fits) is None and lf._bad_name(fits + "a") is not None
+    astral = "\U0001d400" * 35  # with a prefix: 47 code points, 82 UTF-16 units; the server counts units
+    assert lf._bad_name(astral) is not None
+
+
+async def test_a_wide_read_is_split_so_no_request_carries_every_name() -> None:
+    api = FakeApi([])
+    roles = [f"r{i}" for i in range(30)]
+    got = await lf.LangfuseExampleStore(FakeClient(api)).examples([topic(r) for r in roles])
+    assert got.ok
+    sent = [kw["name"].split(",") for kw in api.reads]
+    assert all(len(names) <= lf.NAMES_PER_READ for names in sent)
+    assert sorted(n for names in sent for n in names) == sorted(
+        n for r in roles for w in lf.PREFIX for n in lf._names(w, r)
+    )
 
 
 def test_example_of_score_reads_value_kinds_and_skips_what_it_cannot_read() -> None:

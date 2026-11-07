@@ -32,7 +32,7 @@ Invariants:
       `request_fault` before any write, never sent to fail remotely.
     - A failure reason carries the server's own validation message when it sends one.
 
-Rationale: ADR-0010.
+Rationale: ADR-0010, ADR-0011.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ from llm_ports._extras import extra
 from llm_ports.evals.labels import Queued, role_of, topic
 from llm_ports.learn import Example, ExamplesRead, Written
 from llm_ports.learn._types import Source
-from llm_ports.ports.outcomes import failure_reason
+from llm_ports.ports.outcomes import REASON_MAX, failure_reason
 
 with extra("langfuse"):
     import langfuse  # noqa: F401  # the extra is what makes a Langfuse client buildable
@@ -61,8 +61,12 @@ _BY_PREFIX: dict[str, Labeller] = {v: k for k, v in PREFIX.items()}
 #: Between a label's source prefix and its role.
 SEP = "-"
 _LEGACY_SEP = ":"
-#: The score-config names Langfuse accepts: letters, digits, `_`, space, `.`, `(`, `)`, `-`, 1-80 long.
-CONFIG_NAME = re.compile(r"[\w .()-]{1,80}")
+#: The characters Langfuse accepts in a score-config name: letters, digits, `_`, space, `.`, `(`, `)`, `-`.
+CONFIG_NAME = re.compile(r"[\w .()-]+")
+#: The longest score-config name Langfuse accepts, counted as the server counts (UTF-16 code units).
+CONFIG_NAME_MAX = 80
+#: Score names per read request: the names travel in the query string, so a read is split to bound it.
+NAMES_PER_READ = 40
 #: The categorical values a human picks, and the numeric value Langfuse books each under.
 CATEGORIES: tuple[dict[str, str | float], ...] = ({"label": "good", "value": 1.0}, {"label": "bad", "value": 0.0})
 #: Scores read per page.
@@ -94,13 +98,13 @@ def _bad_name(role: str) -> str | None:
     """Return why Langfuse would refuse `role`'s label names, or None when every source's name is valid."""
     for who in PREFIX:
         name = score_name(who, role)
-        if CONFIG_NAME.fullmatch(name) is None:
+        if CONFIG_NAME.fullmatch(name) is None or len(name.encode("utf-16-le")) // 2 > CONFIG_NAME_MAX:
             return f"label name {name!r} is not a Langfuse score-config name (letters, digits, _ .()- , 1-80)"
     return None
 
 
 def _reason(exc: BaseException) -> str:
-    """Return `failure_reason(exc)` plus the server's first validation message, when it sent one."""
+    """Return `failure_reason(exc)` plus the first line of the server's validation message, cut to `REASON_MAX`."""
     base = failure_reason(exc)
     body = getattr(exc, "body", None)
     if not isinstance(body, dict):
@@ -108,7 +112,10 @@ def _reason(exc: BaseException) -> str:
     errors = body.get("error")
     first = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
     msg = first.get("message") or body.get("message")
-    return f"{base}: {str(msg)[:200]}" if msg else base
+    if not msg:
+        return base
+    line = str(msg).strip().splitlines()[0] if str(msg).strip() else ""
+    return f"{base}: {line}"[:REASON_MAX] if line else base
 
 
 def _value(d: Any) -> str | None:
@@ -321,8 +328,9 @@ class LangfuseExampleStore:
             if not cursor or not got.data:
                 return
 
-    def _read(self, names: str, since: datetime | None, source: Source | None) -> tuple[Example, ...]:
-        got = (ex for d in self._pages(names, since) if (ex := example_of_score(d)) is not None)
+    def _read(self, names: Sequence[str], since: datetime | None, source: Source | None) -> tuple[Example, ...]:
+        chunks = (",".join(names[i : i + NAMES_PER_READ]) for i in range(0, len(names), NAMES_PER_READ))
+        got = (ex for c in chunks for d in self._pages(c, since) if (ex := example_of_score(d)) is not None)
         return tuple(ex for ex in got if source is None or ex.source == source)
 
     async def examples(
@@ -333,7 +341,7 @@ class LangfuseExampleStore:
         A topic that is not `llm:<role>` contributes nothing; an `outcome` source reads empty.
         """
         roles = [r for t in topics if (r := role_of(t)) is not None]
-        names = ",".join(n for r in roles for who in PREFIX if source is None or who == source for n in _names(who, r))
+        names = [n for r in roles for who in PREFIX if source is None or who == source for n in _names(who, r)]
         if not names:
             return ExamplesRead((), "ok")
         try:
@@ -346,6 +354,8 @@ class LangfuseExampleStore:
 __all__ = [
     "CATEGORIES",
     "CONFIG_NAME",
+    "CONFIG_NAME_MAX",
+    "NAMES_PER_READ",
     "PREFIX",
     "SEP",
     "Labeller",
