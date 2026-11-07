@@ -31,8 +31,8 @@ from collections import defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
-#: The positive label of a binary item.
-YES = "yes"
+from llm_ports.learn.stats import YES, Pairs, cohen_kappa, gwet_ac1
+
 #: What `seed_placeholder` writes into every string.
 PLACEHOLDER = "TBD"
 #: What `seed_figure` appends: two figures that appear in no input.
@@ -40,54 +40,6 @@ FIGURE = " Target 7,431.5 by the 19th, up 38.2%."
 #: `verdict` exit codes: calibrated in both directions, a finding, did not finish looking.
 CALIBRATED, FINDING, BLIND = 0, 1, 2
 
-Pairs = Sequence[tuple[str, str]]
-
-
-def _decided(pairs: Pairs) -> tuple[int, float] | None:
-    """Return `(n, observed agreement)`, or None below two pairs."""
-    n = len(pairs)
-    if n < 2:
-        return None
-    return n, sum(1 for a, b in pairs if a == b) / n
-
-
-def cohen_kappa(pairs: Pairs) -> float | None:
-    """Return Cohen's kappa over binary `(judge, human)` pairs.
-
-    Both labels are `"yes"` or anything else (read as no); abstentions belong outside `pairs`.
-
-    Returns:
-        Kappa, or None when it is undefined: under two pairs, or both labellers one-sided on the
-        same answer (chance agreement 1.0).
-    """
-    got = _decided(pairs)
-    if got is None:
-        return None
-    n, po = got
-    pa = sum(1 for a, _ in pairs if a == YES) / n
-    pb = sum(1 for _, b in pairs if b == YES) / n
-    pe = pa * pb + (1 - pa) * (1 - pb)
-    if pe >= 1.0:
-        return None
-    return (po - pe) / (1 - pe)
-
-
-def gwet_ac1(pairs: Pairs) -> float | None:
-    """Return Gwet's AC1 over binary `(judge, human)` pairs.
-
-    Chance agreement is `2 * pi * (1 - pi)`, with `pi` the pooled share of `"yes"`, so the statistic
-    stays defined and bounded where one answer dominates.
-
-    Returns:
-        AC1, or None under two pairs.
-    """
-    got = _decided(pairs)
-    if got is None:
-        return None
-    n, po = got
-    pi = sum((a == YES) + (b == YES) for a, b in pairs) / (2 * n)
-    pe = 2 * pi * (1 - pi)
-    return (po - pe) / (1 - pe)
 
 
 def _strings(obj: Any, path: tuple[Any, ...] = ()) -> Iterator[tuple[tuple[Any, ...], str]]:

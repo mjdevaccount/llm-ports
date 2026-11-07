@@ -132,7 +132,7 @@ include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "layers"
-name = "layers: adapters | testing > evals | rag | provenance > call > grounding | prompts | observability > ports"
+name = "layers: adapters | testing > evals | rag | provenance > call > grounding | prompts | observability > ports | learn"
 type = "layers"
 containers = ["llm_ports"]
 layers = [
@@ -140,7 +140,26 @@ layers = [
     "evals | rag | provenance",
     "call",
     "grounding | prompts | observability",
-    "ports",
+    "ports | learn",
+]
+
+[[tool.importlinter.contracts]]
+id = "learn-standalone"
+name = "learn imports nothing else from llm_ports (it can be lifted into any codebase)"
+type = "forbidden"
+source_modules = ["llm_ports.learn"]
+forbidden_modules = [
+    "llm_ports.adapters",
+    "llm_ports.call",
+    "llm_ports.evals",
+    "llm_ports.grounding",
+    "llm_ports.observability",
+    "llm_ports.ports",
+    "llm_ports.prompts",
+    "llm_ports.provenance",
+    "llm_ports.rag",
+    "llm_ports.testing",
+    "llm_ports._extras",
 ]
 
 [[tool.importlinter.contracts]]
@@ -164,6 +183,7 @@ type = "forbidden"
 source_modules = [
     "llm_ports.call",
     "llm_ports.evals",
+    "llm_ports.learn",
     "llm_ports.grounding",
     "llm_ports.observability",
     "llm_ports.ports",
