@@ -87,7 +87,31 @@ jobs:
         with:
           name: dist
           path: dist/
+      # twine uploads one file at a time, so a refusal mid-way leaves a half-published version:
+      # v1.18.0's wheel landed and its sdist got a 400 from PyPI's own attestation check ("Failed
+      # to refresh TUF"). Without skip-existing a rerun of this job dies on the wheel's "File
+      # already exists" before it reaches the missing file. With it, the rerun uploads only what is
+      # missing. PyPI never lets a filename be uploaded twice, so nothing published gets replaced.
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: true
+      # skip-existing turns "already there" into success, so check the outcome itself: every file
+      # built for this version must be listed on PyPI, or this job stays red until a rerun fills it.
+      - name: PyPI lists every built file
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          built=(dist/*.whl dist/*.tar.gz)
+          want=$(printf '%s\n' "${built[@]#dist/}" | sort)
+          v=$(sed -E 's#^dist/[^-]+-([^-]+)-.*#\1#' <<<"${built[0]}")
+          for _ in $(seq 1 12); do
+            have=$(curl -fsS "https://pypi.org/pypi/llm-ports/$v/json" | jq -r '.urls[].filename' | sort || true)
+            missing=$(comm -23 <(echo "$want") <(echo "$have"))
+            [ -z "$missing" ] && { echo "PyPI lists all of: $(tr '\n' ' ' <<<"$want")"; exit 0; }
+            sleep 10
+          done
+          echo "::error::PyPI is missing $(tr '\n' ' ' <<<"$missing") for $v -- rerun this job (skip-existing uploads only the missing files)"
+          exit 1
 
   github-release:
     name: GitHub release

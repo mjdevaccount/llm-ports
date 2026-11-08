@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `release.yml`: the PyPI upload uses `skip-existing`, and a follow-up step fails the job unless
+  PyPI lists every built file. v1.18.0 shipped its wheel but not its sdist (PyPI refused the
+  sdist's attestation with "Failed to refresh TUF"), and a rerun could not recover because it
+  failed first on the wheel that had already uploaded. Now a rerun uploads only the missing files.
+
 ## [1.18.0] - 2026-11-08
 
 ### Added
