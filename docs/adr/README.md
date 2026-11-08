@@ -24,3 +24,5 @@ named in its record.
 | [0012](0012-a-judge-earns-trust-from-labels.md) | A judge earns trust from human labels per judge model (`calibration.trust`, `kappa_ci`, `score` metadata) |
 | [0013](0013-forecast-scoring-in-a-standalone-core.md) | Forecast scoring in a standalone core (`llm_ports.forecast`); fitters and non-binary scores in four adapters |
 | [0014](0014-a-persons-label-relayed-by-code.md) | A person's label can be relayed by code (`put` with `by`), on the same score config, completing its queue item |
+| [0015](0015-a-combiner-is-judged-walk-forward.md) | A combiner is replayed walk-forward, shrunk toward a prior, and tuned only on the past (`forecast.walk`, `PriorPool`, `adapters.optuna`) |
+| [0016](0016-seams-to-bigger-ml-engines.md) | Seams to bigger ML engines: run ids, artifact URIs, a `ModelRegistry` port, conformance suites, and MLflow as the first engine adapter |

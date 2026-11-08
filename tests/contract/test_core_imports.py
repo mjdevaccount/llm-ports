@@ -44,6 +44,7 @@ NEEDS_AN_EXTRA = ("llm_ports.adapters", "llm_ports.testing.langfuse")
 ADAPTERS = {
     "llm_ports.adapters.http": ("http", "httpx"),
     "llm_ports.adapters.langfuse": ("langfuse", "langfuse"),
+    "llm_ports.adapters.mlflow": ("mlflow", "mlflow"),
     "llm_ports.adapters.optuna": ("optuna", "optuna"),
     "llm_ports.adapters.otel": ("otel", "opentelemetry"),
     "llm_ports.adapters.pydantic_ai": ("pydantic-ai", "pydantic_ai"),

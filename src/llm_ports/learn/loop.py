@@ -11,8 +11,9 @@ Ledger row written for every run:
 - `params`: the loop's `params`.
 - `metrics`: the fit's `metrics`, then the reserved keys `RESERVED`: `learn_verdict`
   (`Verdict.as_dict`), `learn_model` (the fit's `model`), `learn_apply` (what `apply` returned,
-  `apply_failed`, or "" when it was not called), `learn_apply_reason` and `learn_seconds`. A fit
-  metric of a reserved name is replaced.
+  `apply_failed`, or "" when it was not called), `learn_apply_reason` and `learn_seconds`, and
+  `learn_artifact_uri` (the fit's `artifact_uri`) only when the fit set one. A fit metric of a
+  reserved name is replaced.
 
 `record` writes the same verdict row for a gate run outside a `Loop`.
 
@@ -36,7 +37,7 @@ from llm_ports.learn._types import VERDICT_KEY, Verdict, Written
 from llm_ports.learn.gate import Unevaluated, could_not_run, decide
 
 #: Metric keys `run` writes; a fit metric of the same name is replaced.
-RESERVED = (VERDICT_KEY, "learn_model", "learn_apply", "learn_apply_reason", "learn_seconds")
+RESERVED = (VERDICT_KEY, "learn_model", "learn_apply", "learn_apply_reason", "learn_seconds", "learn_artifact_uri")
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,8 @@ class Run:
         verdict: The gate's verdict (`could_not_run` when a stage failed).
         fit: The fit, or None when the run stopped before it finished.
         applied: What `apply` returned; `apply_failed` when it raised; "" when not called.
-        recorded: The ledger's answer to the row this run wrote.
+        recorded: The ledger's answer to the row this run wrote; its `ref` is the row's id when
+            the ledger mints one (what a model registry's `run_ref` links to).
         seconds: Wall time of the stages, excluding the ledger write.
     """
 
@@ -154,6 +156,11 @@ async def run[E](loop: Loop[E], ledger: RunLedger, *, clock: Callable[[], float]
         "learn_apply_reason": apply_reason,
         "learn_seconds": round(seconds, 3),
     }
+    artifact_uri = getattr(fit, "artifact_uri", None)  # a duck-typed fit may not carry one
+    if isinstance(artifact_uri, str):
+        metrics["learn_artifact_uri"] = artifact_uri
+    else:
+        metrics.pop("learn_artifact_uri", None)  # reserved: a fit metric never poses as one
     recorded = await record(ledger, kind, verdict, params=params, metrics=metrics)
     return Run(kind, subject, verdict, fit, applied, recorded, seconds)
 

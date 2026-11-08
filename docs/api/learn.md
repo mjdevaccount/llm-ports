@@ -31,3 +31,9 @@
 ::: llm_ports.learn.stores
     options:
       show_root_heading: false
+
+## `llm_ports.learn.registry`
+
+::: llm_ports.learn.registry
+    options:
+      show_root_heading: false

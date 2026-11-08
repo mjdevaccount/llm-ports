@@ -6,7 +6,8 @@
 - `union`: read several example stores as one.
 
 A database-backed ledger is an adapter in the consuming application: it implements the two
-`RunLedger` methods over its own table.
+`RunLedger` methods over its own table. Both ledgers here id each row with a fresh UUID
+(`Written.ref`, `LedgerRow.ref`). The model registries are in `learn.registry`.
 
 Invariants:
     - Never raises for a backend failure: an unreadable or unwritable file is an `unavailable`
@@ -19,6 +20,7 @@ Rationale: ADR-0010.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +32,11 @@ from llm_ports.learn._types import Decision, Example, ExamplesRead, LedgerRow, R
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _mint() -> str:
+    """Return a fresh row id."""
+    return uuid.uuid4().hex
 
 
 def _matches(row: LedgerRow, kind: str, subject: str | None, decisions: Sequence[Decision] | None) -> bool:
@@ -60,8 +67,9 @@ class MemoryRunLedger:
         self, kind: str, *, subject: str, params: Mapping[str, Any], metrics: Mapping[str, Any]
     ) -> Written:
         """Record one run. Never raises."""
-        self.rows.append(LedgerRow(kind, subject, dict(params), dict(metrics), self._now()))
-        return Written(1, "ok")
+        ref = _mint()
+        self.rows.append(LedgerRow(kind, subject, dict(params), dict(metrics), self._now(), ref))
+        return Written(1, "ok", ref=ref)
 
     async def latest(
         self, kind: str, *, subject: str | None = None, decisions: Sequence[Decision] | None = None
@@ -88,7 +96,15 @@ class JsonlRunLedger:
         self, kind: str, *, subject: str, params: Mapping[str, Any], metrics: Mapping[str, Any]
     ) -> Written:
         """Append one row. Never raises."""
-        row = {"kind": kind, "subject": subject, "params": params, "metrics": metrics, "at": self._now().isoformat()}
+        ref = _mint()
+        row = {
+            "kind": kind,
+            "subject": subject,
+            "params": params,
+            "metrics": metrics,
+            "at": self._now().isoformat(),
+            "ref": ref,
+        }
         try:
             line = json.dumps(row, sort_keys=True)
         except (TypeError, ValueError) as exc:
@@ -99,7 +115,7 @@ class JsonlRunLedger:
                 fh.write(line + "\n")
         except OSError as exc:
             return Written(0, "unavailable", f"{self.path}: {exc}")
-        return Written(1, "ok")
+        return Written(1, "ok", ref=ref)
 
     async def latest(
         self, kind: str, *, subject: str | None = None, decisions: Sequence[Decision] | None = None
@@ -234,6 +250,7 @@ def _row(raw: Mapping[str, Any]) -> LedgerRow | None:
         cast(dict[str, Any], params),
         cast(dict[str, Any], metrics),
         at,
+        str(raw["ref"]) if isinstance(raw.get("ref"), str) else None,
     )
 
 
