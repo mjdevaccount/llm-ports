@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from llm_ports.learn import VERDICT_KEY, Clause, Fit, RowRead, Verdict, Written, record, run
+from llm_ports.learn import VERDICT_KEY, Clause, Fit, RowRead, Verdict, Written, failed, record, run
 from llm_ports.learn import gate as g
 from llm_ports.learn.stores import MemoryRunLedger
 
@@ -213,3 +213,37 @@ async def test_an_unknown_unevaluated_policy_is_the_loops_error_not_a_silent_fai
     got = await run(Misspelt([1.0, 2.0, 3.0]), MemoryRunLedger())
     assert got.verdict.decision == "could_not_run"
     assert "unevaluated must be" in got.verdict.reason
+
+
+async def test_as_dict_carries_the_verdict_the_row_and_the_fit() -> None:
+    got = await run(Mean([5.0]), MemoryRunLedger(), clock=_clock())
+    body = got.as_dict()
+    assert body == {
+        "kind": "mean",
+        "subject": "SPY",
+        "decision": "insufficient",
+        "reason": got.verdict.reason,
+        "blocker": "n",
+        "applied": "held",
+        "recorded": "ok",
+        "recorded_reason": None,
+        "ref": got.recorded.ref,
+        "metrics": {"n": 1, "learn_model": "shadowed", "verdict": "kept"},
+        "seconds": 0.25,
+    }
+    assert body["ref"]
+    stopped = await run(Mean([1.0], fail_at="evidence"), MemoryRunLedger())
+    assert stopped.as_dict()["metrics"] == {}
+
+
+async def test_failed_is_red_only_when_nothing_was_measured_landed_or_applied() -> None:
+    green = [await run(Mean(xs), MemoryRunLedger()) for xs in ([1.0, 2.0, 3.0], [5.0], [-1.0, -2.0, -3.0])]
+    assert [r.verdict.decision for r in green] == ["pass", "insufficient", "fail"]
+    assert not any(failed(r) or failed(r.as_dict()) for r in green), "a measurement is never red"
+    red = [
+        await run(Mean([1.0, 2.0, 3.0], fail_at="evidence"), MemoryRunLedger()),
+        await run(Mean([1.0, 2.0, 3.0]), _Refusing()),
+        await run(Mean([1.0, 2.0, 3.0], fail_at="apply"), MemoryRunLedger()),
+    ]
+    assert all(failed(r) and failed(r.as_dict()) for r in red)
+    assert failed({}), "a result missing its keys reads red"

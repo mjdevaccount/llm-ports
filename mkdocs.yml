@@ -75,6 +75,7 @@ nav:
       - guides/judge-and-refute.md
       - guides/learning-loops.md
       - guides/forecasts.md
+      - guides/ml-engines.md
       - guides/rag.md
       - guides/opentelemetry.md
       - guides/openai-compatible.md
@@ -106,7 +107,9 @@ nav:
       - adr/0011-label-names-follow-the-stores-own-rule.md
       - adr/0012-a-judge-earns-trust-from-labels.md
       - adr/0013-forecast-scoring-in-a-standalone-core.md
+      - adr/0014-a-persons-label-relayed-by-code.md
       - adr/0015-a-combiner-is-judged-walk-forward.md
+      - adr/0016-seams-to-bigger-ml-engines.md
   - Design:
       - design/LEARNING-LOOP-CORE.md
       - design/EVAL-LABELS-CONSOLIDATION.md

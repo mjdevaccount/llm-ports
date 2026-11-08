@@ -1,4 +1,4 @@
-"""The learning loop's values: a labelled example, a gate clause, a verdict, a ledger row, a run.
+"""The learning loop's values: an example, a gate clause, a verdict, a ledger row, a model version.
 
 Invariants:
     - Standard library only: this package imports nothing else from `llm_ports` and no vendor.
@@ -226,11 +226,15 @@ class Written:
         outcome: `ok` when every item landed; `unavailable` when the store failed (`written`
             counts what landed first); `request_fault` when the store refused the input.
         reason: One line naming the failure; None on `ok`.
+        ref: The id the backend gave what it wrote (a run id, a model version), so a caller can
+            link it to an external tracker; None when the backend mints none or nothing landed.
+            Not part of equality.
     """
 
     written: int
     outcome: StoreOutcome
     reason: str | None = None
+    ref: str | None = field(default=None, compare=False)
 
     @property
     def ok(self) -> bool:
@@ -248,6 +252,8 @@ class LedgerRow:
         params: The knobs the run used.
         metrics: What it measured; a gated run carries `Verdict.as_dict` under `VERDICT_KEY`.
         at: When it was recorded.
+        ref: The id the ledger gave the row (`Written.ref` of its append); None when the ledger
+            mints none. Not part of equality.
     """
 
     kind: str
@@ -255,6 +261,7 @@ class LedgerRow:
     params: Mapping[str, Any]
     metrics: Mapping[str, Any]
     at: datetime
+    ref: str | None = field(default=None, compare=False)
 
     @property
     def verdict(self) -> Verdict | None:
@@ -292,6 +299,54 @@ class RowRead:
         return self.outcome == "ok"
 
 
+@dataclass(frozen=True)
+class ModelVersion:
+    """One registered version of a model: what a loop fitted, kept so it can be promoted.
+
+    Attributes:
+        name: The registered model's name.
+        version: Its number within `name`, from 1, increasing by one per registration.
+        model: The fitted parameters (`Fit.model`); JSON-able.
+        artifact_uri: Where a model too big for `model` lives (a file, a bucket, a tracker's
+            artifact store); None when `model` is the whole model.
+        run_ref: The ledger row that produced it (`Written.ref`); None when unknown.
+        at: When it was registered.
+        tags: Free labels; string to string.
+    """
+
+    name: str
+    version: int
+    model: Mapping[str, Any]
+    artifact_uri: str | None
+    run_ref: str | None
+    at: datetime
+    tags: Mapping[str, str] = field(default_factory=dict[str, str])
+
+
+@dataclass(frozen=True)
+class VersionRead:
+    """What a `ModelRegistry` read returns.
+
+    Attributes:
+        version: The version; None when there is none or the registry could not be read.
+        outcome: `ok`, `request_fault` for a version that is not an `int`, or `unavailable`
+            when the registry could not be read.
+        reason: One line naming the failure; None on `ok`.
+
+    Invariants:
+        - "No such version or alias" (`ok`, None) is distinct from "could not read" (`unavailable`).
+    """
+
+    version: ModelVersion | None
+    outcome: StoreOutcome
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
+        return self.outcome == "ok"
+
+
 __all__ = [
     "DECISIONS",
     "ROLES",
@@ -301,11 +356,13 @@ __all__ = [
     "Example",
     "ExamplesRead",
     "LedgerRow",
+    "ModelVersion",
     "Role",
     "RowRead",
     "Source",
     "StoreOutcome",
     "Value",
     "Verdict",
+    "VersionRead",
     "Written",
 ]

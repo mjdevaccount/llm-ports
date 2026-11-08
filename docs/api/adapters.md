@@ -97,3 +97,22 @@
 ::: llm_ports.adapters.river
     options:
       show_root_heading: false
+
+## `llm_ports.adapters.mlflow`
+
+::: llm_ports.adapters.mlflow
+    options:
+      show_root_heading: false
+      members: false
+
+## `llm_ports.adapters.mlflow.ledger`
+
+::: llm_ports.adapters.mlflow.ledger
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.mlflow.registry`
+
+::: llm_ports.adapters.mlflow.registry
+    options:
+      show_root_heading: false

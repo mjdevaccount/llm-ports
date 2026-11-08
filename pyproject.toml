@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "1.14.0"
+version = "1.15.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -67,6 +67,10 @@ venn-abers = ["venn-abers>=1.5.4", "scikit-learn>=1.9"]
 river = ["river>=0.26"]
 optuna = ["optuna>=4.0"]
 forecast = ["llm-ports[scoringrules,sklearn,venn-abers,river,optuna]"]
+# `adapters.mlflow` (the RunLedger and ModelRegistry on MLflow tracking + model registry). The
+# skinny client is enough against a tracking server; SQLAlchemy and Alembic let it open a local
+# `sqlite:///` store with no server (MLflow 3 refuses its old file store by default). Not in `all`.
+mlflow = ["mlflow-skinny>=3.18,<4", "sqlalchemy>=2.0", "alembic>=1.13"]
 # Every extra but `lettucedetect` (its model weighs hundreds of MB) and the `forecast` four (the
 # numpy/scipy/pandas stack, which a caller that only calls models never needs).
 all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql]"]
@@ -104,6 +108,10 @@ dev = [
     "venn-abers>=1.5.4",
     "river>=0.26",
     "optuna>=4.0",
+    "mlflow-skinny>=3.18,<4",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "mlflow>=3.18,<4",
 ]
 docs = [
     "mkdocs-material>=9.8.0",
@@ -206,6 +214,7 @@ modules = [
     "llm_ports.adapters.http",
     "llm_ports.adapters.langfuse",
     "llm_ports.adapters.lettucedetect",
+    "llm_ports.adapters.mlflow",
     "llm_ports.adapters.optuna",
     "llm_ports.adapters.otel",
     "llm_ports.adapters.pydantic_ai",
@@ -238,6 +247,7 @@ forbidden_modules = [
     "httpx2",
     "langfuse",
     "lettucedetect",
+    "mlflow",
     "numpy",
     "opentelemetry",
     "optuna",
@@ -296,5 +306,5 @@ branch = true
 
 [tool.coverage.report]
 # The floor is the measured branch-coverage total; raise it when coverage rises, never lower it.
-fail_under = 97.9
+fail_under = 98.0
 precision = 1
