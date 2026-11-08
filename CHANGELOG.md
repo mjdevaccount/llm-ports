@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-11-08
+
+### Added
+
+- `evals.golden`: a golden item may carry `user`, and then fires as a system and user pair (the
+  rendered pack as the system prompt, `user` as the prompt), the shape of a producer whose fixed
+  instructions ride as the system for the prefix cache. `slots` is optional for a pack with none.
+  `fire_one`'s result names the `system` it sent (empty for a slotted item, which still sends
+  none, so a consumer facade with no `system` keyword keeps working).
+
 ## [1.15.0] - 2026-11-08
 
 Seams for bigger ML engines (ADR-0016): every addition is optional, so no consumer changes.
