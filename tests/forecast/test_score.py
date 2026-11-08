@@ -5,7 +5,7 @@ import random
 
 import pytest
 
-from llm_ports.forecast.score import EPS, Bin, brier_score, ece, log_score, reliability, score
+from llm_ports.forecast.score import EPS, Bin, brier_score, decompose, ece, log_score, mce, reliability, score
 
 
 def test_brier_and_log_score_of_one_forecast() -> None:
@@ -59,3 +59,32 @@ def test_reliability_bins() -> None:
 def test_a_value_on_a_bin_edge_lands_in_that_bin() -> None:
     (b,) = reliability([True], [0.57], bins=100)
     assert b.lo == pytest.approx(0.57)
+
+
+def test_mce_is_the_largest_bin_gap_and_none_when_empty() -> None:
+    curve = reliability([True, False, True, True], [0.15, 0.15, 0.85, 0.85])
+    assert mce(curve) == pytest.approx(0.5 - 0.15)
+    assert mce(()) is None
+
+
+def test_decompose_is_exact_when_each_bin_states_one_probability() -> None:
+    # Cells that each forecast one rate: the decomposition equals the mean Brier score.
+    obs = [True] * 7 + [False] * 3 + [True] * 2 + [False] * 8
+    fct = [0.7] * 10 + [0.2] * 10
+    d = decompose(reliability(obs, fct))
+    assert d is not None
+    assert d.n == 20
+    assert d.base_rate == pytest.approx(9 / 20)
+    assert d.reliability == pytest.approx(0.0)
+    assert d.uncertainty == pytest.approx(0.45 * 0.55)
+    assert d.brier == pytest.approx(score(obs, fct).brier_score)
+
+
+def test_decompose_reliability_is_the_squared_gap_and_resolution_the_spread() -> None:
+    obs = [True, True, False, False]
+    fct = [0.9, 0.9, 0.3, 0.3]
+    d = decompose(reliability(obs, fct))
+    assert d is not None
+    assert d.reliability == pytest.approx(0.5 * 0.1**2 + 0.5 * 0.3**2)
+    assert d.resolution == pytest.approx(0.25)
+    assert decompose(()) is None

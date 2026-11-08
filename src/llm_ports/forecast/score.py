@@ -179,4 +179,73 @@ def ece(curve: Sequence[Bin]) -> float | None:
     return sum(b.n * abs(b.mean_p - b.hit_rate) for b in curve) / total
 
 
-__all__ = ["EPS", "Bin", "Score", "brier_score", "ece", "log_score", "reliability", "score"]
+def mce(curve: Sequence[Bin]) -> float | None:
+    """Return the maximum calibration error of a reliability curve: the largest bin gap.
+
+    Returns:
+        The largest `|mean_p - hit_rate|` over the bins, or None for an empty curve.
+    """
+    return max((abs(b.mean_p - b.hit_rate) for b in curve), default=None)
+
+
+@dataclass(frozen=True)
+class Decomposition:
+    """Murphy's decomposition of the Brier score over a reliability curve.
+
+    `brier = reliability - resolution + uncertainty`. It is exact when every forecast in a bin
+    states the same probability (a curve over cells, each forecasting one rate); otherwise it
+    approximates the mean Brier score by the within-bin spread.
+
+    Attributes:
+        n: Forecasts on the curve.
+        base_rate: The share that happened across every bin.
+        reliability: The n-weighted mean squared bin gap; the calibration error (lower is better).
+        resolution: The n-weighted mean squared distance of each bin's hit rate from the base
+            rate; how far the forecasts separate outcomes (higher is better).
+        uncertainty: `base_rate * (1 - base_rate)`; the variance no forecast can remove.
+    """
+
+    n: int
+    base_rate: float
+    reliability: float
+    resolution: float
+    uncertainty: float
+
+    @property
+    def brier(self) -> float:
+        """`reliability - resolution + uncertainty`."""
+        return self.reliability - self.resolution + self.uncertainty
+
+
+def decompose(curve: Sequence[Bin]) -> Decomposition | None:
+    """Return Murphy's decomposition of a reliability curve.
+
+    Returns:
+        The `Decomposition`, or None for an empty curve.
+    """
+    total = sum(b.n for b in curve)
+    if total == 0:
+        return None
+    base = sum(b.n * b.hit_rate for b in curve) / total
+    return Decomposition(
+        n=total,
+        base_rate=base,
+        reliability=sum(b.n * (b.mean_p - b.hit_rate) ** 2 for b in curve) / total,
+        resolution=sum(b.n * (b.hit_rate - base) ** 2 for b in curve) / total,
+        uncertainty=base * (1.0 - base),
+    )
+
+
+__all__ = [
+    "EPS",
+    "Bin",
+    "Decomposition",
+    "Score",
+    "brier_score",
+    "decompose",
+    "ece",
+    "log_score",
+    "mce",
+    "reliability",
+    "score",
+]
