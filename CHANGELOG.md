@@ -7,6 +7,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-08
+
+### Added
+
+- `forecast.walk`: `Event` (`x`, `forecast_time`, `resolve_time`, `resolution`) and
+  `walk_forward`, a combiner replayed in forecast-time order that hears each outcome only at its
+  resolve time and returns one probability (None = abstained) per event; `holdout_start` (the
+  time split) and `compare` (several combiners scored on the same resolved, answered events).
+- `forecast.PriorPool`: wraps any `Combiner` with a prior voice; shrinks the combined log-odds
+  toward the prior's (`shrink`), extremizes (`alpha`), and answers with the prior while the inner
+  combiner abstains.
+- `forecast.BestVoice`: the best-single-voice baseline, online (lowest running Brier score among
+  the voices that spoke, once each has `min_n` outcomes).
+- `adapters.optuna.tune` (extra `[optuna]`, also in `forecast`): a seeded TPE search over a
+  combiner's parameters whose objective is the walk-forward Brier score on the train split
+  (abstention scored as 0.5); the best parameters are replayed over every event and scored on the
+  holdout only. Returns `Tuned`, `Insufficient` or `Unavailable`, never raises; the study goes to
+  any Optuna storage. Rationale: ADR-0015.
+
 ## [1.12.0] - 2026-11-08
 
 ### Added

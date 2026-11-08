@@ -25,3 +25,9 @@
 ::: llm_ports.forecast.combine
     options:
       show_root_heading: false
+
+## `llm_ports.forecast.walk`
+
+::: llm_ports.forecast.walk
+    options:
+      show_root_heading: false

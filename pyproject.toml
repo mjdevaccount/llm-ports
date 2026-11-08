@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "1.12.0"
+version = "1.13.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -58,13 +58,15 @@ otel = ["opentelemetry-api>=1.30", "opentelemetry-semantic-conventions>=0.58b0"]
 # `adapters.sqlglot` (the read-only AST guard for agent-written SQL).
 sql = ["sqlglot>=30.22"]
 # `adapters.scoringrules` (interval score, CRPS), `adapters.sklearn` (the isotonic Calibrator),
-# `adapters.venn_abers` (the small-n Calibrator), `adapters.river` (the online logit-pool Combiner).
-# Each pulls numpy and scipy; `forecast` installs all four.
+# `adapters.venn_abers` (the small-n Calibrator), `adapters.river` (the online logit-pool Combiner),
+# `adapters.optuna` (walk-forward hyperparameter search for a Combiner). Each pulls numpy and
+# scipy (optuna: numpy and SQLAlchemy); `forecast` installs all five.
 scoringrules = ["scoringrules>=0.11"]
 sklearn = ["scikit-learn>=1.9"]
 venn-abers = ["venn-abers>=1.5.4", "scikit-learn>=1.9"]
 river = ["river>=0.26"]
-forecast = ["llm-ports[scoringrules,sklearn,venn-abers,river]"]
+optuna = ["optuna>=4.0"]
+forecast = ["llm-ports[scoringrules,sklearn,venn-abers,river,optuna]"]
 # Every extra but `lettucedetect` (its model weighs hundreds of MB) and the `forecast` four (the
 # numpy/scipy/pandas stack, which a caller that only calls models never needs).
 all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql]"]
@@ -101,6 +103,7 @@ dev = [
     "scikit-learn>=1.9",
     "venn-abers>=1.5.4",
     "river>=0.26",
+    "optuna>=4.0",
 ]
 docs = [
     "mkdocs-material>=9.8.0",
@@ -203,6 +206,7 @@ modules = [
     "llm_ports.adapters.http",
     "llm_ports.adapters.langfuse",
     "llm_ports.adapters.lettucedetect",
+    "llm_ports.adapters.optuna",
     "llm_ports.adapters.otel",
     "llm_ports.adapters.pydantic_ai",
     "llm_ports.adapters.pydantic_evals",
@@ -236,6 +240,7 @@ forbidden_modules = [
     "lettucedetect",
     "numpy",
     "opentelemetry",
+    "optuna",
     "pandas",
     "pydantic_ai",
     "pydantic_evals",

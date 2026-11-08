@@ -44,6 +44,12 @@
     options:
       show_root_heading: false
 
+## `llm_ports.adapters.optuna`
+
+::: llm_ports.adapters.optuna
+    options:
+      show_root_heading: false
+
 ## `llm_ports.adapters.otel`
 
 ::: llm_ports.adapters.otel

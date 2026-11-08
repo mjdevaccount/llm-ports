@@ -55,4 +55,47 @@ against the equal-weight `LogitPool` and the best single voice, and promoted onl
 (`llm_ports.learn.gate`). `RiverLogitPool` returns `{}` until it has heard `warmup` outcomes, so
 a caller falls back to its baseline instead of reading an untrained model.
 
-Rationale: [ADR-0013](../adr/0013-forecast-scoring-in-a-standalone-core.md).
+## Replaying in time order, against the baselines
+
+`walk_forward(combiner, events)` replays `Event`s as the combiner would have run: each forecast
+is made at its `forecast_time`, and an outcome is learned only once its `resolve_time` has
+passed. `compare` runs several combiners over the same events and scores them on the same
+resolved, answered subset, so a learned pool is always read beside the equal-weight
+`LogitPool` and `BestVoice`. `PriorPool` starts every combiner from a prior voice (a base rate for
+the subject) instead of 0.5:
+
+```python
+import random
+from datetime import datetime, timedelta
+
+from llm_ports.forecast import BestVoice, Event, LogitPool, PriorPool
+from llm_ports.forecast.walk import compare, holdout_start
+
+rng = random.Random(2)
+t0 = datetime(2026, 1, 1)
+events = []
+for h in range(600):
+    y = rng.random() < 0.55
+    x = {"sharp": 0.75 if y == (rng.random() < 0.8) else 0.25, "noise": rng.random(), "base": 0.55}
+    t = t0 + timedelta(hours=h)
+    events.append(Event(x=x, forecast_time=t, resolve_time=t + timedelta(hours=3), resolution=y))
+
+scores = compare(
+    {
+        "equal": PriorPool(inner=LogitPool(), prior_key="base"),
+        "best": PriorPool(inner=BestVoice(min_n=20), prior_key="base"),
+        "prior": PriorPool(inner=BestVoice(min_n=10**9), prior_key="base"),
+    },
+    events,
+    since=holdout_start(events, 0.2),
+)
+assert scores["best"].brier_score < scores["prior"].brier_score
+```
+
+`adapters.optuna.tune(build, events, space, study_name=..., storage=...)` searches a combiner's
+parameters (a River pool's learning rate, `alpha`, `shrink`) on the train split only and reports
+the best parameters' holdout `Score`; the study persists to any Optuna storage, where
+`optuna-dashboard` reads it.
+
+Rationale: [ADR-0013](../adr/0013-forecast-scoring-in-a-standalone-core.md),
+[ADR-0015](../adr/0015-a-combiner-is-judged-walk-forward.md).
