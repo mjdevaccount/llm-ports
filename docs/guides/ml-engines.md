@@ -40,8 +40,11 @@ registry = MlflowModelRegistry(client)
 
 Each row is one MLflow run in the experiment `prefix + kind`, tagged with its subject and
 decision; scalar params and numeric metrics are logged so MLflow can chart them, and the whole
-row is the artifact `llm_ports/row.json`. A tracking server works the same way
-(`tracking_uri="http://..."`).
+row is JSON in the run's tags (`llm_ports.row/000`, ...), read back with no artifact store. A
+tracking server works the same way (`tracking_uri="http://..."`); there, an `artifact_uri`
+passed to `register` must be a remote URI (`s3://...`), since MLflow refuses a local path as a
+model version's source. A version registered with no `artifact_uri` gets a backing run in the
+experiment `llm_ports.registry` as its source.
 
 ## Adding a backend
 

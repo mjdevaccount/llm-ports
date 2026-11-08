@@ -57,14 +57,16 @@ to one vendor's data model. Option 2 is the duplication the ports exist to preve
   it runs against a shared or live store. Every in-repo backend runs them, and the suite's own
   tests prove it fails a backend that breaks each contract.
 - `adapters.mlflow` (extra `[mlflow]`): `MlflowRunLedger` and `MlflowModelRegistry` over
-  `mlflow-skinny`, passing the suites against a local SQLite store.
+  `mlflow-skinny`, passing the suites against a real `mlflow server` and a local SQLite store.
+  The server run is the one that matters: a local store skips MLflow's REST handlers, its
+  server-side validation and the client's printing, which is where the first version broke.
 
 ### Port to standard
 
 | Port | Standard it maps onto | Notes |
 |---|---|---|
-| `RunLedger` | MLflow tracking runs; W&B runs | kind = experiment, subject and decision = tags, scalar params and numeric metrics logged, the whole row a JSON artifact |
-| `ModelRegistry` | MLflow model registry aliases; W&B artifact aliases; Vertex AI model aliases | `source` = `artifact_uri`, the fitted JSON a version tag |
+| `RunLedger` | MLflow tracking runs; W&B runs | kind = experiment, subject and decision = tags, scalar params and numeric metrics logged, the whole row JSON in run tags |
+| `ModelRegistry` | MLflow model registry aliases; W&B artifact aliases; Vertex AI model aliases | `source` = `artifact_uri` (else a backing run), the fitted JSON a version tag |
 | `ExampleStore` | a feature store's offline (point-in-time) read | `since` and `source` are the time and provenance filters |
 | estimators (`forecast._estimator.Params`) | the scikit-learn estimator API | so skl2onnx, joblib and Ray's sklearn integrations accept them (ADR-0013) |
 | tuning (`adapters.optuna`) | Optuna studies | Ray Tune runs Optuna through `OptunaSearch` (ADR-0015) |
@@ -79,10 +81,21 @@ to one vendor's data model. Option 2 is the duplication the ports exist to preve
   no server. The extra pins those three.
 - A fresh SQLite store takes about 10 s to create (MLflow runs its migrations); a run takes
   about 50 ms afterwards.
-- Run tag values over 8000 characters are truncated with a warning, not refused, so the row's
-  truth is an artifact, never a tag. Search filters have no `IN` for tags, so a multi-decision
-  filter is applied client-side; runs with equal start times have no stable order, so the
-  ledger stamps strictly increasing milliseconds.
+- Run tag values over 8000 characters are truncated with a warning, not refused, so the row is
+  split into parts of at most 8000 characters with the part count written last; a run whose
+  parts do not add up is skipped. Tags come back in `search_runs`, so a read needs no artifact
+  store and no download (which draws a progress bar on stderr).
+- Against a tracking server (`mlflow server`, same version): `set_terminated` prints a run URL
+  to stdout (a `UnicodeEncodeError` on a cp1252 console, leaving the run `RUNNING`), so runs end
+  through `update_run`, which leaves `end_time` unset. `create_model_version` refuses an empty
+  `source` and a local path without a `run_id` (`s3://` is accepted), so a version with no
+  `artifact_uri` gets a backing run, `runs:/<id>/llm_ports`; its default wait for `READY` logs
+  to stderr, so `register` passes `await_creation_for=0`. MLflow refuses a param or metric name
+  that is not path-normal (`a//b`, `x/`, `/lead`, `a/./b`, `..`); the ledger leaves such a name
+  out of MLflow's columns (it stays in the row) instead of failing the write.
+- Search filters have no `IN` for tags, so a multi-decision filter is applied client-side; runs
+  with equal start times have no stable order, so the ledger stamps strictly increasing
+  milliseconds.
 
 ### Consequences
 

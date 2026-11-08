@@ -103,3 +103,15 @@ async def test_run_records_the_artifact_uri_and_the_row_ref() -> None:
     await run(_Loop(_DuckFit()), ledger)
     assert "learn_artifact_uri" not in ledger.rows[-1].metrics
     assert ledger.rows[-1].decision == "pass"
+
+
+async def test_an_unreadable_jsonl_registry_refuses_to_move_an_alias(tmp_path: Path) -> None:
+    got = await JsonlModelRegistry(tmp_path).set_alias("m", "champion", 1)
+    assert got.outcome == "unavailable" and got.reason
+
+
+async def test_a_wrong_typed_artifact_uri_or_run_ref_is_refused_not_raised(tmp_path: Path) -> None:
+    for registry in (MemoryModelRegistry(), JsonlModelRegistry(tmp_path / "r.jsonl")):
+        assert (await registry.register("m", model={}, artifact_uri=tmp_path)).outcome == "request_fault"  # type: ignore[arg-type]  # a Path is the input under test
+        assert (await registry.register("m", model={}, artifact_uri="")).outcome == "request_fault"
+        assert (await registry.register("m", model={}, run_ref=7)).outcome == "request_fault"  # type: ignore[arg-type]  # an int is the input under test

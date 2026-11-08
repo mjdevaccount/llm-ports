@@ -8,8 +8,9 @@ A tracker's registry (MLflow's, for one) is an adapter that implements the same 
 
 Invariants:
     - Never raises for a backend failure: an unreadable or unwritable file is an `unavailable`
-      outcome; a model that is not JSON-able, an empty name or alias, or an alias set to a
-      version that does not exist is a `request_fault`.
+      outcome; a model that is not JSON-able, an empty name or alias, an `artifact_uri` or
+      `run_ref` of the wrong type, or an alias set to a version that does not exist is a
+      `request_fault`.
     - Versions of one name are numbered from 1 and never change once registered; only aliases move.
     - One writer per `JsonlModelRegistry` file: the next version number is read from the file.
 
@@ -51,12 +52,18 @@ class _State:
         return self.get(name, version) if version is not None else None
 
 
-def _refusal(name: str, model: Mapping[str, Any], tags: Mapping[str, str]) -> str | None:
+def _refusal(
+    name: str, model: Mapping[str, Any], tags: Mapping[str, str], artifact_uri: object, run_ref: object
+) -> str | None:
     """Return why a registration is refused, or None when it is acceptable."""
-    if not name:
+    if not isinstance(name, str) or not name:
         return "empty model name"
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in tags.items()):
         return "tags must map str to str"
+    if artifact_uri is not None and (not isinstance(artifact_uri, str) or not artifact_uri):
+        return f"artifact_uri must be a non-empty str or None, not {type(artifact_uri).__name__}"
+    if run_ref is not None and not isinstance(run_ref, str):
+        return f"run_ref must be a str or None, not {type(run_ref).__name__}"
     try:
         json.dumps(dict(model))
     except (TypeError, ValueError) as exc:
@@ -86,7 +93,7 @@ class MemoryModelRegistry:
         tags: Mapping[str, str] | None = None,
     ) -> Written:
         """Register a new version. Never raises."""
-        refused = _refusal(name, model, tags or {})
+        refused = _refusal(name, model, tags or {}, artifact_uri, run_ref)
         if refused is not None:
             return Written(0, "request_fault", refused)
         version = self._state.next_version(name)
@@ -153,7 +160,7 @@ class JsonlModelRegistry:
         tags: Mapping[str, str] | None = None,
     ) -> Written:
         """Append a `register` event. Never raises."""
-        refused = _refusal(name, model, tags or {})
+        refused = _refusal(name, model, tags or {}, artifact_uri, run_ref)
         if refused is not None:
             return Written(0, "request_fault", refused)
         state = self._fold()

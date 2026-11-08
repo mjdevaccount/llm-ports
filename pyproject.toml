@@ -111,6 +111,7 @@ dev = [
     "mlflow-skinny>=3.18,<4",
     "sqlalchemy>=2.0",
     "alembic>=1.13",
+    "mlflow>=3.18,<4",
 ]
 docs = [
     "mkdocs-material>=9.8.0",

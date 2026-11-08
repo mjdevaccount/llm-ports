@@ -9,7 +9,7 @@ and record the run. This package holds the parts that do not depend on what is l
 - `examples`: `coverage`, `agreement`, `few_shot` over labelled examples.
 - ports: `RunLedger`, `ExampleStore`, `WritableExampleStore`, `ModelRegistry`, `Loop`; `stores`
   and `registry` implement them with the standard library; `loop.run` drives a `Loop` (evidence,
-  fit, clauses, apply) and records exactly one row.
+  fit, clauses, apply) and records exactly one row; `failed` says whether a run reads red.
 
 Invariants:
     - Standard library only: imports nothing else from `llm_ports` and no third-party package,
@@ -39,7 +39,7 @@ from llm_ports.learn._types import (
     VersionRead,
     Written,
 )
-from llm_ports.learn.loop import Run, record, run
+from llm_ports.learn.loop import Run, failed, record, run
 
 __all__ = [
     "DECISIONS",
@@ -67,6 +67,7 @@ __all__ = [
     "WritableExampleStore",
     "Written",
     "examples",
+    "failed",
     "gate",
     "loop",
     "record",

@@ -243,7 +243,9 @@ async def check_model_registry(registry: ModelRegistry) -> tuple[str, ...]:
     one = await _call(
         "versions_number_from_1",
         "register",
-        registry.register(name, model=model, artifact_uri="file:///m/1", run_ref="run-1", tags={"by": "contract"}),
+        registry.register(
+            name, model=model, artifact_uri="s3://contract/m/1", run_ref="run-1", tags={"by": "contract"}
+        ),
     )
     two = await _call("versions_number_from_1", "register", registry.register(name, model={"w": [1.0]}))
     _expect("versions_number_from_1", (one.ref, two.ref) == ("1", "2") and one.ok and two.ok, f"got {one}, {two}")
@@ -251,7 +253,7 @@ async def check_model_registry(registry: ModelRegistry) -> tuple[str, ...]:
     got = await _call("round_trip", "get", registry.get(name, 1))
     mv = _present("round_trip", got.version if got.ok else None, f"version 1 read as {got}")
     _expect("round_trip", (mv.name, mv.version, dict(mv.model)) == (name, 1, model), f"read {mv!r}")
-    _expect("round_trip", (mv.artifact_uri, mv.run_ref) == ("file:///m/1", "run-1"), f"read {mv!r}")
+    _expect("round_trip", (mv.artifact_uri, mv.run_ref) == ("s3://contract/m/1", "run-1"), f"read {mv!r}")
     _expect("round_trip", dict(mv.tags).get("by") == "contract" and mv.at.tzinfo is not None, f"read {mv!r}")
 
     await _call("alias_moves", "set_alias", registry.set_alias(name, "champion", 1))
