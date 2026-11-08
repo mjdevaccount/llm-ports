@@ -100,15 +100,17 @@ jobs:
       - name: PyPI lists every built file
         run: |
           set -euo pipefail
-          want=$(cd dist && ls -1 *.whl *.tar.gz | sort)
-          v=$(ls dist/*.whl | head -1 | sed -E 's#^dist/[^-]+-([^-]+)-.*#\1#')
-          for i in $(seq 1 12); do
+          shopt -s nullglob
+          built=(dist/*.whl dist/*.tar.gz)
+          want=$(printf '%s\n' "${built[@]#dist/}" | sort)
+          v=$(sed -E 's#^dist/[^-]+-([^-]+)-.*#\1#' <<<"${built[0]}")
+          for _ in $(seq 1 12); do
             have=$(curl -fsS "https://pypi.org/pypi/llm-ports/$v/json" | jq -r '.urls[].filename' | sort || true)
             missing=$(comm -23 <(echo "$want") <(echo "$have"))
-            [ -z "$missing" ] && { echo "PyPI lists all of: $(echo $want)"; exit 0; }
+            [ -z "$missing" ] && { echo "PyPI lists all of: $(tr '\n' ' ' <<<"$want")"; exit 0; }
             sleep 10
           done
-          echo "::error::PyPI is missing $(echo $missing) for $v -- rerun this job (skip-existing uploads only the missing files)"
+          echo "::error::PyPI is missing $(tr '\n' ' ' <<<"$missing") for $v -- rerun this job (skip-existing uploads only the missing files)"
           exit 1
 
   github-release:
