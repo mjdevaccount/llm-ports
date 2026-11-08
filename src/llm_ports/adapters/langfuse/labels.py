@@ -4,9 +4,10 @@
 topics `llm:<role>` (`evals.labels.topic`). An example is a score on the labelled generation,
 named by source and role:
 
-- `label-<role>`: a HUMAN label, given in Langfuse's annotation-queue UI against a categorical
-  score config of the same name (`good` / `bad`). This adapter creates the config and the queue
-  and never writes this name.
+- `label-<role>`: a HUMAN label against a categorical score config of the same name (`good` /
+  `bad`), given in Langfuse's annotation-queue UI or relayed by `put` from another surface that
+  names the person (`Example.by`). A relayed label completes that reply's queue item, as the
+  annotation UI does.
 - `label.model-<role>`: a stronger model's label, written by `put`.
 - `label.judge-<role>`: the production judge's verdict as a label, written by `put`.
 
@@ -14,9 +15,10 @@ The separator is `-` because Langfuse refuses a score-config name outside `CONFI
 reads also accept the earlier `label:<role>` spelling, so scores written under it stay readable.
 Every role gets one score config and one annotation queue, both named `label-<role>`, created on
 first `enqueue`. `enqueue` skips a reply the queue already holds (pending or done), and `queued`
-reads what it holds, so a nightly draw neither duplicates items nor grows the backlog unbounded. `put` writes each score under a deterministic id (source, role, subject), so a
-relabel replaces the earlier score instead of adding a second one. The SDK is synchronous; each
-call runs in a worker thread.
+reads what it holds, so a nightly draw neither duplicates items nor grows the backlog unbounded.
+`put` writes each score under a deterministic id (source, role, subject, and the person for a
+human label), so a relabel replaces the earlier score instead of adding a second one. The SDK is
+synchronous; each call runs in a worker thread.
 
 Example:
     store = LangfuseExampleStore(Langfuse(...))  # the caller builds the client
@@ -30,9 +32,10 @@ Invariants:
     - A topic that is not `llm:<role>` holds no examples here and is refused by `put`/`enqueue`.
     - A role whose label name Langfuse would refuse (`CONFIG_NAME`) is refused here as a
       `request_fault` before any write, never sent to fail remotely.
+    - A human label is written only with the person who gave it (`by`); an `outcome` label never.
     - A failure reason carries the server's own validation message when it sends one.
 
-Rationale: ADR-0010, ADR-0011.
+Rationale: ADR-0010, ADR-0011, ADR-0014.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ import hashlib
 import re
 from collections.abc import Iterator, Sequence
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from llm_ports._extras import extra
 from llm_ports.evals.labels import Queued, role_of, topic
@@ -71,6 +74,8 @@ NAMES_PER_READ = 40
 CATEGORIES: tuple[dict[str, str | float], ...] = ({"label": "good", "value": 1.0}, {"label": "bad", "value": 0.0})
 #: Scores read per page.
 PAGE = 100
+#: The status Langfuse gives a queue item once its reply is labelled.
+COMPLETED = "COMPLETED"
 _FIELDS = "details,subject,annotation"
 
 
@@ -152,8 +157,10 @@ def example_of_score(d: Any) -> Example | None:
 def _refusal(examples: Sequence[Example]) -> str | None:
     """Return why `put` refuses the batch, or None when every example can be written."""
     for ex in examples:
-        if ex.source not in ("model", "judge"):
-            return f"a {ex.source} label is not written by code (a human labels in the annotation UI)"
+        if ex.source not in PREFIX:
+            return f"a {ex.source} label is not written by code (it is read from where it happened)"
+        if ex.source == "human" and not ex.by.strip():
+            return "a human label needs `by`, the person who gave it: code only relays it"
         role = role_of(ex.topic)
         if role is None:
             return f"topic {ex.topic!r} is not a model reply's (llm:<role>)"
@@ -281,31 +288,55 @@ class LangfuseExampleStore:
         except Exception as exc:  # an unreadable queue is never an empty one
             return Queued(outcome="unavailable", reason=_reason(exc))
 
+    def _complete(self, role: str, subjects: set[str]) -> None:
+        """Mark the role's queue items for `subjects` done; a role with no queue has none to mark."""
+        queue = self._queue_id(role, create=False)
+        if queue is None:
+            return
+        for item in list(self._items(queue)):
+            status = str(getattr(item, "status", "") or "").upper()
+            if str(item.object_id) in subjects and status != COMPLETED:
+                self._c.api.annotation_queues.update_queue_item(queue, item.id, status=COMPLETED)
+
     def _put(self, examples: Sequence[Example], done: list[int]) -> None:
+        relayed: dict[str, set[str]] = {}
         for ex in examples:
             role = role_of(ex.topic) or ""
-            name = score_name("judge" if ex.source == "judge" else "model", role)
+            who = cast("Labeller", ex.source)
+            name = score_name(who, role)
+            key = f"{name}\n{ex.subject}" + (f"\n{ex.by}" if who == "human" else "")
             self._c.create_score(
                 name=name,
                 value=str(ex.value),
                 data_type="CATEGORICAL",
                 trace_id=ex.ref["trace"],
                 observation_id=ex.subject,
-                score_id=hashlib.sha256(f"{name}\n{ex.subject}".encode()).hexdigest(),
+                score_id=hashlib.sha256(key.encode()).hexdigest(),
                 comment=ex.reason or None,
+                config_id=self._config_id(role) if who == "human" else None,
                 metadata={"by": ex.by, "labeller": ex.source},
                 timestamp=ex.at,
             )
             done[0] += 1
+            if who == "human":
+                relayed.setdefault(role, set()).add(ex.subject)
         self._c.flush()
+        for role, subjects in relayed.items():
+            self._complete(role, subjects)
 
     async def put(self, examples: Sequence[Example]) -> Written:
-        """Write `model` and `judge` labels as categorical scores. Never raises.
+        """Write labels as categorical scores. Never raises.
+
+        A `human` label is one a person gave on another surface and code relays: it is written
+        under `label-<role>` against the role's score config (created when missing), keyed by the
+        person as well, and the role's queue item for that reply is then marked completed.
 
         Returns:
-            How many landed; `request_fault` (none written) when any example is a `human` or
-            `outcome` label, not on an `llm:<role>` topic, not `good`/`bad`, or has no
-            `ref["trace"]`.
+            How many scores landed; `request_fault` (none written) when any example is an
+            `outcome` label, a `human` label with no `by`, not on an `llm:<role>` topic, not
+            `good`/`bad`, or has no `ref["trace"]`. `unavailable` when the server failed; a
+            failure while completing a queue item comes after every score landed, so `written`
+            then counts them all.
         """
         why = _refusal(examples)
         if why is not None:
@@ -353,6 +384,7 @@ class LangfuseExampleStore:
 
 __all__ = [
     "CATEGORIES",
+    "COMPLETED",
     "CONFIG_NAME",
     "CONFIG_NAME_MAX",
     "NAMES_PER_READ",

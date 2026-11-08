@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-08
+
+### Added
+
+- `LangfuseExampleStore.put` relays a person's label: a `human` example with `by` naming the
+  person is written as `label-<role>` against the role's categorical score config (created when
+  missing), keyed by the person, and the reply's annotation-queue item is marked `COMPLETED`
+  (`labels.COMPLETED`). A consumer's own label surface feeds the same store, `coverage` and
+  `agreement` as the annotation UI. Rationale: ADR-0014.
+
+### Changed
+
+- `put` refuses a `human` label with an empty `by` (was: every `human` label) as a
+  `request_fault`; an `outcome` label is still refused.
+
 ## [1.11.0] - 2026-11-07
 
 ### Added
