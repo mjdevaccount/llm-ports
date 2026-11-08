@@ -123,3 +123,75 @@ def test_a_reused_study_name_adds_trials() -> None:
 def test_objective_brier_scores_an_abstention_as_a_coin() -> None:
     assert tuner.objective_brier([None] * 4, events(4)) == pytest.approx(0.25)
     assert tuner.objective_brier([], []) is None
+
+
+# ---- SqlJournal: the journal backend on one SQL table -------------------------------------------
+
+sa = pytest.importorskip("sqlalchemy")
+
+
+def engine(tmp_path) -> sa.engine.Engine:
+    return sa.create_engine(f"sqlite:///{tmp_path / 'j.db'}")
+
+
+def test_journal_appends_in_order_and_reads_from_a_log_number(tmp_path) -> None:
+    j = tuner.SqlJournal(engine(tmp_path), "journal", create=True)
+    j.append_logs([{"op": 0}, {"op": 1}])
+    j.append_logs([])
+    j.append_logs([{"op": 2}])
+    assert [r["op"] for r in j.read_logs(0)] == [0, 1, 2]
+    assert [r["op"] for r in j.read_logs(2)] == [2]
+    assert list(j.read_logs(3)) == []
+
+
+def test_two_journals_on_one_table_share_one_gapless_log(tmp_path) -> None:
+    eng = engine(tmp_path)
+    a, b = tuner.SqlJournal(eng, "journal", create=True), tuner.SqlJournal(eng, "journal")
+    a.append_logs([{"w": "a"}])
+    b.append_logs([{"w": "b"}, {"w": "b"}])
+    a.append_logs([{"w": "a"}])
+    with eng.connect() as c:
+        assert [r[0] for r in c.execute(sa.text("SELECT n FROM journal ORDER BY n"))] == [0, 1, 2, 3]
+    assert [r["w"] for r in b.read_logs(0)] == ["a", "b", "b", "a"]
+
+
+def test_an_append_that_lost_the_race_retries_from_the_new_end(tmp_path) -> None:
+    eng = engine(tmp_path)
+    j = tuner.SqlJournal(eng, "journal", create=True)
+    raced = []
+
+    def race(*args: object) -> None:  # another writer lands between this append's read and insert
+        if str(args[2]).startswith("INSERT INTO journal") and not raced:
+            raced.append(1)
+            with eng.begin() as other:
+                other.execute(sa.text('INSERT INTO journal (n, log) VALUES (0, \'{"w": "other"}\')'))
+
+    sa.event.listen(eng, "before_cursor_execute", race)
+    j.append_logs([{"w": "me"}])
+    assert raced == [1]
+    assert [r["w"] for r in j.read_logs(0)] == ["other", "me"]
+
+
+def test_a_table_name_that_is_not_an_identifier_is_refused(tmp_path) -> None:
+    with pytest.raises(ValueError, match="not a table name"):
+        tuner.SqlJournal(engine(tmp_path), "journal; DROP TABLE x")
+
+
+def test_tune_on_a_journal_resumes_the_study(tmp_path) -> None:
+    storage = tuner.journal_storage(engine(tmp_path), "journal", create=True)
+    first = tuner.tune(build, events(400), SPACE, study_name="j", storage=storage, n_trials=3, seed=1)
+    again = tuner.tune(
+        build,
+        events(400),
+        SPACE,
+        study_name="j",
+        storage=tuner.journal_storage(engine(tmp_path), "journal"),
+        n_trials=2,
+        seed=1,
+    )
+    assert isinstance(first, tuner.Tuned) and isinstance(again, tuner.Tuned)
+    import optuna
+
+    assert (
+        len(optuna.load_study(study_name="j", storage=tuner.journal_storage(engine(tmp_path), "journal")).trials) == 5
+    )

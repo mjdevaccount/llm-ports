@@ -97,5 +97,11 @@ parameters (a River pool's learning rate, `alpha`, `shrink`) on the train split 
 the best parameters' holdout `Score`; the study persists to any Optuna storage, where
 `optuna-dashboard` reads it.
 
+Behind a transaction-mode pooler (PgBouncer), Optuna's RDB storage cannot be kept in one schema:
+it creates its tables on the connection's search path and Alembic checks them in the default
+schema. `adapters.optuna.journal_storage(engine, "schema.table")` is the storage for that case:
+Optuna's `JournalStorage` over `SqlJournal`, one append-only `(n bigint primary key, log text)`
+table that the caller's migration creates and every statement names in full.
+
 Rationale: [ADR-0013](../adr/0013-forecast-scoring-in-a-standalone-core.md),
 [ADR-0015](../adr/0015-a-combiner-is-judged-walk-forward.md).
