@@ -1,6 +1,6 @@
-"""LangfuseExampleStore -- labels are scores named by source and role, a human label is never
-written by code, queues and configs are found before they are created, and every failure is an
-outcome."""
+"""LangfuseExampleStore -- labels are scores named by source and role, a human label is written
+only when it names its person, queues and configs are found before they are created, and every
+failure is an outcome."""
 
 from __future__ import annotations
 
@@ -72,9 +72,18 @@ class FakeApi:
 
         def list_items(q: str, **kw: Any) -> SimpleNamespace:
             self.item_reads.append(kw["page"])
-            held = [SimpleNamespace(object_id=o, status=self.done.get(o, "PENDING")) for qq, o in self.items if qq == q]
+            held = [
+                SimpleNamespace(id=f"item-{o}", object_id=o, status=self.done.get(o, "PENDING"))
+                for qq, o in self.items
+                if qq == q
+            ]
             return SimpleNamespace(data=held[(kw["page"] - 1) * kw["limit"] : kw["page"] * kw["limit"]])
 
+        def update_item(q: str, item: str, **kw: Any) -> None:
+            self.updated.append((q, item, kw["status"]))
+            self.done[item.removeprefix("item-")] = kw["status"]
+
+        self.updated: list[tuple[str, str, str]] = []
         self.item_reads: list[int] = []
         self.done: dict[str, str] = {}
         self.scores = SimpleNamespace(get_many=get_many)
@@ -84,6 +93,7 @@ class FakeApi:
             create_queue=create_queue,
             create_queue_item=lambda q, **kw: self.items.append((q, kw["object_id"])),
             list_queue_items=list_items,
+            update_queue_item=update_item,
         )
 
 
@@ -210,8 +220,10 @@ async def test_examples_pages_filters_by_source_and_ignores_other_topics() -> No
     assert (await store.examples([topic("a")], source="outcome")).examples == ()
 
 
-def _ex(source: str = "model", trace: str = "t1", value: str = "bad", tp: str = "llm:a") -> Example:
-    return Example(tp, "o1", value, source, by="gemini", reason="r", ref={"trace": trace} if trace else {})  # type: ignore[arg-type]
+def _ex(
+    source: str = "model", trace: str = "t1", value: str = "bad", tp: str = "llm:a", by: str = "gemini", obs: str = "o1"
+) -> Example:
+    return Example(tp, obs, value, source, by=by, reason="r", ref={"trace": trace} if trace else {})  # type: ignore[arg-type]
 
 
 async def test_put_writes_model_and_judge_scores_under_a_stable_id() -> None:
@@ -230,7 +242,7 @@ async def test_put_writes_model_and_judge_scores_under_a_stable_id() -> None:
 @pytest.mark.parametrize(
     ("ex", "why"),
     [
-        (_ex("human"), "human label is not written by code"),
+        (_ex("human", by=" "), "human label needs `by`"),
         (_ex("outcome"), "outcome label is not written by code"),
         (_ex(trace=""), "ref['trace']"),
         (_ex(value="meh"), "not good or bad"),
@@ -242,6 +254,47 @@ async def test_put_refuses_a_batch_it_cannot_write_and_writes_none(ex: Example, 
     got = await lf.LangfuseExampleStore(client).put([_ex(), ex])
     assert (got.written, got.outcome) == (0, "request_fault") and why in (got.reason or "")
     assert client.written == []
+
+
+async def test_a_relayed_human_label_is_scored_on_the_config_and_completes_its_queue_item() -> None:
+    api = FakeApi(
+        [], configs=[SimpleNamespace(name="label-a", id="cfg-a")], queues=[SimpleNamespace(name="label-a", id="q-a")]
+    )
+    api.items = [("q-a", "o1"), ("q-a", "o2")]
+    client = FakeClient(api)
+    store = lf.LangfuseExampleStore(client)
+    got = await store.put([_ex("human", value="good", by="ann")])
+    assert (got.written, got.outcome) == (1, "ok")
+    first = client.written[0]
+    assert (first["name"], first["value"], first["config_id"]) == ("label-a", "good", "cfg-a")
+    assert first["metadata"] == {"by": "ann", "labeller": "human"}
+    assert api.updated == [("q-a", "item-o1", "COMPLETED")]  # the other reply stays pending
+    held = await store.queued(topic("a"))
+    assert held.done == {"o1"} and held.pending == {"o2"}
+    await store.put([_ex("human", value="bad", by="ann")])
+    assert client.written[1]["score_id"] == first["score_id"]  # the same person relabelling replaces
+    assert api.updated == [("q-a", "item-o1", "COMPLETED")]  # a done item is not re-marked
+    await store.put([_ex("human", by="bob")])
+    assert client.written[2]["score_id"] != first["score_id"]  # another person's label is its own
+    model = await store.put([_ex("model")])
+    assert model.ok and client.written[3]["config_id"] is None
+
+
+async def test_a_relayed_human_label_on_a_role_with_no_queue_creates_its_config_only() -> None:
+    api = FakeApi([])
+    client = FakeClient(api)
+    got = await lf.LangfuseExampleStore(client).put([_ex("human", by="ann")])
+    assert got.ok and api.created == ["config:label-a"] and api.updated == []
+    assert client.written[0]["config_id"] == "cfg-new"
+
+
+async def test_a_queue_failure_after_the_scores_landed_still_counts_them() -> None:
+    api = FakeApi([], queues=[SimpleNamespace(name="label-a", id="q-a")])
+    api.items = [("q-a", "o1")]
+    api.annotation_queues.update_queue_item = lambda *a, **kw: (_ for _ in ()).throw(ConnectionError("down"))
+    client = FakeClient(api)
+    got = await lf.LangfuseExampleStore(client).put([_ex("human", by="ann"), _ex("human", by="ann", obs="o2")])
+    assert (got.written, got.outcome) == (2, "unavailable") and len(client.written) == 2
 
 
 async def test_enqueue_finds_or_creates_the_config_and_queue_once() -> None:

@@ -421,8 +421,8 @@ changes:
   (`learn.examples`); the test double is `learn.stores.MemoryExampleStore`, not a new fake.
 - `adapters/langfuse/labels.py` is `LangfuseExampleStore`, a `WritableExampleStore` and a
   `LabelQueue` (scores `label-<role>` on the production generation, `label.model-<role>` and
-  `label.judge-<role>` written by `put`; one annotation queue per role; SDK calls in a worker
-  thread). `adapters/langfuse/experiments.py` ships as drafted. Both in slice 2 (1.6.0).
+  `label.judge-<role>` written by `put`, and since 1.12.0 a person's `label-<role>` relayed by
+  `put` with `by`, ADR-0014; one annotation queue per role; SDK calls in a worker thread). `adapters/langfuse/experiments.py` ships as drafted. Both in slice 2 (1.6.0).
 - The judge-trust gate becomes a `Loop` in trade-data (slice 6): examples = human labels from the
   store, clauses = `labelled >= 20` (floor), `kappa >= 0.6`, `seeded_bad_all_caught` (via
   `evals.calibration.verdict`, as `llm_judge_trust.assess` does today), recorded as `run_kind =

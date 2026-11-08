@@ -23,3 +23,4 @@ named in its record.
 | [0011](0011-label-names-follow-the-stores-own-rule.md) | Label score names follow Langfuse's score-config rule (`label-<role>`); reads accept the old `:` spelling |
 | [0012](0012-a-judge-earns-trust-from-labels.md) | A judge earns trust from human labels per judge model (`calibration.trust`, `kappa_ci`, `score` metadata) |
 | [0013](0013-forecast-scoring-in-a-standalone-core.md) | Forecast scoring in a standalone core (`llm_ports.forecast`); fitters and non-binary scores in four adapters |
+| [0014](0014-a-persons-label-relayed-by-code.md) | A person's label can be relayed by code (`put` with `by`), on the same score config, completing its queue item |
