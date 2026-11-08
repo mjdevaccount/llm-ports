@@ -13,8 +13,12 @@ This package holds the parts that do not depend on who the voices are:
 - `calibrate`: the `Calibrator` port and `PiecewiseLinear`, a fitted map applied without a
   fitting library (fitters: `adapters.sklearn`, `adapters.venn_abers`).
 - `hedge`: `HedgeMap`, the probability each source's verbal confidence has earned.
-- `combine`: the `Combiner` port, `LogitPool` (the fixed baseline) and the log-odds transform
-  (a learned combiner: `adapters.river`).
+- `combine`: the `Combiner` port, `LogitPool` (the fixed baseline), `PriorPool` (shrink toward
+  and fall back to a prior voice, extremize), `BestVoice` (the best-single-voice baseline) and
+  the log-odds transform (a learned combiner: `adapters.river`).
+- `walk`: `Event` and `walk_forward`, a combiner replayed in time order that learns an outcome
+  only once it was known; `compare` scores several on the same events (tuning:
+  `adapters.optuna`).
 
 Invariants:
     - Standard library only: imports nothing else from `llm_ports` and no third-party package
@@ -23,18 +27,21 @@ Invariants:
 Rationale: ADR-0013.
 """
 
-from llm_ports.forecast import calibrate, combine, hedge, score
+from llm_ports.forecast import calibrate, combine, hedge, score, walk
 from llm_ports.forecast._estimator import Params
 from llm_ports.forecast._types import Forecast, Resolution, Resolved, finite_real, valid_p
 from llm_ports.forecast.calibrate import Calibrator, Insufficient, PiecewiseLinear
-from llm_ports.forecast.combine import Combiner, LogitPool
+from llm_ports.forecast.combine import BestVoice, Combiner, LogitPool, PriorPool
 from llm_ports.forecast.hedge import HedgeMap, HedgeRow
 from llm_ports.forecast.score import Bin, Score
+from llm_ports.forecast.walk import Event, walk_forward
 
 __all__ = [
+    "BestVoice",
     "Bin",
     "Calibrator",
     "Combiner",
+    "Event",
     "Forecast",
     "HedgeMap",
     "HedgeRow",
@@ -42,6 +49,7 @@ __all__ = [
     "LogitPool",
     "Params",
     "PiecewiseLinear",
+    "PriorPool",
     "Resolution",
     "Resolved",
     "Score",
@@ -51,4 +59,6 @@ __all__ = [
     "hedge",
     "score",
     "valid_p",
+    "walk",
+    "walk_forward",
 ]
