@@ -52,6 +52,13 @@ class _State:
         return self.get(name, version) if version is not None else None
 
 
+def _bad_version(version: object) -> str | None:
+    """Return why `version` is not a version number (`bool` is not one), or None when it is."""
+    if isinstance(version, bool) or not isinstance(version, int):
+        return f"version must be an int, not {type(version).__name__}"
+    return None
+
+
 def _refusal(
     name: str, model: Mapping[str, Any], tags: Mapping[str, str], artifact_uri: object, run_ref: object
 ) -> str | None:
@@ -103,6 +110,8 @@ class MemoryModelRegistry:
 
     async def set_alias(self, name: str, alias: str, version: int) -> Written:
         """Point `alias` at `version`. Never raises."""
+        if (bad := _bad_version(version)) is not None:
+            return Written(0, "request_fault", bad)
         if not alias or self._state.get(name, version) is None:
             return Written(0, "request_fault", f"no version {version} of {name!r}" if alias else "empty alias")
         self._state.aliases[(name, alias)] = version
@@ -114,6 +123,8 @@ class MemoryModelRegistry:
 
     async def get(self, name: str, version: int) -> VersionRead:
         """Read one version. Never raises."""
+        if (bad := _bad_version(version)) is not None:
+            return VersionRead(None, "request_fault", bad)
         return VersionRead(self._state.get(name, version), "ok")
 
 
@@ -183,6 +194,8 @@ class JsonlModelRegistry:
 
     async def set_alias(self, name: str, alias: str, version: int) -> Written:
         """Append an `alias` event. Never raises."""
+        if (bad := _bad_version(version)) is not None:
+            return Written(0, "request_fault", bad)
         state = self._fold()
         if isinstance(state, str):
             return Written(0, "unavailable", state)
@@ -201,6 +214,8 @@ class JsonlModelRegistry:
 
     async def get(self, name: str, version: int) -> VersionRead:
         """Read one version. Never raises; a missing file is an empty registry."""
+        if (bad := _bad_version(version)) is not None:
+            return VersionRead(None, "request_fault", bad)
         state = self._fold()
         if isinstance(state, str):
             return VersionRead(None, "unavailable", state)

@@ -124,6 +124,8 @@ class MlflowRunLedger:
             body = json.dumps({"kind": kind, "subject": subject, "params": dict(params), "metrics": dict(metrics)})
         except (TypeError, ValueError) as exc:
             return Written(0, "request_fault", f"not JSON-able: {exc}")
+        if len(subject) > _PART:  # MLflow would cut the subject tag short, and the filter then misses it
+            return Written(0, "request_fault", f"subject is {len(subject)} chars (max {_PART})")
         if len(body) > MAX_ROW_JSON:
             return Written(0, "request_fault", f"row JSON is {len(body)} chars (max {MAX_ROW_JSON})")
         ms = self._stamp()
@@ -187,13 +189,10 @@ class MlflowRunLedger:
                     page_token=token,
                 )
                 for run in page:
-                    tags = run.data.tags
-                    if subject is not None and tags.get("llm_ports.subject") != subject:
+                    if decisions is not None and run.data.tags.get("llm_ports.decision") not in decisions:
                         continue
-                    if decisions is not None and tags.get("llm_ports.decision") not in decisions:
-                        continue
-                    row = _row_of(run)
-                    if row is not None:
+                    row = _row_of(run)  # its kind, not the experiment name: prefix "a" + "bc" is "ab" + "c"
+                    if row is not None and row.kind == kind and (subject is None or row.subject == subject):
                         return RowRead(row, "ok")
                 token = page.token
                 if not token:

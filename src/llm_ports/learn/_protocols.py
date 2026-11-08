@@ -160,7 +160,8 @@ class ModelRegistry(Protocol):
         """Point `alias` of `name` at `version`, moving it from any earlier version.
 
         Returns:
-            `written == 1` on success; `request_fault` when the version does not exist; else
+            `written == 1` on success; `request_fault` when the version does not exist or is not an
+            `int`; else
             `unavailable`.
         """
         ...
@@ -177,7 +178,8 @@ class ModelRegistry(Protocol):
         """Read one version of `name`.
 
         Returns:
-            The version, `ok` with None when it does not exist, or `unavailable`.
+            The version, `ok` with None when it does not exist, `request_fault` when `version` is
+            not an `int` (`Written.ref` is its decimal string), or `unavailable`.
         """
         ...
 

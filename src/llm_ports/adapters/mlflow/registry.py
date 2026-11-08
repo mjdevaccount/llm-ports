@@ -13,7 +13,7 @@ from typing import Any
 from llm_ports._extras import extra
 from llm_ports.adapters.mlflow._common import experiment_id, has_code, outcome_of, reason_of
 from llm_ports.learn import ModelVersion, VersionRead, Written
-from llm_ports.learn.registry import _refusal
+from llm_ports.learn.registry import _bad_version, _refusal
 
 with extra("mlflow"):
     from mlflow import MlflowClient
@@ -22,6 +22,13 @@ with extra("mlflow"):
 #: The largest `model` JSON a registry version tag holds.
 MAX_MODEL_JSON = 100_000
 _BACKING = "llm_ports"
+
+
+def _run_of(artifact_uri: str) -> str | None:
+    """Return the run a `runs:/<id>/...` URI names (a server refuses one registered without it)."""
+    if not artifact_uri.startswith("runs:/"):
+        return None
+    return artifact_uri.removeprefix("runs:/").split("/", 1)[0] or None
 
 
 class MlflowModelRegistry:
@@ -82,18 +89,22 @@ class MlflowModelRegistry:
         try:
             self._ensure_model(name)
             if artifact_uri is not None:
-                mv = self.client.create_model_version(name, artifact_uri, tags=labels, await_creation_for=0)
+                mv = self.client.create_model_version(
+                    name, artifact_uri, run_id=_run_of(artifact_uri), tags=labels, await_creation_for=0
+                )
             else:
                 backing = self._backing_run(name)
                 mv = self.client.create_model_version(
                     name, f"runs:/{backing}/{_BACKING}", run_id=backing, tags=labels, await_creation_for=0
                 )
-                self.client.update_run(backing, "FINISHED")
         except Exception as exc:  # MLflow's own failure becomes a named outcome
             if backing is not None:
                 with contextlib.suppress(Exception):  # the write already failed; the outcome says so
                     self.client.update_run(backing, "FAILED")
             return Written(0, outcome_of(exc), reason_of(exc))
+        if backing is not None:  # the version exists: a run left RUNNING must not turn it into a retry
+            with contextlib.suppress(Exception):
+                self.client.update_run(backing, "FINISHED")
         return Written(1, "ok", ref=str(mv.version))
 
     async def register(
@@ -130,6 +141,8 @@ class MlflowModelRegistry:
         return ModelVersion(name, int(mv.version), model if isinstance(model, dict) else {}, source, run_ref, at, tags)
 
     def _set_alias(self, name: str, alias: str, version: int) -> Written:
+        if (bad := _bad_version(version)) is not None:
+            return Written(0, "request_fault", bad)
         try:
             if not alias:
                 return Written(0, "request_fault", "empty alias")
@@ -162,6 +175,8 @@ class MlflowModelRegistry:
         return await asyncio.to_thread(self._by_alias, name, alias)
 
     def _get(self, name: str, version: int) -> VersionRead:
+        if (bad := _bad_version(version)) is not None:
+            return VersionRead(None, "request_fault", bad)
         try:
             return VersionRead(self._version(name, version), "ok")
         except Exception as exc:  # MLflow's own failure becomes a named outcome

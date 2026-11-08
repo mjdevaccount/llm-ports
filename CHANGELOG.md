@@ -21,7 +21,8 @@ Seams for bigger ML engines (ADR-0016): every addition is optional, so no consum
 - `learn.ModelRegistry` port (`register`, `set_alias`, `by_alias`, `get`; versions from 1 per
   name, aliases move) with `ModelVersion` and `VersionRead`, and `learn.registry`:
   `MemoryModelRegistry` and `JsonlModelRegistry` (an append-only event log). An `artifact_uri`
-  or `run_ref` of the wrong type is a `request_fault`, never a raise.
+  or `run_ref` of the wrong type, or a `version` that is not an `int` (`Written.ref`'s string
+  passed back, a `bool`), is a `request_fault`, never a raise.
 - `testing.conformance`: `check_run_ledger`, `check_example_store`, `check_model_registry` and
   their broken-storage checks (`check_unavailable_run_ledger`, `check_unreadable_example_store`,
   `check_unavailable_model_registry`), raising `ContractViolation` naming the broken invariant.
@@ -30,7 +31,9 @@ Seams for bigger ML engines (ADR-0016): every addition is optional, so no consum
   `MlflowRunLedger` (one MLflow run per row; scalar params and numeric metrics logged, the whole
   row as JSON split over run tags, read back from the search result with no artifact store) and
   `MlflowModelRegistry` (MLflow model versions and aliases; a version with no `artifact_uri` gets
-  a backing run as its source). Both pass the conformance suites against a real `mlflow server`
+  a backing run as its source; a `runs:/<id>/...` URI passes its run id, as a server requires).
+  The ledger matches a row's own kind, so prefixes whose experiment names collide never
+  cross-read, and refuses a subject over 8000 characters (MLflow would cut its tag). Both pass the conformance suites against a real `mlflow server`
   and a local SQLite store, write nothing to stdout or stderr, and are safe to share between
   threads. Full `mlflow` is a dev dependency only, for the server tests.
 - `learn.Run.as_dict()` (a run as plain fields, for an admin endpoint's response) and

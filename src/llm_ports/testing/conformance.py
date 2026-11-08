@@ -272,6 +272,16 @@ async def check_model_registry(registry: ModelRegistry) -> tuple[str, ...]:
     unset = await _call("missing_reads_ok_none", "by_alias", registry.by_alias(name, "challenger"))
     _expect("missing_reads_ok_none", unset.ok and unset.version is None, f"an unset alias read as {unset}")
 
+    for bad_version in ("1", 1.0, True):  # `Written.ref` is "1": passing it back must not raise or match
+        typed = await _call("version_is_an_int", "get", registry.get(name, bad_version))  # type: ignore[arg-type]  # a wrong type is the input under test
+        _expect("version_is_an_int", typed.outcome == "request_fault", f"get({bad_version!r}) returned {typed}")
+        moved = await _call(
+            "version_is_an_int",
+            "set_alias",
+            registry.set_alias(name, "champion", bad_version),  # type: ignore[arg-type]  # a wrong type is the input under test
+        )
+        _expect("version_is_an_int", moved.outcome == "request_fault", f"set_alias to {bad_version!r}: {moved}")
+
     fresh = await _call("names_isolated", "register", registry.register(other, model={}))
     _expect("names_isolated", fresh.ok and fresh.ref == "1", f"a new name's first version is {fresh}")
     odd = await _call("non_json_never_raises", "register", registry.register(other, model={"x": {1, 2}}))
@@ -283,6 +293,7 @@ async def check_model_registry(registry: ModelRegistry) -> tuple[str, ...]:
         "alias_moves",
         "versions_immutable",
         "alias_needs_a_version",
+        "version_is_an_int",
         "names_isolated",
         "non_json_never_raises",
     )

@@ -329,7 +329,8 @@ class VersionRead:
 
     Attributes:
         version: The version; None when there is none or the registry could not be read.
-        outcome: `ok`, or `unavailable` when the registry could not be read.
+        outcome: `ok`, `request_fault` for a version that is not an `int`, or `unavailable`
+            when the registry could not be read.
         reason: One line naming the failure; None on `ok`.
 
     Invariants:

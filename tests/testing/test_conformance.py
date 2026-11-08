@@ -52,7 +52,7 @@ async def test_unreadable_example_stores_and_their_union_report_it(tmp_path: Pat
 
 async def test_memory_and_jsonl_registries_pass(tmp_path: Path) -> None:
     for registry in (MemoryModelRegistry(), JsonlModelRegistry(tmp_path / "models.jsonl")):
-        assert len(await check_model_registry(registry)) == 8
+        assert len(await check_model_registry(registry)) == 9
 
 
 async def test_an_unreadable_jsonl_registry_reports_it(tmp_path: Path) -> None:
@@ -155,6 +155,14 @@ class _NamesShareNumbers(MemoryModelRegistry):
         return Written(1, "ok", ref=str(self.total)) if got.ok else got
 
 
+class _VersionByEquality(MemoryModelRegistry):
+    """Looks a version up by `==`, so `True` reads as version 1."""
+
+    async def get(self, name: str, version: int) -> VersionRead:
+        held = [v for v in self._state.versions.get(name, []) if v.version == version]
+        return VersionRead(held[0] if held else None, "ok")
+
+
 class _CountsFrom0(MemoryModelRegistry):
     async def register(self, name: str, **kwargs: Any) -> Written:
         got = await super().register(name, **kwargs)
@@ -179,7 +187,11 @@ async def test_a_ledger_breaking_one_invariant_fails_on_it(ledger: type[MemoryRu
 
 @pytest.mark.parametrize(
     ("registry", "invariant"),
-    [(_NamesShareNumbers, "names_isolated"), (_CountsFrom0, "versions_number_from_1")],
+    [
+        (_NamesShareNumbers, "names_isolated"),
+        (_CountsFrom0, "versions_number_from_1"),
+        (_VersionByEquality, "version_is_an_int"),
+    ],
 )
 async def test_a_registry_breaking_one_invariant_fails_on_it(
     registry: type[MemoryModelRegistry], invariant: str

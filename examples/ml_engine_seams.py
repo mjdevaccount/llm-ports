@@ -56,7 +56,7 @@ async def main(root: Path) -> None:
 
     # The outside witness: both backends keep their port's contract.
     assert len(await check_run_ledger(ledger)) == 9
-    assert len(await check_model_registry(registry)) == 8
+    assert len(await check_model_registry(registry)) == 9
     print(f"champion v{champion.version} mean={champion.model['mean']} from run {champion.run_ref}")
 
 

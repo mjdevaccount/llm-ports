@@ -123,12 +123,25 @@ async def test_the_ledger_passes_its_contract(ledger: MlflowRunLedger) -> None:
 
 
 async def test_the_registry_passes_its_contract(client: MlflowClient) -> None:
-    assert len(await check_model_registry(MlflowModelRegistry(client))) == 8
+    assert len(await check_model_registry(MlflowModelRegistry(client))) == 9
 
 
 async def test_a_server_down_is_reported_not_raised() -> None:
     assert len(await check_unavailable_run_ledger(MlflowRunLedger(_Down()))) == 2  # type: ignore[arg-type]  # a stand-in client
     assert len(await check_unavailable_model_registry(MlflowModelRegistry(_Down()))) == 2  # type: ignore[arg-type]  # a stand-in client
+
+
+async def test_an_unreachable_server_fails_within_mlflows_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # MLflow's defaults retry a refused connection for over four minutes per call; the module
+    # docstring names these settings, and this is the proof that they bound it.
+    monkeypatch.setenv("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "0")
+    monkeypatch.setenv("MLFLOW_HTTP_REQUEST_TIMEOUT", "3")
+    uri = f"http://127.0.0.1:{_free_port()}"  # nothing listens there
+    gone = MlflowClient(tracking_uri=uri, registry_uri=uri)
+    started = time.monotonic()
+    assert len(await check_unavailable_run_ledger(MlflowRunLedger(gone))) == 2
+    assert len(await check_unavailable_model_registry(MlflowModelRegistry(gone))) == 2
+    assert time.monotonic() - started < 60
 
 
 async def test_nothing_is_printed(
@@ -350,3 +363,27 @@ async def test_a_version_another_tool_wrote_reads_with_an_empty_model(client: Ml
     client.create_model_version("foreign", "s3://b/m", tags={"llm_ports.model": "not json"}, await_creation_for=0)
     got = (await MlflowModelRegistry(client).get("foreign", 1)).version
     assert got is not None and got.model == {} and got.artifact_uri == "s3://b/m"
+
+
+async def test_colliding_prefixes_never_cross_read(client: MlflowClient) -> None:
+    assert (await MlflowRunLedger(client, prefix="pa").append("bcx", subject="", params={}, metrics={})).ok
+    assert (await MlflowRunLedger(client, prefix="pab").latest("cx")).row is None  # one experiment, two kinds
+
+
+async def test_a_subject_mlflow_would_cut_is_refused(ledger: MlflowRunLedger) -> None:
+    wrote = await ledger.append("long", subject="s" * 8001, params={}, metrics={})
+    assert wrote.outcome == "request_fault" and "subject" in str(wrote.reason)
+
+
+async def test_a_runs_uri_registers_with_its_run(client: MlflowClient) -> None:
+    exp = client.create_experiment("t/runs-uri")
+    run_id = client.create_run(exp).info.run_id
+    wrote = await MlflowModelRegistry(client).register("from-run", model={}, artifact_uri=f"runs:/{run_id}/model")
+    assert wrote.ok
+    assert client.get_model_version("from-run", str(wrote.ref)).run_id == run_id
+
+
+async def test_a_version_registered_reads_ok_when_its_backing_run_cannot_end(client: MlflowClient) -> None:
+    stuck = _Over(client, update_run=_raise(INVALID_PARAMETER_VALUE))
+    wrote = await MlflowModelRegistry(stuck, registry_experiment="t/stuck").register("stuck", model={})  # type: ignore[arg-type]  # a stand-in client
+    assert wrote.ok and wrote.ref == "1"  # the version exists; reporting a failure would invite a duplicate
