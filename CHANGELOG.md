@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-08
+
+### Added
+
+- `forecast.score`: `mce(curve)`, the largest bin gap of a reliability curve, and
+  `decompose(curve)`, Murphy's decomposition of the Brier score into `reliability`,
+  `resolution` and `uncertainty` (a `Decomposition`, exported from `llm_ports.forecast`). It is
+  exact on a curve over cells that each forecast one rate. Consumers that hand-rolled the
+  decomposition beside `reliability()` and `ece()` can now take all three from the core.
+
 ## [1.17.0] - 2026-11-08
 
 ### Added

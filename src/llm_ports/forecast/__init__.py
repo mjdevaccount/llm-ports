@@ -36,7 +36,7 @@ from llm_ports.forecast.calibrate import Calibrator, Insufficient, PiecewiseLine
 from llm_ports.forecast.combine import BestVoice, Combiner, LogitPool, PriorPool
 from llm_ports.forecast.hedge import HedgeMap, HedgeRow
 from llm_ports.forecast.platt import Platt, PlattCalibrator
-from llm_ports.forecast.score import Bin, Score
+from llm_ports.forecast.score import Bin, Decomposition, Score
 from llm_ports.forecast.walk import Event, walk_forward
 
 __all__ = [
@@ -44,6 +44,7 @@ __all__ = [
     "Bin",
     "Calibrator",
     "Combiner",
+    "Decomposition",
     "Event",
     "Forecast",
     "HedgeMap",

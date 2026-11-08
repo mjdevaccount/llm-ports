@@ -10,7 +10,7 @@ The loop has four steps:
 | step | what | where |
 |---|---|---|
 | record | `Forecast`: author, subject, kind, stated `probability` and/or `hedge`, verbatim `text` | core |
-| score | `score(obs, fct)`: Brier score, log score, skill over the base rate; `reliability()` and `ece()` | core |
+| score | `score(obs, fct)`: Brier score, log score, skill over the base rate; `reliability()`, `ece()`, `mce()` and `decompose()` (Murphy: reliability, resolution, uncertainty) | core |
 | calibrate | `Calibrator`: `fit(X, y)`, then `predict_proba(X)`; a refused fit records `Insufficient` | core port; fitters in `adapters.sklearn` (isotonic) and `adapters.venn_abers` (small n) |
 | combine | `Combiner`: `predict_proba_one(x)`, `learn_one(x, y)`; `LogitPool` is the fixed baseline | core; `adapters.river.RiverLogitPool` learns online |
 
