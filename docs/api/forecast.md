@@ -8,6 +8,12 @@
     options:
       show_root_heading: false
 
+## `llm_ports.forecast.skill`
+
+::: llm_ports.forecast.skill
+    options:
+      show_root_heading: false
+
 ## `llm_ports.forecast.calibrate`
 
 ::: llm_ports.forecast.calibrate

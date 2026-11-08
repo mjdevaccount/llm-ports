@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-08
+
+### Added
+
+- `forecast.skill`: `brier_skill(obs, fct, ref, clusters=None)`, a voice's Brier skill over a
+  per-event REFERENCE forecast (a symbol's base rate, a prior) on the pairs both scored, with a
+  seeded cluster-bootstrap interval (events sharing a day's tape resample together). `Score`'s
+  `brier_skill_score` stays skill over climatology. Returns a `Skill` (exported from
+  `llm_ports.forecast`). Standard library only, like the rest of `forecast`.
+
 ### Fixed
 
 - `release.yml`: the PyPI upload uses `skip-existing`, and a follow-up step fails the job unless
