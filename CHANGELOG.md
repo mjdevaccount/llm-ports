@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-11-08
+
+### Added
+
+- `adapters.optuna.SqlJournal` and `journal_storage(engine, table, create=)`: an Optuna journal
+  backend on one SQL table `(n bigint primary key, log text)` the caller owns, schema-qualified in
+  every statement. Appends are gapless across processes (the primary key fails a racing append,
+  which retries from the new end). For PostgreSQL behind a transaction-mode pooler, where Optuna's
+  RDB storage cannot be pinned to a schema (its tables follow the session search path and its
+  Alembic check reads the default schema).
+
 ## [1.13.0] - 2026-11-08
 
 ### Added

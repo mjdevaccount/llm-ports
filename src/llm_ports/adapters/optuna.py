@@ -11,6 +11,14 @@ live, and scored on the holdout only: `Tuned.holdout` is out of sample.
 The study goes to Optuna's `storage` (an RDB URL, an Optuna storage object, or None for memory)
 under `study_name`; a reused name adds trials to that study. The TPE sampler is seeded.
 
+`SqlJournal(engine, table)` is an Optuna journal backend on one SQL table the caller owns
+(`journal_storage(...)` wraps it in Optuna's `JournalStorage`). Optuna's own RDB storage creates
+its tables wherever the connection's search path points and checks its schema through Alembic,
+which reads the default schema; behind a transaction-mode pooler (PgBouncer) a session-level
+search path does not hold, so the RDB storage cannot be pinned to one schema there. A journal is
+one append-only table: the caller creates it (a migration; `create=True` for tests and SQLite),
+names it schema-qualified, and every statement carries the name.
+
 Invariants:
     - Never raises: too few events is `Insufficient`; a storage or Optuna failure is
       `Unavailable`; a trial whose build or replay raises is pruned as failed, not fatal.
@@ -21,8 +29,10 @@ Rationale: ADR-0015.
 
 from __future__ import annotations
 
+import json
 import math
-from collections.abc import Callable, Mapping, Sequence
+import re
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -35,6 +45,9 @@ from llm_ports.forecast.walk import Event, holdout_start, walk_forward
 
 with extra("optuna"):
     import optuna
+    import sqlalchemy as sa
+    from optuna.storages import JournalStorage
+    from optuna.storages.journal import BaseJournalBackend
 
 #: Resolved train events below which `tune` refuses to search.
 MIN_TRAIN = 100
@@ -184,4 +197,80 @@ def tune(
     )
 
 
-__all__ = ["ABSTAIN_P", "MIN_TRAIN", "Range", "Tuned", "Unavailable", "objective_brier", "tune"]
+#: A journal table name: `table` or `schema.table`, identifiers only.
+_TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+#: Appends retried when another process took the same log numbers first.
+APPEND_RETRIES = 8
+
+
+class SqlJournal(BaseJournalBackend):
+    """An Optuna journal backend on one SQL table `(n bigint primary key, log text)`.
+
+    Log `n` is the journal's 0-based log number. An append reads the next number and inserts the
+    whole batch in one transaction; the primary key makes a concurrent append that read the same
+    number fail, and it retries (`APPEND_RETRIES`) from the new end, so the journal stays gapless
+    and in order across processes. Any SQLAlchemy dialect (PostgreSQL behind a pooler, SQLite).
+
+    Args:
+        engine: A synchronous SQLAlchemy engine.
+        table: The table, `name` or `schema.name`.
+        create: Create the table if it is missing (tests, SQLite); a production table comes from
+            the caller's migration.
+
+    Raises:
+        ValueError: `table` is not one or two plain identifiers.
+    """
+
+    def __init__(self, engine: sa.engine.Engine, table: str, *, create: bool = False) -> None:
+        if not _TABLE.match(table):
+            raise ValueError(f"not a table name: {table!r}")
+        self._engine = engine
+        self._table = table
+        if create:
+            with engine.begin() as c:
+                c.execute(sa.text(f"CREATE TABLE IF NOT EXISTS {table} (n bigint PRIMARY KEY, log text NOT NULL)"))
+
+    def read_logs(self, log_number_from: int) -> Iterable[dict[str, Any]]:
+        """Every log numbered `log_number_from` or later, in order."""
+        with self._engine.connect() as c:
+            rows = c.execute(
+                sa.text(f"SELECT log FROM {self._table} WHERE n >= :n ORDER BY n"), {"n": int(log_number_from)}
+            ).all()
+        return [json.loads(r[0]) for r in rows]
+
+    def append_logs(self, logs: list[dict[str, Any]]) -> None:
+        """Append `logs` after the current end, atomically."""
+        if not logs:
+            return
+        body = [json.dumps(log, separators=(",", ":")) for log in logs]
+        for attempt in range(APPEND_RETRIES):
+            try:
+                with self._engine.begin() as c:
+                    start = int(c.execute(sa.text(f"SELECT coalesce(max(n) + 1, 0) FROM {self._table}")).scalar_one())
+                    c.execute(
+                        sa.text(f"INSERT INTO {self._table} (n, log) VALUES (:n, :log)"),
+                        [{"n": start + i, "log": b} for i, b in enumerate(body)],
+                    )
+                return
+            except sa.exc.IntegrityError:
+                if attempt == APPEND_RETRIES - 1:
+                    raise
+
+
+def journal_storage(engine: sa.engine.Engine, table: str, *, create: bool = False) -> Any:
+    """Optuna's `JournalStorage` over a `SqlJournal`; pass it to `tune(storage=...)`."""
+    return JournalStorage(SqlJournal(engine, table, create=create))
+
+
+__all__ = [
+    "ABSTAIN_P",
+    "APPEND_RETRIES",
+    "MIN_TRAIN",
+    "Range",
+    "SqlJournal",
+    "Tuned",
+    "Unavailable",
+    "journal_storage",
+    "objective_brier",
+    "tune",
+]
