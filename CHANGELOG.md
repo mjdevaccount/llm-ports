@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-11-08
+
+### Added
+
+- `forecast.platt`: `PlattCalibrator`, a `Calibrator` that fits `sigmoid(a * logit(p) + b)` by
+  ridge-stabilised Newton steps with the standard library, and `Platt`, the fitted map (applied
+  and stored as JSON without a fitting library). A fitted slope `a <= 0` inverts the voice's
+  ranking, so the fit is refused (`insufficient_.reason` starts `inverted slope`) and the
+  values are kept in `fitted_`.
+
 ## [1.16.0] - 2026-11-08
 
 ### Added

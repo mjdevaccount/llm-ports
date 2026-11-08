@@ -12,6 +12,8 @@ This package holds the parts that do not depend on who the voices are:
 - `score`: proper scores (Brier, log score, skill), the reliability curve and its error.
 - `calibrate`: the `Calibrator` port and `PiecewiseLinear`, a fitted map applied without a
   fitting library (fitters: `adapters.sklearn`, `adapters.venn_abers`).
+- `platt`: `PlattCalibrator`, a two-parameter logistic map fitted and applied with the
+  standard library; it refuses a slope that inverts the voice's ranking.
 - `hedge`: `HedgeMap`, the probability each source's verbal confidence has earned.
 - `combine`: the `Combiner` port, `LogitPool` (the fixed baseline), `PriorPool` (shrink toward
   and fall back to a prior voice, extremize), `BestVoice` (the best-single-voice baseline) and
@@ -27,12 +29,13 @@ Invariants:
 Rationale: ADR-0013.
 """
 
-from llm_ports.forecast import calibrate, combine, hedge, score, walk
+from llm_ports.forecast import calibrate, combine, hedge, platt, score, walk
 from llm_ports.forecast._estimator import Params
 from llm_ports.forecast._types import Forecast, Resolution, Resolved, finite_real, valid_p
 from llm_ports.forecast.calibrate import Calibrator, Insufficient, PiecewiseLinear
 from llm_ports.forecast.combine import BestVoice, Combiner, LogitPool, PriorPool
 from llm_ports.forecast.hedge import HedgeMap, HedgeRow
+from llm_ports.forecast.platt import Platt, PlattCalibrator
 from llm_ports.forecast.score import Bin, Score
 from llm_ports.forecast.walk import Event, walk_forward
 
@@ -49,6 +52,8 @@ __all__ = [
     "LogitPool",
     "Params",
     "PiecewiseLinear",
+    "Platt",
+    "PlattCalibrator",
     "PriorPool",
     "Resolution",
     "Resolved",
@@ -57,6 +62,7 @@ __all__ = [
     "combine",
     "finite_real",
     "hedge",
+    "platt",
     "score",
     "valid_p",
     "walk",
