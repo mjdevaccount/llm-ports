@@ -62,6 +62,27 @@ class TestFire:
         )
         assert outs["g-1"]["prompt"] == "Candidate for a clerk."
 
+    async def test_an_item_with_user_fires_the_pack_as_system_and_user_as_prompt(self) -> None:
+        gen = StubGenerator(REPLY)
+        item = {"id": "u-1", "stratum": "none", "user": "the post body", "known": []}
+        outs = await golden.fire(
+            [item],
+            role=ROLE,
+            pack=PACK,
+            source="Fixed instructions.",
+            output=_output,
+            generator_for=lambda: (gen, []),
+        )
+        o = outs["u-1"]
+        assert (o["prompt"], o["system"], o["value"]) == ("the post body", "Fixed instructions.", REPLY)
+        assert [(r.prompt, r.system) for r in gen.requests] == [("the post body", "Fixed instructions.")]
+        assert outs["u-1"]["verdict"] == "ok"
+
+    async def test_a_slotted_item_sends_no_system(self) -> None:
+        gen = StubGenerator(REPLY)
+        outs = await _fire(gen)
+        assert {o["system"] for o in outs.values()} == {""} and {r.system for r in gen.requests} == {""}
+
     async def test_a_failed_call_is_an_error_verdict_never_a_raise(self) -> None:
         def down(req: GenRequest, _out: type[Any]) -> Any:
             return Generated(value=None, outcome="unavailable", model=req.model, reason="wire down")

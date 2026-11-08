@@ -1,11 +1,15 @@
 """Golden-set evaluation of a prompt pack: fire each item through the call path, grade on one board.
 
-A golden item is a mapping with an `id` and the pack's template context under `slots`. Every other
-key of the item (a stratum, the keys a reply may cite) rides onto the graded row, where a grader
-can read it. The flow:
+A golden item is a mapping with an `id` and the pack's template context under `slots` (omitted
+for a pack with no slots). An item that also carries `user` fires as a system and user pair: the
+rendered pack is the system prompt and `user` is the prompt, the shape of a producer whose fixed
+instructions ride as the system so a prefix cache holds them. Every other key of the item (a
+stratum, the keys a reply may cite) rides onto the graded row, where a grader can read it. The
+flow:
 
-    fire:   prompt = pack.render_source(source, **item["slots"])
-            result = generate(role, prompt=prompt, output=output(item), generator=generator)
+    fire:   rendered = pack.render_source(source, **item.get("slots", {}))
+            result   = generate(role, prompt=rendered, output=output(item), generator=generator)
+                       or, with `user`: generate(role, prompt=user, system=rendered, ...)
     grade:  the role's call graders (`call.graders.board_graders`) plus any extra row graders,
             through one `Evaluator`, over `{**item, prompt, value, outcome, reason, retries}` rows
 
@@ -60,13 +64,18 @@ async def fire_one(
     """Fire one golden item and return its result.
 
     Returns:
-        `{id, verdict, outcome, reason, retries, prompt, value, attempts, scores}`: `verdict` is
-        `ok`, `gated` or `error`; `scores` holds each call grader's score as a dict.
+        `{id, verdict, outcome, reason, retries, prompt, system, value, attempts, scores}`:
+        `verdict` is `ok`, `gated` or `error`; `prompt` and `system` are what the model was sent
+        (`system` empty unless the item carries `user`); `scores` holds each call grader's score
+        as a dict.
     """
-    prompt = pack.render_source(source, **item["slots"])
+    rendered = pack.render_source(source, **(item.get("slots") or {}))
+    user = item.get("user")
+    prompt, system = (rendered, "") if user is None else (str(user), rendered)
     gen, attempts = generator_for()
+    sys_kw = {"system": system} if system else {}  # a facade with no `system` keyword still fits
     async with gate:
-        res = await generate(role, prompt=prompt, output=output(item), generator=gen)
+        res = await generate(role, prompt=prompt, output=output(item), generator=gen, **sys_kw)
     verdict = res.outcome if res.outcome in ("ok", "gated") else "error"
     (on_event or log_events("llm_ports.evals.golden"))(
         logging.INFO, "golden_item", {"pack": pack.id, "id": item["id"], "outcome": res.outcome, "retries": res.retries}
@@ -77,6 +86,7 @@ async def fire_one(
         "attempts": attempts,
         "value": res.value,
         "prompt": prompt,
+        "system": system,
         "reason": res.reason,
         "outcome": res.outcome,
         "retries": res.retries,
