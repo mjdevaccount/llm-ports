@@ -46,6 +46,8 @@ against the version, builds, runs `twine check --strict`, then, independently of
 uploads to PyPI (trusted publishing through the `pypi` environment, with PEP 740 attestations) and
 attaches the wheel and sdist to a GitHub release. The release assets never wait on the upload:
 consumers that pin the wheel URL get it whatever PyPI did. A published file is never replaced.
+If the publish job goes red with a file missing from PyPI, rerun that job: the upload skips files
+already there, and the job stays red until PyPI lists every built file.
 
 To dry-run the pipeline, run `release.yml` from `main` by hand (`gh workflow run release.yml`). It
 uploads a dev release, `X.Y.Z.devN` with N the run number, which installers take only when asked
