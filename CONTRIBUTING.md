@@ -41,7 +41,11 @@ rejects deployment vocabulary in `src/llm_ports/`.
 ## Releasing
 
 Bump `version` in `pyproject.toml`, move `Unreleased` in `CHANGELOG.md` under the new version, and
-merge. Then push a `vX.Y.Z` tag on `main`. `release.yml` runs the whole of `ci.yml`, checks the tag
+merge. Nothing else: `tag-version.yml` (ci-kit's `ci-version-tag`) tags `vX.Y.Z` at the bump commit
+and starts `release.yml` on the tag, and its daily run re-starts a release that never ran and goes
+red when one ran and left the GitHub release or the PyPI files missing. `release.yml` decides by
+the ref, not the event, so a pushed tag and a dispatched one release alike; a tag older than the
+newest release leaves the docs site alone. `release.yml` runs the whole of `ci.yml`, checks the tag
 against the version, builds, runs `twine check --strict`, then, independently of each other,
 uploads to PyPI (trusted publishing through the `pypi` environment, with PEP 740 attestations) and
 attaches the wheel and sdist to a GitHub release. The release assets never wait on the upload:

@@ -84,7 +84,9 @@ core and no vendor module.
 
 - Branch + PR, never push `main`. Conventional Commits. `main` is the 1.0 line; `release/0.x`
   takes fixes for 0.x consumers only.
-- Release = bump `version`, move `Unreleased` in `CHANGELOG.md`, merge, tag `vX.Y.Z` on `main`.
+- Release = bump `version`, move `Unreleased` in `CHANGELOG.md`, merge. `tag-version.yml` tags
+  `vX.Y.Z` at the bump commit and dispatches `release.yml`; never push a main tag by hand
+  (a `release/0.x` fix is still tagged by hand).
   `release.yml` publishes to PyPI (trusted publishing), a GitHub release and the docs site
   (GitHub Pages, from `ci`'s strict build). A published version
   is never replaced; a fix is a new version.

@@ -1,0 +1,40 @@
+# Tag every version bump merged to main, and release every tag.
+#
+# Releasing is a PR that moves `version` in pyproject.toml. When it merges, ci-kit's
+# `ci-version-tag` tags `vX.Y.Z` at that commit and dispatches release.yml on the tag (a tag made
+# with the job token fires no push run; release.yml reads `github.ref_type`, so a dispatched tag
+# run IS the release). The daily run is the outside witness: it re-dispatches a tag whose release
+# never ran, and goes red when a release ran and its GitHub release or PyPI files are still missing.
+# mcp/scripts/ci-schedule-audit.py watches that the daily run keeps happening.
+#
+# `since: 1.0.0`: 0.x predates PyPI, so its versions have GitHub releases and no index files.
+name: tag-version
+
+on:
+  push:
+    branches: [main]
+    paths: [pyproject.toml]
+  schedule:
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: print the plan, tag and dispatch nothing
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  tag:
+    name: tag
+    permissions:
+      contents: write # create the tag ref
+      actions: write # dispatch release.yml on it
+    uses: mjdevaccount/ci-kit/.github/workflows/version-tag.yml@v1
+    with:
+      release-workflow: release.yml
+      github-release: true
+      pypi: llm-ports
+      since: "1.0.0"
+      dry-run: ${{ inputs.dry_run || false }}
