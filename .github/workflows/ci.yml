@@ -184,8 +184,9 @@ jobs:
         run: uv run --no-sync mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
-      # Only a release tag publishes; release.yml's `pages` job deploys this artifact.
-      - if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      # Only a release tag publishes; release.yml's `pages` job deploys this artifact. The ref, not
+      # the event: a release dispatched on a tag (tag-version.yml) calls this with workflow_dispatch.
+      - if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/

@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Releasing is the version-bump PR alone: `tag-version.yml` (ci-kit's `ci-version-tag`) tags
+  `vX.Y.Z` at the bump commit when it merges and dispatches `release.yml` on the tag; a daily run
+  re-dispatches a tag whose release never ran and fails when a release left its GitHub release or
+  PyPI files missing. `release.yml` and `ci.yml` read `github.ref_type` instead of the event, so a
+  dispatched tag run is a release, not a dev upload, and the docs site deploys only from the newest
+  release tag.
+
 ## [1.20.0] - 2026-11-09
 
 ### Added

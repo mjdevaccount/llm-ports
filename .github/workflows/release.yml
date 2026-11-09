@@ -1,9 +1,14 @@
-# Publishing. Two triggers, one pipeline, one index:
+# Publishing. What a run does is decided by its REF, never its event:
 #
-#   push of a `v*` tag   ci (the whole gate, reused) -> build X.Y.Z -> PyPI
+#   a `v*` tag ref       ci (the whole gate, reused) -> build X.Y.Z -> PyPI
 #                                                              -> GitHub release with dist/* attached
-#                        ci's docs site (built strict)          -> GitHub Pages
-#   workflow_dispatch    ci -> build a PEP 440 dev release -> PyPI
+#                        ci's docs site (built strict)          -> GitHub Pages (newest tag only)
+#   a branch ref         ci -> build a PEP 440 dev release -> PyPI   (workflow_dispatch from main)
+#
+# A tag run arrives two ways: a pushed tag (`push`), or `tag-version.yml`, which tags each version
+# bump merged to main and starts this workflow with `workflow_dispatch` on the tag -- a tag created
+# with the job token fires no `push` run. So every condition reads `github.ref_type`; a check of
+# `github.event_name == 'push'` would turn a dispatched release into a dev upload.
 #
 # The dispatch build is `X.Y.Z.devN` (N = this workflow's run number): pyproject's version when it is
 # already a dev version, else the next patch (0.12.0 -> 0.12.1.devN). Installers skip pre-releases
@@ -52,12 +57,12 @@ jobs:
         with:
           enable-cache: false # a release builds from a clean resolve, never a shared cache
       - name: tag matches pyproject version
-        if: github.event_name == 'push'
+        if: github.ref_type == 'tag'
         run: |
           v=$(uv version --short)
           [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME != pyproject v$v"; exit 1; }
       - name: dev version
-        if: github.event_name == 'workflow_dispatch'
+        if: github.ref_type != 'tag'
         run: |
           case "$(uv version --short)" in
             *.dev*) uv version --frozen --bump "dev=$GITHUB_RUN_NUMBER" ;;
@@ -115,7 +120,7 @@ jobs:
 
   github-release:
     name: GitHub release
-    if: github.event_name == 'push'
+    if: github.ref_type == 'tag'
     needs: build # never on `pypi`: the wheel URL consumers pin must exist whatever the index did
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -139,7 +144,7 @@ jobs:
 
   pages:
     name: docs site (GitHub Pages)
-    if: github.event_name == 'push'
+    if: github.ref_type == 'tag'
     needs: ci # ci's `docs` job built the site strict and uploaded it on this tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -147,8 +152,28 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     permissions:
+      contents: read # list the release tags
       pages: write
       id-token: write # deploy-pages proves the run to Pages over OIDC
     steps:
+      # The site documents the NEWEST release. A tag released late (a backfill, a healed release)
+      # must not roll it back to its older docs.
+      - name: this tag is the newest release
+        id: newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          top=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref' \
+            | sed 's#^refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          [ -n "$top" ] || { echo "::error::no release tag found"; exit 1; }
+          newest=$(printf '%s\n%s\n' "$top" "$GITHUB_REF_NAME" | sort -V | tail -1)
+          if [ "$newest" = "$GITHUB_REF_NAME" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$GITHUB_REF_NAME is older than $top: the site stays on $top"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
       - id: deploy
+        if: steps.newest.outputs.deploy == 'true'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
