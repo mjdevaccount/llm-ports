@@ -135,3 +135,59 @@ def test_some_failed_reflections_are_counted() -> None:
 def test_a_message_list_prompt_is_flattened() -> None:
     assert g._as_text([{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]) == "a\n\nb"
     assert g._as_text("plain") == "plain"
+
+
+def test_a_dead_reflector_stops_the_search_without_the_budget() -> None:
+    """GEPA swallows each failed reflection; an unspendable budget must not keep it calling."""
+    calls = {"n": 0}
+
+    def out_of_quota(prompt: str) -> str:
+        calls["n"] += 1
+        raise RuntimeError("429 free tier requests, limit: 20")
+
+    got = g.optimize(
+        SEED,
+        ITEMS[:8],
+        ITEMS[8:],
+        evaluate=evaluate,
+        reflect=out_of_quota,
+        max_metric_calls=10**9,
+        max_reflection_failures=3,
+    )
+    assert isinstance(got, g.Unavailable)
+    # GEPA retries a failed batched reflection once per task, so an iteration can make 2 calls.
+    assert 3 <= calls["n"] <= 4
+    assert got.reason.startswith(f"{calls['n']} reflections failed in a row")
+    assert "429 free tier" in got.reason
+
+
+def test_a_success_resets_the_failure_run() -> None:
+    calls = {"n": 0}
+
+    def every_other(prompt: str) -> str:
+        calls["n"] += 1
+        if calls["n"] % 2:
+            raise TimeoutError("slow")
+        return "```\nJust answer.\n```"
+
+    got = g.optimize(
+        SEED,
+        ITEMS[:8],
+        ITEMS[8:],
+        evaluate=evaluate,
+        reflect=every_other,
+        max_metric_calls=60,
+        max_reflection_failures=2,
+    )
+    assert isinstance(got, g.Optimized)
+    assert got.reflection_failures >= 2
+    assert got.stopped == "budget"
+
+
+def test_a_wall_clock_bound_stops_the_search_and_says_so() -> None:
+    got = g.optimize(
+        SEED, ITEMS[:8], ITEMS[8:], evaluate=evaluate, reflect=reflect, max_metric_calls=10**9, timeout_s=0.0
+    )
+    assert isinstance(got, g.Optimized)
+    assert got.stopped == "timeout"
+    assert got.metric_calls < 10**9

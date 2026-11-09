@@ -17,14 +17,18 @@ out from anything the caller tuned by hand.
 
 Invariants:
     - Never raises: too few items is `Insufficient`; an `evaluate` that raises, a rollout count
-      that does not match its batch, a GEPA engine error, or a `reflect` that failed on every
-      call is `Unavailable`.
+      that does not match its batch, a GEPA engine error, a `reflect` that failed on every
+      call, or one that failed `max_reflection_failures` times in a row is `Unavailable`.
     - A reflection failure never passes silently: GEPA itself logs a failed reflection and moves
       on, so `optimize` counts every `reflect` call and failure and reports both on `Optimized`.
     - GEPA's own log lines are kept (`Optimized.log_tail`, `Unavailable.log_tail`), never printed.
     - A non-finite score is scored 0.0 and its feedback says so; a score outside [0, 1] is clamped.
     - The seed candidate is never mutated; `Optimized.candidate` is a fresh dict.
     - `max_metric_calls` bounds the item evaluations GEPA spends (its own budget accounting).
+    - The search always ends without the budget: GEPA swallows a failed reflection and an
+      evaluator that caches spends no budget, so a dead reflection model would otherwise spin.
+      `max_reflection_failures` consecutive failures stop it as `Unavailable`; `timeout_s`, when
+      set, stops it on wall-clock time and `Optimized.stopped` says so.
 
 Rationale: ADR-0017.
 """
@@ -43,6 +47,7 @@ with extra("gepa"):
     from gepa.api import optimize as gepa_optimize
     from gepa.core.adapter import EvaluationBatch, ProposalFn
     from gepa.core.result import GEPAResult
+    from gepa.utils.stop_condition import StopperProtocol, TimeoutStopCondition
 
 #: Train items below which `optimize` refuses to search.
 MIN_TRAIN = 8
@@ -50,6 +55,8 @@ MIN_TRAIN = 8
 MIN_VAL = 4
 #: Item evaluations GEPA may spend when the caller sets no budget.
 DEFAULT_METRIC_CALLS = 200
+#: Consecutive failed reflections after which `optimize` stops the search.
+MAX_REFLECTION_FAILURES = 5
 
 
 @dataclass(frozen=True)
@@ -83,6 +90,7 @@ class Optimized:
         reflections: `reflect` calls made.
         reflection_failures: `reflect` calls that raised (GEPA skipped those steps).
         log_tail: GEPA's last log lines.
+        stopped: Why the search ended: `"budget"` (`max_metric_calls` spent) or `"timeout"`.
     """
 
     candidate: dict[str, str]
@@ -96,6 +104,7 @@ class Optimized:
     reflections: int
     reflection_failures: int
     log_tail: tuple[str, ...] = ()
+    stopped: str = "budget"
 
 
 @dataclass(frozen=True)
@@ -133,16 +142,52 @@ class _Reflect:
         self._reflect = reflect
         self.calls = 0
         self.failures = 0
+        self.consecutive = 0
         self.last_error = ""
 
     def __call__(self, prompt: str | list[dict[str, Any]]) -> str:
         self.calls += 1
         try:
-            return self._reflect(_as_text(prompt))
+            text = self._reflect(_as_text(prompt))
         except Exception as exc:
             self.failures += 1
+            self.consecutive += 1
             self.last_error = f"{type(exc).__name__}: {exc}"
             raise
+        self.consecutive = 0
+        return text
+
+
+class _DeadReflector:
+    """A GEPA stopper: True once `limit` reflections in a row have failed.
+
+    GEPA logs a failed reflection and starts the next iteration, so without this a reflection
+    model that is down (a spent daily quota) is called until the metric budget runs out, which
+    never happens when the caller's evaluator caches.
+    """
+
+    def __init__(self, reflector: _Reflect, limit: int) -> None:
+        self._reflector = reflector
+        self._limit = limit
+        self.fired = False
+
+    def __call__(self, gepa_state: Any) -> bool:
+        if self._reflector.consecutive >= self._limit:
+            self.fired = True
+        return self.fired
+
+
+class _Timeout:
+    """GEPA's wall-clock stopper, remembering that it fired."""
+
+    def __init__(self, seconds: float) -> None:
+        self._inner = TimeoutStopCondition(seconds)
+        self.fired = False
+
+    def __call__(self, gepa_state: Any) -> bool:
+        if self._inner(gepa_state):
+            self.fired = True
+        return self.fired
 
 
 def _clean(score: float) -> tuple[float, str]:
@@ -240,6 +285,8 @@ def optimize[I, O](
     run_dir: str | None = None,
     min_train: int = MIN_TRAIN,
     min_val: int = MIN_VAL,
+    max_reflection_failures: int = MAX_REFLECTION_FAILURES,
+    timeout_s: float | None = None,
 ) -> Optimized | Insufficient | Unavailable:
     """Evolve `seed`'s text components with GEPA and return the best by validation score.
 
@@ -257,10 +304,15 @@ def optimize[I, O](
         run_dir: A directory GEPA checkpoints to, so a stopped run resumes; None keeps no state.
         min_train: Train items below which nothing is searched.
         min_val: Validation items below which nothing is searched.
+        max_reflection_failures: Consecutive failed `reflect` calls that end the search as
+            `Unavailable` (a reflection model that is down or out of quota).
+        timeout_s: Wall-clock seconds after which the search stops and reports what it has
+            (`Optimized.stopped == "timeout"`); None sets no time bound.
 
     Returns:
         `Optimized`; `Insufficient` when `train` or `val` is under its floor or `seed` has no
-        component; `Unavailable` when the search failed. Never raises.
+        component; `Unavailable` when the search failed or the reflection model kept failing.
+        Never raises.
     """
     if not seed:
         return Insufficient(n=0, need=1, reason="seed has no component to tune")
@@ -269,6 +321,9 @@ def optimize[I, O](
     if len(val) < min_val:
         return Insufficient(n=len(val), need=min_val, reason=f"{len(val)} validation items < {min_val}")
     log, reflector = _Log(), _Reflect(reflect)
+    dead = _DeadReflector(reflector, max(1, max_reflection_failures))
+    timeout = _Timeout(timeout_s) if timeout_s is not None else None
+    stoppers: list[StopperProtocol] = [dead] if timeout is None else [dead, timeout]
     try:
         result: GEPAResult[O, Any] = gepa_optimize(
             seed_candidate=dict(seed),
@@ -280,6 +335,7 @@ def optimize[I, O](
             max_metric_calls=max_metric_calls,
             seed=seed_value,
             run_dir=run_dir,
+            stop_callbacks=stoppers,
             raise_on_exception=True,
             display_progress_bar=False,
             logger=log,
@@ -288,6 +344,11 @@ def optimize[I, O](
         best = max(range(len(scores)), key=scores.__getitem__)
     except Exception as exc:  # evaluator, reflection or engine failure: a named outcome
         return Unavailable(reason=f"{type(exc).__name__}: {exc}", log_tail=tuple(log.lines))
+    if dead.fired:
+        return Unavailable(
+            reason=f"{reflector.consecutive} reflections failed in a row: {reflector.last_error}",
+            log_tail=tuple(log.lines),
+        )
     if reflector.calls and reflector.failures == reflector.calls:
         return Unavailable(
             reason=f"every reflection failed ({reflector.failures}): {reflector.last_error}",
@@ -305,12 +366,14 @@ def optimize[I, O](
         reflections=reflector.calls,
         reflection_failures=reflector.failures,
         log_tail=tuple(log.lines),
+        stopped="timeout" if timeout is not None and timeout.fired else "budget",
     )
 
 
 __all__ = [
     "DEFAULT_METRIC_CALLS",
     "LOG_TAIL",
+    "MAX_REFLECTION_FAILURES",
     "MIN_TRAIN",
     "MIN_VAL",
     "Optimized",
