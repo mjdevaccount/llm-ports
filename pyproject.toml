@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "1.19.0"
+version = "1.20.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -67,13 +67,19 @@ venn-abers = ["venn-abers>=1.5.4", "scikit-learn>=1.9"]
 river = ["river>=0.26"]
 optuna = ["optuna>=4.0"]
 forecast = ["llm-ports[scoringrules,sklearn,venn-abers,river,optuna]"]
+# `adapters.optuna.serve_dashboard` / `dashboard_app` (the on-demand study UI over any Optuna
+# storage, a `SqlJournal` included). Pulls bottle; not in `forecast` or `all`.
+optuna-dashboard = ["optuna-dashboard>=0.17", "optuna>=4.0"]
+# `adapters.gepa` (GEPA reflective prompt evolution over a caller's evaluator). The core package
+# has no required dependencies; its LiteLLM path is never used (the caller passes the models).
+gepa = ["gepa>=0.1.4"]
 # `adapters.mlflow` (the RunLedger and ModelRegistry on MLflow tracking + model registry). The
 # skinny client is enough against a tracking server; SQLAlchemy and Alembic let it open a local
 # `sqlite:///` store with no server (MLflow 3 refuses its old file store by default). Not in `all`.
 mlflow = ["mlflow-skinny>=3.18,<4", "sqlalchemy>=2.0", "alembic>=1.13"]
 # Every extra but `lettucedetect` (its model weighs hundreds of MB) and the `forecast` four (the
 # numpy/scipy/pandas stack, which a caller that only calls models never needs).
-all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql]"]
+all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql,gepa]"]
 
 [build-system]
 requires = ["hatchling"]
@@ -108,6 +114,8 @@ dev = [
     "venn-abers>=1.5.4",
     "river>=0.26",
     "optuna>=4.0",
+    "optuna-dashboard>=0.17",
+    "gepa>=0.1.4",
     "mlflow-skinny>=3.18,<4",
     "sqlalchemy>=2.0",
     "alembic>=1.13",
@@ -211,6 +219,7 @@ id = "adapter-independence"
 name = "adapters do not import each other"
 type = "independence"
 modules = [
+    "llm_ports.adapters.gepa",
     "llm_ports.adapters.http",
     "llm_ports.adapters.langfuse",
     "llm_ports.adapters.lettucedetect",
@@ -243,6 +252,7 @@ source_modules = [
     "llm_ports.rag",
 ]
 forbidden_modules = [
+    "gepa",
     "httpx",
     "httpx2",
     "langfuse",
@@ -251,6 +261,7 @@ forbidden_modules = [
     "numpy",
     "opentelemetry",
     "optuna",
+    "optuna_dashboard",
     "pandas",
     "pydantic_ai",
     "pydantic_evals",
@@ -283,7 +294,7 @@ strict = true
 python_version = "3.12"
 
 [[tool.mypy.overrides]]
-module = ["lettucedetect.*", "scoringrules.*", "sklearn.*", "venn_abers.*"]
+module = ["lettucedetect.*", "optuna_dashboard.*", "scoringrules.*", "sklearn.*", "venn_abers.*"]
 ignore_missing_imports = true
 
 # Dead code: `vulture` runs in the `lint` job over the package and its tests (tests count as use).
@@ -294,7 +305,7 @@ paths = ["src", "tests"]
 min_confidence = 60
 ignore_decorators = ["@field_validator", "@model_validator", "@*.output_validator"]
 ignore_names = [
-    "date_from", "date_to", "question", "extras", "model_config", "output_schema", "langfuse_label", "create_score",
+    "propose_new_texts", "date_from", "date_to", "question", "extras", "model_config", "output_schema", "langfuse_label", "create_score",
     # fields of test models that exist to shape a schema
     "confidence", "conviction", "entry_low", "hedge", "stop", "summary", "thesis", "ticker", "tickers",
 ]

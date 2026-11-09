@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-11-09
+
+### Added
+
+- `adapters.gepa` (extra `[gepa]`, in `all`): `optimize(seed, train, val, evaluate=, reflect=)`
+  runs GEPA reflective prompt evolution over a caller's batch evaluator (`Rollout(output, score,
+  feedback)` per item) and reflection callable, and returns `Optimized | Insufficient |
+  Unavailable`. `Optimized.improved` compares the best candidate to the seed on the validation
+  items. GEPA swallows a failed reflection, so `optimize` counts them: every call failing is
+  `Unavailable`, some failing is `Optimized.reflection_failures`. GEPA's log lines are kept on the
+  outcome, never printed. `RolloutAdapter` is the `GEPAAdapter` underneath.
+- `adapters.optuna.dashboard_app(storage)` / `serve_dashboard(storage, host=, port=)` (extra
+  `[optuna-dashboard]`): optuna-dashboard over any Optuna storage, a `SqlJournal` table included,
+  on demand and bound to loopback by default.
+
 ## [1.19.0] - 2026-11-08
 
 ### Added
