@@ -14,6 +14,12 @@
     options:
       show_root_heading: false
 
+## `llm_ports.adapters.gepa`
+
+::: llm_ports.adapters.gepa
+    options:
+      show_root_heading: false
+
 ## `llm_ports.adapters.http`
 
 ::: llm_ports.adapters.http

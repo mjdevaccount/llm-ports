@@ -26,3 +26,4 @@ named in its record.
 | [0014](0014-a-persons-label-relayed-by-code.md) | A person's label can be relayed by code (`put` with `by`), on the same score config, completing its queue item |
 | [0015](0015-a-combiner-is-judged-walk-forward.md) | A combiner is replayed walk-forward, shrunk toward a prior, and tuned only on the past (`forecast.walk`, `PriorPool`, `adapters.optuna`) |
 | [0016](0016-seams-to-bigger-ml-engines.md) | Seams to bigger ML engines: run ids, artifact URIs, a `ModelRegistry` port, conformance suites, and MLflow as the first engine adapter |
+| [0017](0017-prompt-tuning-on-gepa-core.md) | Prompt tuning runs on the `gepa` core behind a caller's evaluator; the study UI is launched on demand |

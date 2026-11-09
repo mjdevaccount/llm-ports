@@ -19,6 +19,10 @@ search path does not hold, so the RDB storage cannot be pinned to one schema the
 one append-only table: the caller creates it (a migration; `create=True` for tests and SQLite),
 names it schema-qualified, and every statement carries the name.
 
+`dashboard_app(storage)` / `serve_dashboard(storage)` put optuna-dashboard over any of those
+storages, a `SqlJournal` included, on demand (extra `[optuna-dashboard]`): the stock dashboard
+reads only an RDB URL or a journal file, so a journal table needs this launcher.
+
 Invariants:
     - Never raises: too few events is `Insufficient`; a storage or Optuna failure is
       `Unavailable`; a trial whose build or replay raises is pruned as failed, not fatal.
@@ -262,6 +266,34 @@ def journal_storage(engine: sa.engine.Engine, table: str, *, create: bool = Fals
     return JournalStorage(SqlJournal(engine, table, create=create))
 
 
+def dashboard_app(storage: Any) -> Any:
+    """Return optuna-dashboard's WSGI app over `storage` (extra `[optuna-dashboard]`).
+
+    `storage` is anything Optuna opens: a `journal_storage(...)`, an RDB URL, an Optuna storage
+    object. The app reads the studies live; nothing is copied. Mount it under any WSGI server.
+
+    Raises:
+        ModuleNotFoundError: The `optuna-dashboard` extra is not installed (the message names it).
+    """
+    with extra("optuna-dashboard"):
+        import optuna_dashboard
+    return optuna_dashboard.wsgi(storage)
+
+
+def serve_dashboard(storage: Any, *, host: str = "127.0.0.1", port: int = 8080) -> None:
+    """Serve optuna-dashboard over `storage` until interrupted (extra `[optuna-dashboard]`).
+
+    An on-demand study UI: run it while a person looks, stop it after. It binds `host` (loopback
+    by default; reach it through a tunnel) and blocks.
+
+    Raises:
+        ModuleNotFoundError: The `optuna-dashboard` extra is not installed (the message names it).
+    """
+    with extra("optuna-dashboard"):
+        import optuna_dashboard
+    optuna_dashboard.run_server(storage, host=host, port=port)
+
+
 __all__ = [
     "ABSTAIN_P",
     "APPEND_RETRIES",
@@ -270,7 +302,9 @@ __all__ = [
     "SqlJournal",
     "Tuned",
     "Unavailable",
+    "dashboard_app",
     "journal_storage",
     "objective_brier",
+    "serve_dashboard",
     "tune",
 ]

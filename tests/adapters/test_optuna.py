@@ -195,3 +195,31 @@ def test_tune_on_a_journal_resumes_the_study(tmp_path) -> None:
     assert (
         len(optuna.load_study(study_name="j", storage=tuner.journal_storage(engine(tmp_path), "journal")).trials) == 5
     )
+
+
+def _get(app, path: str) -> tuple[str, bytes]:
+    """Call a WSGI app with one GET and return its status and body."""
+    from wsgiref.util import setup_testing_defaults
+
+    environ: dict = {"PATH_INFO": path, "REQUEST_METHOD": "GET"}
+    setup_testing_defaults(environ)
+    seen: list[str] = []
+    body = b"".join(app(environ, lambda status, headers, *_: seen.append(status)))
+    return seen[0], body
+
+
+def test_the_dashboard_reads_a_journal_table_live(tmp_path) -> None:
+    pytest.importorskip("optuna_dashboard")
+    storage = tuner.journal_storage(engine(tmp_path), "journal", create=True)
+    tuner.tune(build, events(400), SPACE, study_name="dash", storage=storage, n_trials=2, seed=1)
+    status, body = _get(tuner.dashboard_app(tuner.journal_storage(engine(tmp_path), "journal")), "/api/studies")
+    assert status.startswith("200")
+    assert b'"dash"' in body
+
+
+def test_serve_dashboard_binds_loopback_by_default(monkeypatch) -> None:
+    optuna_dashboard = pytest.importorskip("optuna_dashboard")
+    seen: dict = {}
+    monkeypatch.setattr(optuna_dashboard, "run_server", lambda storage, host, port: seen.update(host=host, port=port))
+    tuner.serve_dashboard("sqlite://")
+    assert seen == {"host": "127.0.0.1", "port": 8080}

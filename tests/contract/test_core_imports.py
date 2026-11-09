@@ -18,6 +18,7 @@ import pytest
 from llm_ports import _extras
 
 VENDORS = (
+    "gepa",
     "httpx",
     "httpx2",
     "langfuse",
@@ -26,6 +27,7 @@ VENDORS = (
     "openai",
     "opentelemetry",
     "optuna",
+    "optuna_dashboard",
     "pandas",
     "pydantic_ai",
     "pydantic_evals",
@@ -42,6 +44,7 @@ VENDORS = (
 NEEDS_AN_EXTRA = ("llm_ports.adapters", "llm_ports.testing.langfuse")
 #: Each adapter, the extra that installs it, and the vendor module its import needs first.
 ADAPTERS = {
+    "llm_ports.adapters.gepa": ("gepa", "gepa"),
     "llm_ports.adapters.http": ("http", "httpx"),
     "llm_ports.adapters.langfuse": ("langfuse", "langfuse"),
     "llm_ports.adapters.mlflow": ("mlflow", "mlflow"),
