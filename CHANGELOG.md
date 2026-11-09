@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-09
+
+### Fixed
+
+- `adapters.gepa.optimize` no longer spins on a dead reflection model. GEPA logs a failed
+  reflection and starts the next iteration, so `raise_on_exception` never sees it, and a caller
+  whose evaluator caches spends no budget: a reflection model out of daily quota was called every
+  few seconds for hours. `max_reflection_failures` (default 5) consecutive failed `reflect` calls
+  now stop the search as `Unavailable` naming the last error, through GEPA's own `stop_callbacks`.
+
+### Added
+
+- `optimize(timeout_s=...)`: a wall-clock bound (GEPA's `TimeoutStopCondition`);
+  `Optimized.stopped` is `"timeout"` when it ended the search, else `"budget"`.
+
 ### Changed
 
 - Releasing is the version-bump PR alone: `tag-version.yml` (ci-kit's `ci-version-tag`) tags
