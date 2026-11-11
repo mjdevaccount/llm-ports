@@ -77,6 +77,7 @@ nav:
       - guides/forecasts.md
       - guides/ml-engines.md
       - guides/rag.md
+      - guides/work-market.md
       - guides/opentelemetry.md
       - guides/openai-compatible.md
   - API reference:
@@ -90,6 +91,7 @@ nav:
       - api/forecast.md
       - api/rag.md
       - api/provenance.md
+      - api/market.md
       - api/testing.md
       - api/adapters.md
   - Decisions:
@@ -111,6 +113,7 @@ nav:
       - adr/0015-a-combiner-is-judged-walk-forward.md
       - adr/0016-seams-to-bigger-ml-engines.md
       - adr/0017-prompt-tuning-on-gepa-core.md
+      - adr/0018-the-work-market-declaration-side.md
   - Design:
       - design/LEARNING-LOOP-CORE.md
       - design/EVAL-LABELS-CONSOLIDATION.md

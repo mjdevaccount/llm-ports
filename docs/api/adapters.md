@@ -62,6 +62,12 @@
     options:
       show_root_heading: false
 
+## `llm_ports.adapters.pluggy`
+
+::: llm_ports.adapters.pluggy
+    options:
+      show_root_heading: false
+
 ## `llm_ports.adapters.pydantic_evals`
 
 ::: llm_ports.adapters.pydantic_evals
