@@ -117,3 +117,17 @@ async def test_a_gate_never_read_refuses_and_fail_open_admits_with_an_event() ->
     events.seen.clear()
     assert opened.check("demo.on") is None and opened.check("demo.on") is None
     assert events.seen == [(logging.WARNING, "market_gate_unread", {"category": "demo.on", "serving": "open"})] * 2
+
+
+async def test_a_fail_closed_refusal_emits_gate_unread_too_until_a_refresh_succeeds() -> None:
+    events = Events()
+    gates = GateCache(Store(RuntimeError("db down"), {"demo.on": Gate()}), on_event=events, clock=Clock())
+    await gates.refresh()  # the boot read fails
+    events.seen.clear()
+    assert gates.check("demo.on") is not None
+    assert events.seen == [(logging.WARNING, "market_gate_unread", {"category": "demo.on", "serving": "closed"})]
+    assert gates.check(None) is None and len(events.seen) == 1, "no category is not judged from nothing"
+    gates.invalidate()
+    await gates.refresh()
+    events.seen.clear()
+    assert gates.check("demo.on") is None and events.seen == [], "read once: judged from the gates, silently"

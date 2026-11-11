@@ -40,15 +40,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import tomllib
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, ClassVar
 
+from llm_ports.call._frozen import freeze
 from llm_ports.call.models import (
     DEFAULT_FALLBACK_ON,
     FAILURE_KINDS,
@@ -59,9 +60,12 @@ from llm_ports.call.models import (
     parse_models,
     parse_providers,
 )
+from llm_ports.observability import log_events
 
 #: The table versions `load_tiers` reads.
 SCHEMA_VERSIONS: tuple[int, ...] = (1, 2)
+#: Where table events go (`load_tiers` takes no hook: its signature is 1.x's).
+_log_event = log_events("llm_ports.call")
 
 
 @dataclass(frozen=True)
@@ -74,7 +78,8 @@ class Tier:
         timeout_s: The client timeout its `[ladder]` rung names, in seconds.
         self_hosted: True when the model group is self-hosted.
         info: What the model is and can do; None for a schema 1 table, where nothing is checked.
-        policy: The tier's wire policy as declared (`[policies.<name>]`, read-only); None for none.
+        policy: The tier's wire policy as declared (`[policies.<name>]`, read-only and hashable:
+            nested tables read as mappings, arrays as tuples); None for none.
             The resilience row of the work list types it as `WirePolicy`.
         fallback: Tier names tried in order when this tier fails with a kind in `fallback_on`.
         fallback_on: The failure kinds that move a call to the next fallback tier.
@@ -207,7 +212,7 @@ LadderCheck = Callable[[Mapping[str, float], Path], None]
 MAPPING_SOURCE = Path("<mapping>")
 #: The tier key `self_hosted` replaced; read as an alias through 1.x.
 _DEPRECATED_SELF_HOSTED_KEY = "box"
-#: Sections only a schema 2 table may have.
+#: Sections only a schema 2 table reads; a schema 1 table ignores them.
 _V2_SECTIONS = ("providers", "policies")
 _V2_TIER_KEYS = frozenset({"model", "timeout", "policy", "fallback", "fallback_on"})
 
@@ -255,10 +260,22 @@ def load_tiers(source: Path | Mapping[str, Any], *, check_ladder: LadderCheck | 
 
 
 def _load_v1(raw: Mapping[str, Any], ladder: dict[str, float], path: Path) -> TierTable:
-    """The 1.x table: `[models]` maps a key to an id string; nothing about the model is stated."""
-    for section in _V2_SECTIONS:
-        if section in raw:
-            raise TableInvalid(section, f"{path.name}: a schema 2 section; set schema_version = 2")
+    """The 1.x table: `[models]` maps a key to an id string; nothing about the model is stated.
+
+    A schema 2 section in it is ignored, as 1.22 ignored it, and named once per load as
+    `llm_table_ignored` (WARNING): the table loads to the same values it always did.
+    """
+    ignored = [section for section in _V2_SECTIONS if section in raw]
+    if ignored:
+        _log_event(
+            logging.WARNING,
+            "llm_table_ignored",
+            {
+                "source": path.name,
+                "sections": ignored,
+                "detail": "a schema 1 table does not read these; set schema_version = 2 to use them",
+            },
+        )
     models = {k: str(v) for k, v in raw["models"].items()}
     tiers: dict[str, Tier] = {}
     for name, t in raw["tiers"].items():
@@ -279,7 +296,7 @@ def _load_v2(raw: Mapping[str, Any], ladder: dict[str, float], path: Path) -> Ti
     for name, section in raw.get("policies", {}).items():
         if not isinstance(section, Mapping):
             raise TableInvalid(f"policies.{name}", f"must be a table, not {type(section).__name__}")
-        policies[name] = MappingProxyType(dict(section))
+        policies[name] = freeze(section)
     tiers = {name: _tier_v2(name, t, info, ladder, policies) for name, t in raw["tiers"].items()}
     for name, tier in tiers.items():
         for i, target in enumerate(tier.fallback):

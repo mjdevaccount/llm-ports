@@ -7,7 +7,9 @@ fingerprint, `require`, and the provider-neutral thinking switch.
 from __future__ import annotations
 
 import json
+import logging
 import tomllib
+from collections.abc import Mapping
 from dataclasses import asdict
 from decimal import Decimal
 from pathlib import Path
@@ -53,9 +55,22 @@ def test_1_a_schema_1_table_loads_to_the_1_22_0_snapshot() -> None:
     assert TABLE.tiers["local"] == roles.Tier("local", "small-chat", 120.0, True), "a hand-built tier still equals it"
 
 
-def test_a_schema_1_table_with_a_schema_2_section_is_refused() -> None:
+def test_a_schema_1_table_with_a_schema_2_section_loads_unchanged_and_warns(caplog: pytest.LogCaptureFixture) -> None:
     v1 = tomllib.loads((FIXTURES / "llm_tiers.toml").read_text(encoding="utf-8"))
-    _invalid({**v1, "providers": {}}, "providers", "set schema_version = 2")
+    extra = {"providers": {"gw": {"kind": "openai_compatible"}}, "policies": {"box": {"attempts": 3}}}
+    with caplog.at_level(logging.WARNING, logger="llm_ports.call"):
+        table = roles.load_tiers({**v1, **extra})
+    assert table == TABLE and table.fingerprint() == TABLE.fingerprint(), "1.22 ignored the sections; so does 1.x"
+    assert not table.providers and not table.policies and table.schema_version == 1
+    assert "llm_table_ignored" in caplog.text and "'providers', 'policies'" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="llm_ports.call"):
+        roles.load_tiers(v1)
+    assert "llm_table_ignored" not in caplog.text, "must fire both ways: a plain schema 1 table is silent"
+
+
+def test_an_unknown_schema_version_is_refused() -> None:
+    v1 = tomllib.loads((FIXTURES / "llm_tiers.toml").read_text(encoding="utf-8"))
     _invalid({**v1, "schema_version": 3}, "schema_version", "unknown version 3")
     _invalid({**v1, "schema_version": True}, "schema_version")
     assert roles.load_tiers({**v1, "schema_version": 1}).fingerprint() == TABLE.fingerprint()
@@ -99,6 +114,17 @@ def test_a_schema_2_table_states_its_models_providers_policies_and_fallbacks() -
     cloud = V2.tiers["cloud"]
     assert cloud.self_hosted is False and cloud.fallback_on == frozenset({"overloaded", "quota"})
     assert V2.tiers["local-web"].policy is None
+
+
+def test_a_tier_stays_hashable_with_a_policy_as_in_1_22() -> None:
+    local = V2.tiers["local"]
+    assert local.policy is not None
+    assert hash(local) == hash(roles.load_tiers(V2_PATH).tiers["local"]), "equal tiers hash equal"
+    assert len({local, V2.tiers["cloud"], local}) == 2
+    raw = _with(lambda r: r["policies"]["local"].update(codes=[429, 503], tags={"a": ["x"]}))
+    tier = roles.load_tiers(raw).tiers["local"]
+    hash(tier)
+    assert isinstance(tier.policy, Mapping) and tier.policy["codes"] == (429, 503), "an array reads as a tuple"
 
 
 def _with(edit: Any) -> dict[str, Any]:

@@ -139,6 +139,14 @@ def test_the_factory_refuses_an_option_or_a_missing_url(spec: ProviderSpec, url:
     assert caught.value.path == path
 
 
+def test_the_factory_called_directly_refuses_a_secret_no_header_can_carry() -> None:
+    spec = ProviderSpec("p", "openai_compatible", "k", "vault_key")
+    with pytest.raises(TableInvalid) as caught:
+        OpenAICompatibleFactory().build(spec, url="http://x", secret="sk-SECRETVALUE\n", models=(), deps=BuildDeps())
+    assert caught.value.path == "providers.p.secret" and "'vault_key'" in str(caught.value)
+    assert "sk-SECRETVALUE" not in str(caught.value)
+
+
 async def test_a_request_for_a_model_the_table_does_not_know_passes_through() -> None:
     wire = Wire()
     spec = ProviderSpec("p", "openai_compatible", "k", None)

@@ -18,8 +18,11 @@ Invariants:
     - `GateCache.check` and `admit` never read the store: they judge the last cached gates. An
       unknown category is admitted.
     - A gate that was never read is not a gate. Until one read succeeds, a category is refused as
-      `gate_unread` (the gate fails closed); a cache built `fail_open=True` admits instead and
-      emits `market_gate_unread` (WARNING) each time it judges from nothing.
+      `gate_unread` (the gate fails closed); a cache built `fail_open=True` admits instead. Either
+      way, each judgement from nothing emits `market_gate_unread` (WARNING) with `serving`
+      `closed` or `open`. A failed boot read keeps the gate closed until a later `refresh`
+      succeeds, and nothing here reads on its own: the consumer calls `refresh` at boot and on a
+      schedule.
     - A cap is enforced against the cached use count, so a burst can overshoot it by up to one TTL.
 
 Rationale: ADR-0018.
@@ -151,7 +154,8 @@ class GateCache:
         on_event: Receives `market_read_failed` and `market_gate_unread`; without one, the stdlib
             logger `llm_ports.market`.
         fail_open: Admit while the gates have never been read, instead of refusing as
-            `gate_unread`. Each such admission emits `market_gate_unread`.
+            `gate_unread`. Each judgement from never-read gates emits `market_gate_unread`, with
+            `serving` `open` or `closed`.
     """
 
     __slots__ = ("_cached", "_emit", "_fail_open", "_window")
@@ -194,15 +198,15 @@ class GateCache:
         """Judge `category` against the cached gates: the refusal reason, or None to admit. Never raises.
 
         No category, or an unknown one, is admitted. Before any read has succeeded, a category is
-        refused as `gate_unread`, or admitted with `market_gate_unread` when built `fail_open`.
+        refused as `gate_unread` (or admitted, when built `fail_open`), and `market_gate_unread`
+        names which.
         """
         if not category:
             return None
         if not self._cached.known:
-            if not self._fail_open:
-                return f"{GATE_UNREAD}: the gates were never read; refresh() at boot"
-            self._emit(logging.WARNING, "market_gate_unread", {"category": category, "serving": "open"})
-            return None
+            serving = "open" if self._fail_open else "closed"
+            self._emit(logging.WARNING, "market_gate_unread", {"category": category, "serving": serving})
+            return None if self._fail_open else f"{GATE_UNREAD}: the gates were never read; refresh() at boot"
         gate = self._cached.value.get(category)
         if gate is None:
             return None

@@ -75,6 +75,19 @@ def test_8_a_missing_secret_raises_at_build_naming_the_name_not_a_value() -> Non
         _build({"openai_compatible": Kind("openai_compatible")}, secrets={"gateway_key": ""})
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n", " ", "\t", "\x00", "é"])
+def test_8_a_secret_no_header_can_carry_raises_at_build_naming_only_the_name(
+    tail: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    value = "sk-SECRETVALUE123"
+    events = Events()
+    with caplog.at_level(logging.DEBUG), pytest.raises(TableInvalid) as caught:
+        _build({"openai_compatible": Kind("openai_compatible")}, secrets={"gateway_key": value + tail}, on_event=events)
+    assert caught.value.path == "providers.gateway.secret" and "'gateway_key'" in str(caught.value)
+    assert value not in str(caught.value) and value not in repr(caught.value.args)
+    assert value not in caplog.text and value not in repr(events.seen)
+
+
 def test_8_a_keyless_provider_builds_and_each_factory_gets_its_own_models() -> None:
     kind, events = Kind("openai_compatible"), Events()
     backends = _build({"openai_compatible": kind}, on_event=events)

@@ -55,14 +55,18 @@ contract, so they and packs should share one loader that fails loudly.
    1.22 spelling.
 5. **Providers by kind, built at boot.** `call.providers.build(table, urls=, secrets=, deps=,
    factories=)` resolves each used provider's names through the caller's mappings and raises at
-   boot for an unknown kind, an unresolved URL key or a secret that resolves to nothing. It
+   boot for an unknown kind, an unresolved URL key, or a secret that resolves to nothing or to a
+   value no header can carry (whitespace, a control or a non-ASCII character: httpx quotes a
+   refused header, value and all, in its error). It
    returns `Backends` (`generator_for(tier)`, `embedder_for(model_key)`, `probe_for(provider)`,
    and typed placeholders for the chat and fallback rows), after emitting `llm_backends_built`
    with the fingerprint and the plugin origins. Only `openai_compatible` is built; other kinds are
    seams until a consumer uses one.
 6. **`Probe`.** A `ports.Probe` returns `Health(state, models, reason, latency_s)`. `unknown` means
-   the probe itself failed or the backend has no endpoint to judge; `down` means it could not be
-   reached or answered with an error. A breaker opens on `down` only. `adapters.http.HttpProbe`
+   the probe itself failed (including a request it could not send), the credential was refused
+   (401/403: auth, not liveness), the backend has no endpoint to judge, or a 200 body is not a
+   model list; `down` means it could not be reached or answered with an error. A breaker opens on
+   `down` only. A reason names an exception by its type, never its message. `adapters.http.HttpProbe`
    is the OpenAI-wire implementation (`GET /models`, 5 s deadline).
 7. **One strict plugin contract for both groups** (`llm_ports.market`, `llm_ports.providers`):
    hook specs added before any plugin registers; built-ins registered first by explicit name;
@@ -70,11 +74,12 @@ contract, so they and packs should share one loader that fails loudly.
    those, a missing pinned name raises); `check_pending` after each registration; any failure
    raises `PluginLoadError` naming the group, plugin and stage (`load_packs(strict=False)` keeps
    the 1.22 record-and-continue behaviour for a diagnostic); a duplicate key names both plugins;
-   the registry freezes after load; `plugins_loaded` reports names and origins. The same ten
+   the loader freezes the registry when a strict load finishes; `plugins_loaded` reports names and origins. The same ten
    conformance tests run against both groups.
 8. **The gate fails closed until read.** A `GateCache` that has never completed a read refuses
-   every category with `gate_unread`; `fail_open=True` admits and emits `market_gate_unread`.
-   A gate nobody refreshed is not a gate.
+   every category with `gate_unread`; `fail_open=True` admits instead. Each judgement from
+   never-read gates emits `market_gate_unread` with `serving` `closed` or `open`. A gate nobody
+   refreshed is not a gate, and nothing refreshes it but the consumer, at boot and on a schedule.
 
 ## Considered options
 
@@ -98,8 +103,10 @@ contract, so they and packs should share one loader that fails loudly.
 - Behaviour changes for 1.22 callers, each stated first in the changelog: `load_packs` raises by
   default; an equal re-declaration with a different spec object raises `DuplicateAction`; a
   `desired_ttl` needs `cache_table` and `age_col`; a never-read `GateCache` refuses; the
-  `market` extra needs pluggy 1.7; a version 1 table with a version 2 section is refused; every
-  result carries `stamp["tiers"]`.
+  `market` extra needs pluggy 1.7; a strict `load_packs` freezes the registry it loaded into;
+  every result carries `stamp["tiers"]`. A version 1 table with a `[providers]` or `[policies]`
+  section still loads to its 1.22 values (the sections are ignored, with a `llm_table_ignored`
+  warning), since 1.x is additive.
 - `TierTable.models` stays key to id string for 1.x; `ModelInfo` lives beside it in
   `model_info`.
 - Fallback (the resilience row) and the chat port (the chat row) read `Tier.fallback`,

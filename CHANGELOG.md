@@ -15,6 +15,12 @@ All notable changes to this project are documented here. The format is based on
   producer it was meant to run. `load_packs(..., strict=False)` keeps the old record-and-continue
   behaviour for a diagnostic. Entry points now load sorted by name, not in install order, and a
   misspelled hook name fails at `pending` instead of loading a plugin that does nothing (ADR-0022).
+- A strict `load_packs` freezes the `ActionRegistry` it loaded into when it finishes, so a
+  declaration after the composition root raises `RuntimeError` (declare the process's own actions
+  first, or pass them as `builtins`); calling `load_packs` on an already frozen registry raises
+  before loading anything. `strict=False` leaves the registry open.
+- `market_pack_failed` keeps 1.22's `stage` vocabulary (`PackLoad.stage`: `import`, `validate`,
+  `pack`, `join`, plus `pin`) and adds `plugin_stage` in `PluginLoadError.stage`'s vocabulary.
 - `ActionRegistry`: re-declaring a held `feature.action` with any spec object other than the
   identical one raises `DuplicateAction` (a `ValueError`) naming both origins, even when the
   metadata is equal. 1.22 replaced the held spec, so an equal declaration with a different handler
@@ -23,11 +29,15 @@ All notable changes to this project are documented here. The format is based on
   against); without them nothing can judge the TTL, so the declaration is refused at import.
 - `GateCache` fails closed until its first successful read: `check` (and `admit`) return
   `gate_unread: ...` for every category, so a boot that forgot `refresh()` refuses instead of
-  admitting ungated. `GateCache(..., fail_open=True)` admits instead and emits
-  `market_gate_unread` on each such call.
+  admitting ungated. `GateCache(..., fail_open=True)` admits instead. Either way, each judgement
+  from never-read gates emits `market_gate_unread` (WARNING) with `serving: "closed"` or
+  `"open"`. A failed boot read keeps the gate closed until a later `refresh()` succeeds, and the
+  cache never reads on its own: call `await gates.refresh()` at boot and on a schedule.
 - The `market` extra needs `pluggy>=1.7` (was `>=1.5`).
-- A tier table without `schema_version` that carries a `[providers]` or `[policies]` section is
-  refused (`TableInvalid`, naming the section) rather than read as a 1.x table.
+- `call.providers.build` refuses a secret whose value holds whitespace, a control or a non-ASCII
+  character (`TableInvalid` at `providers.<name>.secret`, naming the secret, never its value): no
+  header can carry it, and httpx quotes a refused header, value and all, in its error and its
+  DEBUG trace. A trailing newline from a secret file is the usual cause.
 - Every `call.generate` result carries `stamp["tiers"]`, the fingerprint of the tier table that
   routed it (absent only for a hand-built `Tier`).
 
@@ -39,7 +49,10 @@ All notable changes to this project are documented here. The format is based on
   are None when unknown, `slots`, `group`, `self_hosted`, `usd_per_request` as a `Decimal`),
   `[policies.<name>]` (read-only), and per tier `policy`, `fallback` and `fallback_on`. Every
   refusal is `TableInvalid(ValueError)` naming the dotted path. A table without `schema_version`
-  loads to the same values as 1.22.0. New `Tier` fields (`info`, `policy`, `fallback`,
+  loads to the same values as 1.22.0, a `[providers]` or `[policies]` section in it included
+  (ignored, as 1.22 ignored it, and named once per load by a `llm_table_ignored` WARNING).
+  `Tier.policy` is read-only and hashable (nested tables read as mappings, arrays as tuples), so a
+  `Tier` hashes as it did in 1.22. New `Tier` fields (`info`, `policy`, `fallback`,
   `fallback_on`, `table_fingerprint`) and `TierTable` fields (`model_info`, `providers`,
   `policies`, `schema_version`) all default, so 1.x construction is unchanged.
 - `TierTable.fingerprint()` and `TierTable.require(role, *caps)`, which proves at import that a
@@ -62,7 +75,10 @@ All notable changes to this project are documented here. The format is based on
   as `llm_call_warning` when a role asked to think).
 - `ports.Probe`, `ports.Health`, `ports.HealthState`; `adapters.http.HttpProbe` (`GET` one URL
   under a 5 s deadline: `up` with the listed model ids, `down` when unreachable or an error
-  status, `unknown` when the probe itself failed or the endpoint is missing; never raises).
+  status, `unknown` when the probe itself failed or could not send its request, the credential
+  was refused (401/403, reason `auth: HTTP <status>`), the endpoint is missing (404/405), or a
+  200 body is not a model list; never raises). A `Health.reason` names an exception by its type
+  only, never its message, and a secret no header can carry is refused before any request.
 - `adapters.pluggy`: `load_providers` for the second entry-point group `llm_ports.providers`
   (hook `register_providers(register)`, marker `provider_hookimpl`, `builtin(name, *factories)`),
   on the same loader as packs; `load_packs(builtins=, pin=, strict=)`; `PluginLoadError`,

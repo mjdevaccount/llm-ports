@@ -16,7 +16,8 @@ library and no entry-point reading.
 
 Invariants:
     - Everything that can be wrong with a table and its environment is raised at `build`, at boot:
-      an unknown kind, a URL key the caller cannot resolve, a secret that resolves to nothing.
+      an unknown kind, a URL key the caller cannot resolve, a secret that resolves to nothing or
+      to a value no header can carry (whitespace, a control or a non-ASCII character).
       Nothing waits for the first call to find a missing key.
     - A secret value is never logged, stamped or put in an error; only its name is.
     - A kind's key is flat and global: two plugins registering one kind raise, naming both.
@@ -339,8 +340,9 @@ def build(
 
     Raises:
         TableInvalid: The table is schema 1, a provider names an unregistered kind, a URL key the
-            caller does not resolve, or a secret that resolves to nothing; or a factory refuses its
-            section.
+            caller does not resolve, or a secret that resolves to nothing or to a value holding
+            whitespace, a control or a non-ASCII character (the error names the secret, never its
+            value); or a factory refuses its section.
     """
     if table.schema_version < 2:
         raise TableInvalid("schema_version", "build needs a schema_version 2 table: a schema 1 table names no provider")
@@ -364,6 +366,12 @@ def build(
             secret = secrets(spec.secret)
             if not secret:
                 raise TableInvalid(f"{path}.secret", f"secret {spec.secret!r} resolved to nothing")
+            if not _header_safe(secret):
+                raise TableInvalid(
+                    f"{path}.secret",
+                    f"secret {spec.secret!r} holds whitespace, a control or a non-ASCII character;"
+                    " no header can carry it (a trailing newline from a secret file is the usual cause)",
+                )
         models = tuple(info for info in table.model_info.values() if info.provider == name)
         built[name] = factory.build(spec, url=url, secret=secret, models=models, deps=deps)
     (deps.on_event or _log_event)(
@@ -378,6 +386,11 @@ def build(
         },
     )
     return Backends(table, built, loaded)
+
+
+def _header_safe(value: str) -> bool:
+    """Whether `value` is visible ASCII only, so a header carries it as given. Pure."""
+    return all("!" <= c <= "~" for c in value)
 
 
 def _caller_loaded(registry: Mapping[str, ProviderFactory]) -> Loaded:

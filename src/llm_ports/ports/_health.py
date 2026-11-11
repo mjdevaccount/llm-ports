@@ -23,8 +23,10 @@ class Health:
 
     Attributes:
         state: `up`, `down`, or `unknown` when the probe itself failed.
-        models: The model ids the backend lists; None when it listed none or was not asked.
-        reason: One line naming why the state is not `up`; None when it is.
+        models: The model ids the backend lists (empty when its list is empty); None when it was
+            not asked or did not answer with a list.
+        reason: One line naming why the state is not `up`; None when it is. Never an exception's
+            message: an error can quote a request header, credential included.
         latency_s: Seconds the probe took; None when it never reached the backend.
     """
 

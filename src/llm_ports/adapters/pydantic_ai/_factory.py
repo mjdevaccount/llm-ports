@@ -142,6 +142,8 @@ class OpenAICompatibleFactory:
             raise TableInvalid(f"{path}.{sorted(spec.options)[0]}", "openai_compatible takes no option")
         if url is None:
             raise TableInvalid(f"{path}.base_url", "openai_compatible needs a base_url key")
+        if secret is not None and not all("!" <= c <= "~" for c in secret):
+            raise TableInvalid(f"{path}.secret", f"secret {spec.secret!r} is not a valid header value")
         transport = deps.transport
         generator = _TableGenerator(
             PydanticAIGenerator(model_for=openai_compatible(url, secret, transport=transport), gated=self._gated),

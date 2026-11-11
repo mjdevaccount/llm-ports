@@ -36,7 +36,7 @@ async def test_9_connection_refused_is_down() -> None:
         raise httpx.ConnectError("refused", request=req)
 
     health = await _probe(handler).probe()
-    assert health.state == "down" and health.reason is not None and "refused" in health.reason
+    assert health == Health("down", reason="ConnectError"), "the type only, never the message"
 
 
 async def test_9_a_probe_that_raises_inside_is_unknown_never_down() -> None:
@@ -44,23 +44,36 @@ async def test_9_a_probe_that_raises_inside_is_unknown_never_down() -> None:
         raise RuntimeError("the probe broke")
 
     health = await _probe(handler).probe()
-    assert health.state == "unknown" and health.reason is not None and health.reason.startswith("probe failed:")
+    assert health == Health("unknown", reason="probe failed: RuntimeError")
 
 
 @pytest.mark.parametrize(
     ("status", "state"),
-    [(404, "unknown"), (405, "unknown"), (401, "down"), (500, "down"), (503, "down")],
+    [(404, "unknown"), (405, "unknown"), (401, "unknown"), (403, "unknown"), (500, "down"), (503, "down")],
 )
-async def test_an_error_status_is_down_and_a_missing_endpoint_is_unknown(status: int, state: str) -> None:
+async def test_an_error_status_is_down_and_a_missing_endpoint_or_refused_credential_is_unknown(
+    status: int, state: str
+) -> None:
     health = await _probe(lambda _r: httpx.Response(status)).probe()
     assert health.state == state and health.reason is not None and str(status) in health.reason
     assert health.latency_s == 0.25
 
 
-@pytest.mark.parametrize("body", [b"not json", b'{"data": "x"}', b"[1, 2]"])
-async def test_an_unreadable_body_is_still_up_with_no_model_list(body: bytes) -> None:
+@pytest.mark.parametrize("status", [401, 403])
+async def test_a_refused_credential_is_auth_not_liveness(status: int) -> None:
+    health = await _probe(lambda _r: httpx.Response(status)).probe()
+    assert health == Health("unknown", reason=f"auth: HTTP {status}", latency_s=0.25)
+
+
+@pytest.mark.parametrize("body", [b"not json", b'{"data": "x"}', b"[1, 2]", b"{}"])
+async def test_a_200_whose_body_is_not_a_model_list_is_unknown(body: bytes) -> None:
     health = await _probe(lambda _r: httpx.Response(200, content=body)).probe()
-    assert health.state == "up" and health.models is None
+    assert health == Health("unknown", reason="HTTP 200: body is not a model list", latency_s=0.25)
+
+
+async def test_an_empty_model_list_is_up_with_no_models() -> None:
+    health = await _probe(lambda _r: httpx.Response(200, json={"data": []})).probe()
+    assert health == Health("up", models=(), latency_s=0.25)
 
 
 async def test_the_deadline_bounds_the_whole_probe() -> None:

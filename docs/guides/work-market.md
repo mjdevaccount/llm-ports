@@ -38,8 +38,9 @@ output row whose age the TTL is measured against), and, on a registry built with
 
 A key is declared once. Re-adding the identical spec object is a no-op; any other spec under a
 held key raises `DuplicateAction`, naming both origins, even when its metadata is equal: an equal
-spec with a different handler would otherwise swap the handler in silently. The composition root
-calls `registry.freeze()` once everything is loaded; a later declaration raises.
+spec with a different handler would otherwise swap the handler in silently. The registry is frozen
+once everything is loaded (a strict `load_packs` freezes it; a process that loads no packs calls
+`registry.freeze()` itself); a later declaration raises.
 
 ## Pause without a rebuild
 
@@ -64,8 +65,14 @@ hooks = call.Hooks(admit=gates.admit, trace=call.tracer_trace(tracer))
 
 **A gate that was never read is not a gate.** Until the first successful read, `check` refuses
 every category with `gate_unread` (`GATE_UNREAD`), so a boot that forgot `refresh()` fails closed
-and says why. `GateCache(read, fail_open=True)` admits instead and emits `market_gate_unread` on
-each such call, for a caller that would rather run ungated than stop.
+and says why. Each such refusal emits `market_gate_unread` (WARNING, `serving: "closed"`).
+`GateCache(read, fail_open=True)` admits instead and emits the same event with `serving: "open"`,
+for a caller that would rather run ungated than stop.
+
+A failed boot read keeps the gate closed until a later `refresh()` succeeds, and the cache never
+reads on its own: `check` and `admit` judge only what `refresh()` last stored. Consumers **must**
+call `await gates.refresh()` at boot and on a schedule (a loop or a cron tick at about the TTL);
+without the schedule, a store that was down at boot keeps every category refused.
 
 `LastKnown(read, initial)` is the same cache for one value, such as a global work switch.
 
@@ -98,15 +105,18 @@ reports = "reports_pkg.market"
 ```
 
 The scheduler's process calls `adapters.pluggy.load_packs(registry, builtins=..., pin=...)` once
-at boot, then `registry.freeze()`. Built-ins register first by name; entry points follow, sorted by
-name. `pin` is the value of your pin setting (`PACKS_PIN_ENV`, `LLM_PORTS_PLUGINS`, by
+at boot, and the load freezes `registry` when it finishes, so declare the process's own actions
+before it (or pass them as `builtins`). Built-ins register first by name; entry points follow,
+sorted by name. `pin` is the value of your pin setting (`PACKS_PIN_ENV`, `LLM_PORTS_PLUGINS`, by
 convention; the library reads no environment): None loads everything installed, `""` the
 built-ins only, `"a,b"` exactly those, and a pinned name that is not installed raises.
 
 `load_packs` raises `PackLoadError` on the first pack that fails, naming the group, the pack and
 the stage (`import`, `register`, `hook`, `duplicate`, `pin`, `pending`), so a missing producer
 stops the boot. `load_packs(..., strict=False)` records each pack as a `PackLoad` instead (`ok`,
-`failed` with its stage, or `blocked`) for a diagnostic. Every load emits `plugins_loaded` with
+`failed` with its stage, or `blocked`) for a diagnostic, and leaves the registry open. Each failure
+emits `market_pack_failed` with `stage` in the `PackLoad.stage` vocabulary (`import`, `validate`,
+`pack`, `join`, `pin`) and `plugin_stage` in the `PackLoadError.stage` one. Every load emits `plugins_loaded` with
 the names and their origins (`builtin` or `<distribution>==<version>`); `packs_loaded(loads)` is
 the same record as a `Loaded`.
 

@@ -36,7 +36,12 @@ Invariants:
       or it contributed a wrong object), `hook` (its hook raised), `duplicate` (a key or a name
       another plugin holds; both are named), `pin`, `pending` (an unknown hook name, or no hook).
       `load_packs(strict=False)` records each failure as a `PackLoad` instead, for a diagnostic.
+    - A registry is frozen after load: a strict `load_packs` that finishes freezes the
+      `ActionRegistry` it loaded into, and `load_providers` returns its `ProviderRegistry` frozen,
+      so a registration after the composition root raises.
     - Every load emits `plugins_loaded` (group, names, origins) once it finishes.
+    - `market_pack_failed` carries `stage` in the `PackLoad.stage` vocabulary (`PackStage`) and
+      `plugin_stage` in the `PluginLoadError.stage` vocabulary (`PluginStage`).
 
 Rationale: ADR-0018 (packs), ADR-0022 (providers).
 """
@@ -276,14 +281,17 @@ def load_packs(
     """Load the built-in packs, then every pack listed under `group`, into `registry`.
 
     Args:
-        registry: The scheduler's registry; each pack joins it through `include`. The caller
-            freezes it once loading is done.
+        registry: The scheduler's registry; each pack joins it through `include`. Under
+            `strict`, a load that finishes freezes it (`ActionRegistry.freeze`), so a declaration
+            after the composition root raises; declare the caller's own actions first, or pass
+            them as `builtins`. A diagnostic load (`strict=False`) leaves it open.
         group: The entry-point group to read.
         block: Pack names to skip (pluggy's blocked set); for tests. Production pins instead.
         entry_points: The entry points to load instead of the installed ones (or a callable that
             returns them).
-        on_event: Receives `market_pack_loaded`, `market_pack_failed`, `market_pack_blocked` and
-            `plugins_loaded`; without one, the stdlib logger `llm_ports.market`.
+        on_event: Receives `market_pack_loaded`, `market_pack_failed` (`stage` as `PackLoad.stage`,
+            `plugin_stage` as `PluginLoadError.stage`), `market_pack_blocked` and `plugins_loaded`;
+            without one, the stdlib logger `llm_ports.market`.
         builtins: `(name, module)` packs that ship with the caller, registered first, in order.
         pin: The pin setting's value; None when it is unset (see the module docstring).
         strict: Raise on the first failure. False records each failure and loads the rest.
@@ -293,7 +301,10 @@ def load_packs(
 
     Raises:
         PackLoadError: Under `strict`, the first pack that failed, naming its stage.
+        RuntimeError: `registry` is already frozen; nothing is loaded.
     """
+    if registry.frozen:
+        raise RuntimeError(f"action registry {registry.name!r} is frozen; load packs into it once, before freezing")
     emit = on_event or _log_market
     pm = pluggy.PluginManager(PROJECT)
     pm.add_hookspecs(PackSpec)
@@ -307,7 +318,7 @@ def load_packs(
         emit(
             logging.WARNING,
             "market_pack_failed",
-            {"pack": name, "dist": dist, "stage": fail.stage, "reason": load.reason},
+            {"pack": name, "dist": dist, "stage": load.stage, "plugin_stage": fail.stage, "reason": load.reason},
         )
         if strict:
             raise PackLoadError(str(fail), group=group, plugin=name, stage=fail.stage) from fail.__cause__
@@ -328,6 +339,8 @@ def load_packs(
             continue
         loads.append(PackLoad(cand.name, cand.dist, "ok", actions=actions, origin=cand.origin))
         emit(logging.INFO, "market_pack_loaded", {"pack": cand.name, "dist": cand.dist, "actions": list(actions)})
+    if strict:
+        registry.freeze()
     _emit_loaded(emit, packs_loaded(loads, group=group))
     return tuple(loads)
 

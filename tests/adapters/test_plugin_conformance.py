@@ -75,14 +75,13 @@ class Group:
 def _load_packs(eps: EPs, builtins: Sequence[tuple[str, object]], pin: str | None) -> tuple[Loaded, frozenset[str]]:
     reg = ActionRegistry("main")
     loads = load_packs(reg, entry_points=eps, builtins=builtins, pin=pin, on_event=Events())
-    reg.freeze()
+    assert reg.frozen, "the loader freezes the registry it loaded into"
     return packs_loaded(loads), frozenset(s.name for s in reg.registered())
 
 
 def _packs_register_late() -> None:
     reg = ActionRegistry("main")
-    load_packs(reg, entry_points=(), on_event=Events())
-    reg.freeze()
+    load_packs(reg, entry_points=(), on_event=Events())  # the LOADER must freeze: nothing here does
 
     async def late(_session: object, work_key: str) -> None: ...
 

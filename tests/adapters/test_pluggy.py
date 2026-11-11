@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 from importlib.metadata import EntryPoint
 from typing import Any
@@ -140,7 +141,11 @@ def test_not_strict_names_every_stage_and_the_rest_still_load() -> None:
     assert [load.name for load in failed(loads)] == [n for n, (o, _) in stages.items() if o == "failed"]
     warned = [e for e in events.seen if e[1] == "market_pack_failed"]
     assert len(warned) == 8 and all(level == logging.WARNING for level, _, _ in warned)
-    assert {w[2]["stage"] for w in warned} == {"import", "register", "pending", "hook", "duplicate"}
+    assert {w[2]["pack"]: w[2]["stage"] for w in warned} == {n: st for n, (o, st) in stages.items() if o == "failed"}, (
+        "the event's stage is the PackLoad's stage"
+    )
+    assert {w[2]["plugin_stage"] for w in warned} == {"import", "register", "pending", "hook", "duplicate"}
+    assert not reg.frozen, "a diagnostic load leaves the registry open"
     assert events.seen[-1][2]["names"] == ["reports"]
 
 
@@ -175,8 +180,11 @@ def test_a_blocked_pack_is_skipped_unloaded() -> None:
 def test_the_installed_group_is_read_when_no_list_is_given(caplog: Any) -> None:
     reg = ActionRegistry("main")
     assert load_packs(reg, group="llm_ports.market.tests_no_such_group") == ()
-    with caplog.at_level(logging.INFO, logger="llm_ports.market"):
+    assert reg.frozen, "a strict load that finishes freezes the registry"
+    with pytest.raises(RuntimeError, match="frozen"):
         load_packs(reg, entry_points=[_ep("reports", f"{PACKS}.good")])
+    with caplog.at_level(logging.INFO, logger="llm_ports.market"):
+        load_packs(ActionRegistry("main"), entry_points=[_ep("reports", f"{PACKS}.good")])
     assert "market_pack_loaded" in caplog.text and "plugins_loaded" in caplog.text
 
 
@@ -199,7 +207,19 @@ def test_providers_load_frozen_with_their_origins_and_an_event(caplog: Any) -> N
     with caplog.at_level(logging.INFO, logger="llm_ports.call"):
         assert len(load_providers(entry_points=lambda: (), pin="")) == 0
     assert "plugins_loaded" in caplog.text
-    assert len(load_providers()) >= 0, "the installed group is read when no list is given"
+
+
+def test_load_providers_reads_the_installed_group_when_no_list_is_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+
+    def installed(*, group: str) -> list[EntryPoint]:
+        asked.append(group)
+        return [_ep("a", f"{KINDS}:alpha", PROVIDERS_GROUP)]
+
+    monkeypatch.setattr(importlib.metadata, "entry_points", installed)
+    store = load_providers(on_event=Events())
+    assert asked == [PROVIDERS_GROUP] and list(store) == ["alpha"]
+    assert store.loaded.plugins == ("a",)
 
 
 def test_a_provider_plugin_that_registers_a_non_factory_or_no_hook_fails_loudly() -> None:
