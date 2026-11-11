@@ -25,6 +25,7 @@ from typing import Any
 
 import httpx
 
+from llm_ports._headers import header_value_ok
 from llm_ports.ports import Health
 from llm_ports.ports.outcomes import REASON_MAX
 
@@ -88,7 +89,7 @@ class HttpProbe:
             `auth: ...`), the backend has no endpoint to judge it by, or a 200 body is not a model
             list. The reason names an exception by its type only.
         """
-        if self._secret is not None and not all("!" <= c <= "~" for c in self._secret):
+        if self._secret is not None and not header_value_ok(self._secret):
             return Health("unknown", reason="probe failed: the secret is not a valid header value")
         start = self._clock()
         headers = {"Authorization": f"Bearer {self._secret}"} if self._secret else {}

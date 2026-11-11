@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 from llm_ports._extras import extra
+from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.adapters.pydantic_ai._schema import framework_output
 from llm_ports.ports import Generated, GenRequest, Outcome
 from llm_ports.ports.outcomes import REASON_MAX, exception_chain, failure_reason, outcome_for_status
@@ -168,8 +169,14 @@ def openai_compatible(
         A `ModelFor` that yields an `OpenAIChatModel` for `req.model`, carrying `profile` and
         `settings`.
 
+    Raises:
+        ValueError: `api_key` holds whitespace, a control or a non-ASCII character (the HTTP stack
+            would quote it, value and all, when it refused the header). The value is not shown.
+
     Rationale: ADR-0009.
     """
+    if api_key is not None and not header_value_ok(api_key):
+        raise ValueError(f"api_key {HEADER_VALUE_RULE}")
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 

@@ -209,6 +209,26 @@ def test_providers_load_frozen_with_their_origins_and_an_event(caplog: Any) -> N
     assert "plugins_loaded" in caplog.text
 
 
+def test_loading_packs_twice_into_one_registry_raises_before_loading_anything() -> None:
+    reg, events = ActionRegistry("main"), Events()
+    load_packs(reg, entry_points=[_ep("reports", f"{PACKS}.good")], on_event=events)
+    assert reg.frozen and len(reg) == 2
+    loaded: list[str] = []
+
+    class Counting(DistEntryPoint):
+        def load(self) -> Any:
+            loaded.append(self.name)
+            return super().load()
+
+    events.seen.clear()
+    with pytest.raises(RuntimeError, match="load packs into it once"):
+        load_packs(reg, entry_points=[Counting()], on_event=events)  # type: ignore[list-item]  # a duck-typed entry point
+    with pytest.raises(RuntimeError, match="load packs into it once"):
+        load_packs(reg, entry_points=(), on_event=events)
+    assert loaded == [] and events.seen == [], "nothing imported, nothing emitted"
+    assert len(reg) == 2
+
+
 def test_load_providers_reads_the_installed_group_when_no_list_is_given(monkeypatch: pytest.MonkeyPatch) -> None:
     asked: list[str] = []
 

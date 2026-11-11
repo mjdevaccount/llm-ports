@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
+from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid
 from llm_ports.call.roles import TierTable
 from llm_ports.observability import EventHook, log_events
@@ -366,11 +367,10 @@ def build(
             secret = secrets(spec.secret)
             if not secret:
                 raise TableInvalid(f"{path}.secret", f"secret {spec.secret!r} resolved to nothing")
-            if not _header_safe(secret):
+            if not header_value_ok(secret):
                 raise TableInvalid(
                     f"{path}.secret",
-                    f"secret {spec.secret!r} holds whitespace, a control or a non-ASCII character;"
-                    " no header can carry it (a trailing newline from a secret file is the usual cause)",
+                    f"secret {spec.secret!r} {HEADER_VALUE_RULE} (a trailing newline from a secret file is the usual cause)",
                 )
         models = tuple(info for info in table.model_info.values() if info.provider == name)
         built[name] = factory.build(spec, url=url, secret=secret, models=models, deps=deps)
@@ -386,11 +386,6 @@ def build(
         },
     )
     return Backends(table, built, loaded)
-
-
-def _header_safe(value: str) -> bool:
-    """Whether `value` is visible ASCII only, so a header carries it as given. Pure."""
-    return all("!" <= c <= "~" for c in value)
 
 
 def _caller_loaded(registry: Mapping[str, ProviderFactory]) -> Loaded:

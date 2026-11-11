@@ -29,6 +29,7 @@ from dataclasses import replace
 from typing import Any
 
 from llm_ports._extras import extra
+from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid
 from llm_ports.call.providers import BuildDeps, Built
 from llm_ports.observability import EventHook, log_events
@@ -142,8 +143,8 @@ class OpenAICompatibleFactory:
             raise TableInvalid(f"{path}.{sorted(spec.options)[0]}", "openai_compatible takes no option")
         if url is None:
             raise TableInvalid(f"{path}.base_url", "openai_compatible needs a base_url key")
-        if secret is not None and not all("!" <= c <= "~" for c in secret):
-            raise TableInvalid(f"{path}.secret", f"secret {spec.secret!r} is not a valid header value")
+        if secret is not None and not header_value_ok(secret):
+            raise TableInvalid(f"{path}.secret", f"secret {spec.secret!r} {HEADER_VALUE_RULE}")
         transport = deps.transport
         generator = _TableGenerator(
             PydanticAIGenerator(model_for=openai_compatible(url, secret, transport=transport), gated=self._gated),

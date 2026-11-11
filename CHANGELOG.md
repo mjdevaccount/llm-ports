@@ -38,6 +38,11 @@ All notable changes to this project are documented here. The format is based on
   character (`TableInvalid` at `providers.<name>.secret`, naming the secret, never its value): no
   header can carry it, and httpx quotes a refused header, value and all, in its error and its
   DEBUG trace. A trailing newline from a secret file is the usual cause.
+- `adapters.pydantic_ai.openai_compatible` and `openai_compatible_embeddings` raise `ValueError`
+  at construction for an `api_key` that holds whitespace, a control or a non-ASCII character (the
+  message never shows the value). 1.22 accepted it and every call then failed with an error, and a
+  DEBUG log line, quoting `Bearer <key>`. `build`, the `openai_compatible` kind, these two and
+  `HttpProbe` share one validator.
 - Every `call.generate` result carries `stamp["tiers"]`, the fingerprint of the tier table that
   routed it (absent only for a hand-built `Tier`).
 - **A prompt pack now fails at load where it used to load** (ADR-0026):
