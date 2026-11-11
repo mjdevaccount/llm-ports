@@ -55,7 +55,9 @@ Chosen option 3.
   closed set by sorted relative path. `Pack.stamp()` gains the key `identity`; `stamp_str()` and
   the `sha` key are unchanged.
 - **The template set is closed.** `PackManifest.includes` names the files a template reaches by
-  `{% include %}`, `{% import %}` or `{% extends %}`. The loader is a `DictLoader` over exactly
+  `{% include %}`, `{% import %}` or `{% extends %}`: relative POSIX paths inside the pack, any
+  extension, subdirectories allowed (`partials/h.j2`, `rubric.md`), never `..` or a path that
+  resolves outside it. The loader is a `DictLoader` over exactly
   `templates` and `includes`; at load, `jinja2.meta.find_referenced_templates` checks every file,
   and a reference outside the set, or a dynamic one that cannot be read statically, fails with
   `PromptPackInvalid`. One environment is built per pack at load and reused by every render.
@@ -71,7 +73,7 @@ Chosen option 3.
 - **The vectors are frozen the day `identity` ships**: three `byte_sha` part lists (including the
   re-split pair that collides under `content_sha`) and the identity of each fixture pack.
 - `call.graders.GRADERS` becomes a read-only mapping, so one consumer's grader cannot leak into
-  another's table; `{**GRADERS, ...}` still copies.
+  another's table; `{**GRADERS, ...}` still copies, and every reader takes a table argument.
 
 ### Consequences
 

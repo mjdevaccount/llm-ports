@@ -28,6 +28,17 @@ def _is_pack_file(file: str) -> bool:
     return not ("/" in file or "\\" in file or file.startswith(".") or not file.endswith(".j2"))
 
 
+def _include_defect(file: str) -> str:
+    """Return why `file` is not a relative POSIX path inside the pack, or "" when it is."""
+    if not file or "\\" in file or ":" in file or file.startswith("/"):
+        return "a relative POSIX path (`/` separators, no leading `/`, no drive)"
+    if any(part in ("", ".", "..") or part.startswith(".") for part in file.split("/")):
+        return "no `..`, no empty or hidden segment"
+    if file == "pack.yaml":
+        return "not the manifest"
+    return ""
+
+
 class PackManifest(BaseModel):
     """A validated, frozen `pack.yaml`.
 
@@ -50,8 +61,9 @@ class PackManifest(BaseModel):
         golden: Path of the golden set the graders replay, relative to the pack directory.
         langfuse_label: The label a managed mirror serves under (YAML key `langfuse_label` or
             its neutral alias `label`). The managed copy mirrors the repo; it never leads.
-        includes: Template files a template reaches by `{% include %}`, `{% import %}` or
-            `{% extends %}` that are not in `templates`. With `templates`, the closed set: no
+        includes: Files a template reaches by `{% include %}`, `{% import %}` or `{% extends %}`
+            that are not in `templates`: relative POSIX paths inside the pack directory, any
+            extension (`partials/header.j2`, `rubric.md`). With `templates`, the closed set: no
             other file is ever rendered.
         schema_version: The manifest schema the pack is written to; only `SCHEMA_VERSION` loads.
 
@@ -104,8 +116,8 @@ class PackManifest(BaseModel):
     @classmethod
     def _includes_are_files_in_the_pack(cls, v: list[str]) -> list[str]:
         for file in v:
-            if not _is_pack_file(file):
-                raise ValueError(f"includes {file!r}: a `.j2` file INSIDE the pack dir, no paths")
+            if why := _include_defect(file):
+                raise ValueError(f"includes {file!r}: a file INSIDE the pack dir: {why}")
         return v
 
     @field_validator("output_schema")

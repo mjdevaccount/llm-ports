@@ -270,9 +270,12 @@ def load(pack_id: str, root: Path) -> Pack:
     for file in manifest.includes:
         named.setdefault(file, "includes")
     texts: dict[str, str] = {}
+    inside = pack_dir.resolve()
     for file, what in named.items():
         if not (pack_dir / file).is_file():
             raise PromptPackInvalid(f"{pack_id}: {what} names {file!r}, which is not in the pack")
+        if not (pack_dir / file).resolve().is_relative_to(inside):
+            raise PromptPackInvalid(f"{pack_id}: {what} names {file!r}, which resolves outside the pack")
         blobs[file] = _read(pack_id, pack_dir / file, file)
         texts[file] = _text(pack_id, blobs[file], file)
     _closed(pack_id, texts)
@@ -311,16 +314,19 @@ def scan(
     return tuple(packs), invalid
 
 
-def registry(root: Path) -> tuple[Pack, ...]:
+def registry(
+    root: Path, *, registry: GraderRegistry | Registry | None = None, import_roots: Sequence[str] | None = None
+) -> tuple[Pack, ...]:
     """Load every pack under `root`, strictly.
 
-    Suits a test that every pack loads. A runtime reader that must keep serving the valid packs
-    uses `scan` instead.
+    Suits a boot path or a test that every pack loads. Given `registry` or `import_roots`, every
+    pack is also resolved with them (`scan`), so a mistyped grader or output schema fails here. A
+    runtime reader that must keep serving the valid packs uses `scan` instead.
 
     Raises:
         PromptPackInvalid: Any pack is invalid; the message joins every pack's reason.
     """
-    packs, invalid = scan(root)
+    packs, invalid = scan(root, registry=registry, import_roots=import_roots)
     if invalid:
         raise PromptPackInvalid("; ".join(invalid.values()))
     return packs

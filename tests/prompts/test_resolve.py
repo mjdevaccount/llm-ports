@@ -128,3 +128,13 @@ def test_scan_reports_resolution_failures_beside_load_failures_when_given_the_ar
     assert "graders: 'typo'" in invalid["demo.typo"]
     _, invalid = prompts.scan(tmp_path, import_roots=ROOTS)
     assert "no grader registry" in invalid["demo.good"]
+
+
+def test_registry_fails_at_build_on_a_mistyped_grader_when_given_the_arguments(tmp_path: Path) -> None:
+    _load(tmp_path, "graders: [echo]\ngolden: g.json\n", "demo.good")
+    _load(tmp_path, "graders: [typo]\ngolden: g.json\n", "demo.typo")
+    assert [p.id for p in prompts.registry(tmp_path)] == ["demo.good", "demo.typo"], "unchanged without arguments"
+    with pytest.raises(prompts.PromptPackInvalid, match=r"demo\.typo: graders: 'typo'"):
+        prompts.registry(tmp_path, registry=GRADERS)
+    (tmp_path / "demo.typo" / "pack.yaml").unlink()
+    assert [p.id for p in prompts.registry(tmp_path, registry=GRADERS, import_roots=ROOTS)] == ["demo.good"]

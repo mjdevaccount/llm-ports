@@ -16,8 +16,9 @@ The repository seed leads; the managed label mirrors it and never leads. Per `ge
    version and its stored config.
 
 `seed_for(name) -> Seed` is injected: the adapter knows nothing about where a repository prompt
-lives or how it is fingerprinted (`prompts.Pack.seed` builds one). With no `label` passed, `get`
-serves under the seed's `config["label"]`, else `production`. A seed with a non-empty `system` (or `kind="chat"`) is a chat
+lives or how it is fingerprinted (`prompts.Pack.seed` builds one). With `label_from_seed=True`, a
+seed whose config names a `label` (a pack's manifest label) is served and mirrored under that
+label instead of the `label` argument. A seed with a non-empty `system` (or `kind="chat"`) is a chat
 prompt: pushed as `type="chat"` with the message list, fetched as chat, and compared message by
 message on role and content. Langfuse refuses a type change on an existing name, so `kind` can
 force chat for a seed with no system message.
@@ -46,8 +47,6 @@ from llm_ports.observability import EventHook, log_events
 from llm_ports.ports import Prompt, Seed
 
 DEFAULT_CACHE_TTL_S = 300
-#: The label served when neither the caller nor the seed's config names one.
-DEFAULT_LABEL = "production"
 EVENT = "langfuse_prompt_source"
 _ERR_CAP = 200
 
@@ -103,6 +102,8 @@ class LangfusePromptSource:
         cache_ttl_s: The SDK cache TTL, and how long a down verdict is held per name.
         clock: A monotonic clock, injectable for tests.
         on_event: The warning sink; defaults to the stdlib logger `llm_ports.adapters.langfuse.prompt_source`.
+        label_from_seed: Opt in to the seed's own label: a seed whose `config["label"]` is set is
+            served and mirrored under it, whatever `label` `get` is given. Off by default.
     """
 
     def __init__(
@@ -113,7 +114,9 @@ class LangfusePromptSource:
         cache_ttl_s: int = DEFAULT_CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
         on_event: EventHook | None = None,
+        label_from_seed: bool = False,
     ) -> None:
+        self._label_from_seed = label_from_seed
         self._client = client
         self._seed_for = seed_for
         self._ttl = cache_ttl_s
@@ -127,18 +130,16 @@ class LangfusePromptSource:
     def _fetch(self, name: str, label: str, seed: Seed, ttl: int) -> Any:
         return self._client.get_prompt(name, label=label, type=_kind(seed), fallback=_wire(seed), cache_ttl_seconds=ttl)
 
-    def get(self, name: str, *, label: str | None = None) -> Prompt:
+    def get(self, name: str, *, label: str = "production") -> Prompt:
         """Return prompt `name`, mirrored to the managed store under `label`.
 
         Serves the managed version when it matches the seed, else the seed as `source == "repo"`;
-        the module docstring gives the steps. A store failure never raises.
-
-        Args:
-            name: The prompt name.
-            label: The managed label; None takes the seed's `config["label"]`, else `production`.
+        the module docstring gives the steps. A store failure never raises. With
+        `label_from_seed`, a seed's `config["label"]` replaces `label`.
         """
         seed = self._seed_for(name)
-        label = label or str(seed.config.get("label") or DEFAULT_LABEL)
+        if self._label_from_seed and seed.config.get("label"):
+            label = str(seed.config["label"])
         repo = Prompt(name, seed.text, None, "repo", config=dict(seed.config), system=seed.system)
         if self._down(name):
             return repo
@@ -179,4 +180,4 @@ class LangfusePromptSource:
         )
 
 
-__all__ = ["DEFAULT_CACHE_TTL_S", "DEFAULT_LABEL", "EVENT", "LangfusePromptSource"]
+__all__ = ["DEFAULT_CACHE_TTL_S", "EVENT", "LangfusePromptSource"]

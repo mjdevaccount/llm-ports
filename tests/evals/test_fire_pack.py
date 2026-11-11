@@ -55,14 +55,28 @@ class TestCouldNotRun:
     @pytest.mark.parametrize(
         ("golden_file", "reason"),
         [
-            (None, "golden file missing: golden.json"),
+            (None, "golden file missing: 'golden.json' resolved to "),
             ("[]", "golden set is empty"),
             ('{"items": []}', "golden set is empty"),
             ("{not json", "golden file unreadable: JSONDecodeError"),
             ('{"meta": 1}', "golden file unreadable: ValueError: not a list of items"),
             ('[{"slots": {}}]', "golden file unreadable: ValueError: item 0 is not a mapping with an `id`"),
+            (
+                '[{"id": "g-1", "slots": {"who": "x"}}, {"id": "g-2", "slots": {}}]',
+                "golden item 'g-2' does not render: Undef",
+            ),
+            ('[{"id": "g-1", "slots": ["who"]}]', "golden item 'g-1' does not render: TypeError"),
         ],
-        ids=["missing", "empty-list", "empty-items", "not-json", "no-items", "no-id"],
+        ids=[
+            "missing",
+            "empty-list",
+            "empty-items",
+            "not-json",
+            "no-items",
+            "no-id",
+            "slot-missing",
+            "slots-not-a-map",
+        ],
     )
     async def test_nothing_to_fire_is_could_not_run_with_the_reason(
         self, tmp_path: Path, golden_file: str | None, reason: str
@@ -81,6 +95,18 @@ class TestCouldNotRun:
         run = await _run(golden.resolve_pack(_pack(tmp_path, None, manifest)), [])
         assert (run.status, run.reason) == ("could_not_run", "the pack declares no golden set")
 
+    async def test_a_golden_set_with_no_graders_is_never_green_over_nothing(self, tmp_path: Path) -> None:
+        manifest = MANIFEST.replace("graders: [echo, schema_complete]\n", "")
+        gen = StubGenerator(REPLY)
+        run = await _run(golden.resolve_pack(_pack(tmp_path, json.dumps(ITEMS), manifest)), [], gen)
+        assert (run.status, run.board, gen.requests) == ("could_not_run", None, [])
+        assert run.reason.startswith("the pack declares no graders")
+
+    async def test_the_missing_reason_names_the_manifest_value_and_the_resolved_path(self, tmp_path: Path) -> None:
+        resolved = golden.resolve_pack(_pack(tmp_path, None))
+        run = await _run(resolved, [])
+        assert "'golden.json'" in run.reason and str(resolved.golden) in run.reason
+
 
 class TestRan:
     async def test_rows_and_the_run_are_stamped_with_identity_and_graded_on_the_packs_graders(
@@ -97,6 +123,7 @@ class TestRan:
             "tier": "local",
             "model": ROLE.resolved_model,
             "table_fingerprint": "tbl0123456789abc",
+            "output_schema_sha": None,
         }
         assert [r["identity"] for r in run.rows] == [pack.identity] * 2
         assert [r["id"] for r in run.rows] == ["g-1", "g-2"] and run.rows[0]["stratum"] == "a"
@@ -126,8 +153,10 @@ class TestRan:
             seen.append(out)
             return Note(text="a note")
 
-        run = await _run(golden.resolve_pack(pack, import_roots=("tests.prompts",)), [], StubGenerator(reply))
+        resolved = golden.resolve_pack(pack, import_roots=("tests.prompts",))
+        run = await _run(resolved, [], StubGenerator(reply))
         assert run.status == "ran" and seen == [Note, Note]
+        assert run.stamp["output_schema_sha"] == resolved.output_schema_sha == prompts.schema_sha(Note)
 
     async def test_a_prose_pack_fires_as_text(self, tmp_path: Path) -> None:
         seen: list[Any] = []

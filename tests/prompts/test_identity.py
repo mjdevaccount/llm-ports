@@ -177,12 +177,49 @@ class TestClosedTemplateSet:
             pack.render_source("{% include 'stray.j2' %}")
 
     @pytest.mark.parametrize(
-        ("line", "msg"),
-        [("includes: [../x.j2]\n", "INSIDE the pack"), ("includes: [x.txt]\n", "INSIDE the pack")],
+        "file",
+        ["../x.j2", "a/../x.j2", "/abs.j2", "C:/x.j2", "a\\b.j2", ".hidden.j2", "a/.h.j2", "a//b.j2", "pack.yaml", ""],
+        ids=[
+            "parent",
+            "inner-parent",
+            "absolute",
+            "drive",
+            "backslash",
+            "hidden",
+            "hidden-seg",
+            "empty-seg",
+            "manifest",
+            "empty",
+        ],
     )
-    def test_includes_name_j2_files_inside_the_pack(self, line: str, msg: str) -> None:
-        with pytest.raises(ValidationError, match=msg):
-            prompts.PackManifest.model_validate(yaml.safe_load(MANIFEST + line))
+    def test_includes_are_relative_posix_paths_inside_the_pack(self, file: str) -> None:
+        with pytest.raises(ValidationError, match="INSIDE the pack"):
+            prompts.PackManifest.model_validate({**yaml.safe_load(MANIFEST), "includes": [file]})
+
+    def test_a_subdirectory_partial_and_a_non_j2_partial_load_when_listed(self, tmp_path: Path) -> None:
+        """A 1.22.0 pack that includes `partials/h.j2` and a `.md` file loads once it lists them."""
+        prompt = "{% include 'partials/h.j2' %} {% include 'rubric.md' %}"
+        files: dict[str, str | bytes] = {"pack.yaml": MANIFEST, "prompt.j2": prompt, "rubric.md": "R"}
+        d = _pack(tmp_path, files)
+        (d / "partials").mkdir()
+        (d / "partials" / "h.j2").write_bytes(b"H")
+        with pytest.raises(prompts.PromptPackInvalid, match=r"partials/h.j2"):
+            prompts.load("demo.note", tmp_path)
+        _pack(tmp_path, {"pack.yaml": MANIFEST + "includes: [partials/h.j2, rubric.md]\n"})
+        pack = prompts.load("demo.note", tmp_path)
+        assert pack.render() == "H R" and pack.files() == ("partials/h.j2", "prompt.j2", "rubric.md")
+        (d / "partials" / "h.j2").write_bytes(b"H2")
+        assert prompts.load("demo.note", tmp_path).identity != pack.identity
+
+    def test_an_include_that_resolves_outside_the_pack_is_refused(self, tmp_path: Path) -> None:
+        d = _pack(tmp_path, {"pack.yaml": MANIFEST + "includes: [link.j2]\n", "prompt.j2": "x"})
+        (tmp_path / "secret.j2").write_bytes(b"outside")
+        try:
+            (d / "link.j2").symlink_to(tmp_path / "secret.j2")
+        except OSError:
+            pytest.skip("this platform cannot create a symlink without privileges")
+        with pytest.raises(prompts.PromptPackInvalid, match="resolves outside the pack"):
+            prompts.load("demo.note", tmp_path)
 
 
 class TestCarriageReturns:

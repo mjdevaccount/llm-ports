@@ -17,9 +17,9 @@ flow:
 `resolve_pack` here, which falls back to the built-in call graders): it reads the golden set the
 manifest names (a JSON list of items, a JSON object with an `items` list, or JSON lines), fires it
 through the pack's own source and output type, grades it on the pack's graders, and stamps the run
-and every row with the pack's `identity`. A run that cannot start (no golden set, a missing,
-unreadable or empty file, an item with no `id`) is `could_not_run` with the reason, never a pass
-over zero items.
+and every row with the pack's `identity`. A run that cannot start (no golden set or no graders, a
+missing, unreadable or empty file, an item with no `id` or whose slots do not render) is
+`could_not_run` with the reason, never a pass over zero items.
 
 `source` is the template text under evaluation, so a candidate revision is graded before it is
 installed. `output(item)` is the `output=` type the producer itself compiles: a grammar that
@@ -255,8 +255,10 @@ class GoldenRun:
         status: `ran`, or `could_not_run` when nothing was fired.
         reason: Why the run could not run; empty when it ran.
         stamp: The pack's stamp (`pack`, `version`, `sha`, `identity`), the role's `tier` and
-            `model`, and `table_fingerprint` (None when the caller passed none). Two runs are
-            comparable only when `identity` matches.
+            `model`, `table_fingerprint` (None when the caller passed none) and
+            `output_schema_sha` (None for a prose pack; `identity` covers the manifest's pointer,
+            not the model it names). Two runs are comparable only when `identity` and
+            `output_schema_sha` match.
         rows: The graded rows (`rows_of`), each carrying `identity`.
         outs: `fire`'s results by item id.
         board: The evaluator's board; None when the run could not run.
@@ -319,8 +321,10 @@ async def fire_pack(
         table_fingerprint: The tier table's fingerprint, stamped on the run; None when unknown.
 
     Returns:
-        The run. No golden set declared, or a missing, unreadable or empty one, is `could_not_run`
-        with the reason, never a pass over zero items. The board grades the pack's own graders.
+        The run. No golden set or no graders declared, a missing, unreadable or empty golden file,
+        or an item whose slots do not render the pack's template is `could_not_run` with the
+        reason, never a pass over zero items or zero graders. The board grades the pack's own
+        graders.
 
     Invariants:
         - Never raises for a model, wire or golden-file failure.
@@ -332,6 +336,7 @@ async def fire_pack(
         "tier": role.tier,
         "model": role.resolved_model,
         "table_fingerprint": table_fingerprint,
+        "output_schema_sha": resolved.output_schema_sha,
     }
 
     def could_not_run(reason: str) -> GoldenRun:
@@ -340,14 +345,22 @@ async def fire_pack(
 
     if resolved.golden is None:
         return could_not_run("the pack declares no golden set")
+    if not resolved.graders:
+        return could_not_run("the pack declares no graders: a run would grade nothing")
     if not resolved.golden.is_file():
-        return could_not_run(f"golden file missing: {resolved.golden.name}")
+        return could_not_run(f"golden file missing: {pack.manifest.golden!r} resolved to {resolved.golden}")
     try:
         items = read_golden(resolved.golden)
     except (OSError, ValueError) as exc:  # a JSON or UTF-8 decode error is a ValueError
         return could_not_run(f"golden file unreadable: {type(exc).__name__}: {exc}"[:_REASON_CAP])
     if not items:
         return could_not_run("golden set is empty")
+    for it in items:
+        try:
+            pack.render_source(pack.source, **(it.get("slots") or {}))
+        except Exception as exc:  # any render failure is this item's defect, named before anything fires
+            why = f"golden item {it['id']!r} does not render: {type(exc).__name__}: {exc}"
+            return could_not_run(why[:_REASON_CAP])
     output: Any = resolved.output if resolved.output is not None else str
     outs = await fire(
         items,
