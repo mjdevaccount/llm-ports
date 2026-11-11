@@ -16,8 +16,23 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from itertools import islice
+from typing import Literal
 
-from llm_ports.ports._types import Outcome
+#: Every way one generation can end:
+#:
+#: - `ok`: the reply parsed into the output type.
+#: - `gated`: the category switchboard refused the call.
+#: - `unavailable`: the model server or gateway could not be reached or would not serve now, and
+#:   the input is not to blame.
+#: - `request_fault`: this request can never succeed as sent (a refused request, a context
+#:   overflow, a bug in the caller's own callback).
+#: - `truncated`: the token ceiling cut the reply. A budget failure, never a parse error.
+#: - `invalid`: the reply would not parse into the output type after every re-ask.
+#: - `refused`: the model or a content filter declined to answer.
+#:
+#: The detail under each outcome is `ports.Failure.kind`. A `match` over the outcomes keeps a
+#: default arm: a new failure mode is a new member.
+Outcome = Literal["ok", "gated", "unavailable", "request_fault", "truncated", "invalid", "refused"]
 
 #: The longest persisted reason line, in characters.
 REASON_MAX = 200
@@ -109,6 +124,7 @@ __all__ = [
     "REASON_MAX",
     "REQUEST_FAULT",
     "GenerationFailed",
+    "Outcome",
     "exception_chain",
     "failure_reason",
     "outcome_for_status",

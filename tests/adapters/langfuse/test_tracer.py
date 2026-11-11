@@ -117,9 +117,10 @@ def test_an_unmeasured_pair_sends_no_usage_block(rig) -> None:
     assert [OBS + "usage_details" in dict(s.attributes) for s in rig.spans()] == [False, False]
 
 
-def test_a_half_reported_pair_keeps_the_measured_side_and_books_the_other_as_zero() -> None:
-    assert tp.usage_details(120, None) == {"input": 120, "output": 0}
-    assert tp.usage_details(None, 30) == {"input": 0, "output": 30}
+def test_a_half_reported_pair_sends_only_the_measured_side() -> None:
+    # MUST FIRE: book the unreported side as 0 and a half-measured call looks cheaper than it was.
+    assert tp.usage_details(120, None) == {"input": 120}
+    assert tp.usage_details(None, 30) == {"output": 30}
     assert tp.usage_details(0, 0) == {"input": 0, "output": 0}
     assert tp.usage_details(None, None) is None
 

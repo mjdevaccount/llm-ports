@@ -360,7 +360,7 @@ def optimize[I, O](
         best_score=scores[best],
         improved=scores[best] > scores[0],
         candidates=len(scores),
-        metric_calls=int(result.total_metric_calls or 0),
+        metric_calls=int(result.total_metric_calls or 0),  # zero-ok: a search-budget count, not usage or cost
         n_train=len(train),
         n_val=len(val),
         reflections=reflector.calls,

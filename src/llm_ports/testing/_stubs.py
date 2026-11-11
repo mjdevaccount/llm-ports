@@ -1,6 +1,7 @@
 """Test doubles for the library's ports, so a consumer's tests do not hand-roll their own.
 
-- `StubGenerator` fakes `Generator` with a reply function and records every request.
+- `StubGenerator` fakes `Generator` with a reply function and records every request; a reply
+  function returns a `ports.failure(...)` to fail a call with that kind.
 - `RecordingTracer` fakes `Tracer` and records every generation, its end and its scores.
 - `StubEmbedder` fakes `Embedder` with deterministic unit vectors hashed from each text, and
   records every call.
@@ -32,26 +33,45 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from llm_ports.ports import (
+    Answered,
     Chunk,
     CitedAnswer,
     Embedded,
     EmbedInput,
+    Failure,
+    FailureKind,
     Generated,
     GenRequest,
     Outcome,
     Prompt,
     Reranked,
+    failure,
 )
 from llm_ports.ports.outcomes import failure_reason
 
 Reply = Callable[[GenRequest, type[Any]], Any]
+
+#: The kind a stub fails with for a configured outcome: one representative per outcome.
+_KIND_FOR: Mapping[Outcome, FailureKind] = {
+    "gated": "gated",
+    "unavailable": "server",
+    "request_fault": "bad_request",
+    "truncated": "truncated",
+    "invalid": "invalid_output",
+    "refused": "refused",
+}
+
+
+def _stub_failure(outcome: Outcome) -> Failure:
+    return failure(_KIND_FOR.get(outcome, "internal"), reason=f"stub {outcome}")
 
 
 class StubGenerator:
     """A `Generator` that answers from a reply function and records every request.
 
     The reply function's result maps onto a `Generated`: a plain value is wrapped as `ok`, a
-    `Generated` is returned as-is (any outcome), and a raised exception becomes `unavailable`.
+    `Generated` is returned as-is (any outcome), a `Failure` fails the call with that kind and
+    its outcome, and a raised exception becomes `unavailable` (kind `server`).
 
     Args:
         reply: A function of `(request, output type)`, or a non-callable value returned for every
@@ -81,16 +101,19 @@ class StubGenerator:
         """Return the reply function's answer to `req` as a `Generated`; `retry_message` is unused."""
         del retry_message
         self.requests.append(req)
+        answered = Answered(requested=req.model, model=req.model)
         try:
             got = self._reply(req, output)
         except Exception as exc:
-            return Generated(
-                value=None, outcome="unavailable", model=req.model, reason=failure_reason(exc), retries=None
-            )
+            got = failure("server", reason=failure_reason(exc))
         if isinstance(got, Generated):
             return got
+        if isinstance(got, Failure):
+            return Generated(
+                value=None, outcome=got.outcome, model=req.model, retries=None, answered=answered, failure=got
+            )
         problems = tuple(validate(got)) if validate is not None else ()
-        return Generated(value=got, outcome="ok", model=req.model, problems=problems)
+        return Generated(value=got, outcome="ok", model=req.model, problems=problems, answered=answered)
 
 
 @dataclass
@@ -209,12 +232,7 @@ class StubEmbedder:
         """Return one vector per text, or fail with the configured outcome."""
         self.calls.append((tuple(texts), input_type))
         if self._fail:
-            return Embedded(
-                vectors=(),
-                outcome=self._fail,
-                stamp=self._stamp,
-                reason=f"stub {self._fail}",
-            )
+            return Embedded(vectors=(), outcome=self._fail, stamp=self._stamp, failure=_stub_failure(self._fail))
         return Embedded(
             vectors=tuple(self.vector(t) for t in texts), outcome="ok", stamp=self._stamp, input_tokens=None
         )
@@ -241,18 +259,17 @@ class StubReranker:
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
         """Score each document by word overlap with `query`, or fail with the configured outcome."""
         self.calls.append((query, tuple(documents)))
+        answered = Answered(requested=self.model, model=self.model)
         if self._fail:
             return Reranked(
-                scores=(),
-                outcome=self._fail,
-                model=self.model,
-                reason=f"stub {self._fail}",
+                scores=(), outcome=self._fail, model=self.model, answered=answered, failure=_stub_failure(self._fail)
             )
         words = set(query.lower().split())
         return Reranked(
             scores=tuple(float(sum(w in words for w in d.lower().split())) for d in documents),
             outcome="ok",
             model=self.model,
+            answered=answered,
         )
 
 

@@ -114,6 +114,8 @@ nav:
       - adr/0016-seams-to-bigger-ml-engines.md
       - adr/0017-prompt-tuning-on-gepa-core.md
       - adr/0018-the-work-market-declaration-side.md
+      - adr/0019-a-result-names-what-was-measured-what-it-cost-and-who-answered.md
+      - adr/0020-a-failure-has-a-kind.md
       - adr/0026-a-pack-has-an-identity-beside-its-content-sha.md
   - Design:
       - design/LEARNING-LOOP-CORE.md

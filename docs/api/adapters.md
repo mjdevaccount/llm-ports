@@ -14,6 +14,18 @@
     options:
       show_root_heading: false
 
+## `llm_ports.adapters.genai_prices`
+
+::: llm_ports.adapters.genai_prices
+    options:
+      show_root_heading: false
+
+## `llm_ports.adapters.litellm_proxy`
+
+::: llm_ports.adapters.litellm_proxy
+    options:
+      show_root_heading: false
+
 ## `llm_ports.adapters.gepa`
 
 ::: llm_ports.adapters.gepa

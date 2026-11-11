@@ -147,3 +147,54 @@ async def test_the_shipped_rerankers_satisfy_the_port() -> None:
     res = await StubReranker().rerank("spy gamma", ["spy gamma flip", "weather", "gamma"])
     assert res.scores == (2.0, 0.0, 1.0)
     assert (await StubReranker(fail="unavailable").rerank("q", ["d"])).outcome == "unavailable"
+
+
+# ── failures acceptance test 10: the reranker's failures come from the shared table ──────────────
+
+
+@pytest.mark.parametrize(
+    ("status", "kind"),
+    [
+        (429, "rate_limited"),
+        (401, "auth"),
+        (404, "not_found"),
+        (500, "server"),
+        (503, "overloaded"),
+        (422, "bad_request"),
+    ],
+)
+async def test_a_non_200_carries_the_shared_kind(status: int, kind: str) -> None:
+    res = await _rr([], status=status).rerank("q", DOCS)
+    assert res.failure is not None and (res.failure.kind, res.failure.status) == (kind, status)
+    assert res.outcome == res.failure.outcome
+
+
+async def test_a_429_carries_the_server_wait() -> None:
+    def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "slow down"}, headers={"retry-after": "5"})
+
+    res = await HttpReranker(URL, "rr-model", transport=httpx.MockTransport(handle)).rerank("q", DOCS)
+    assert res.failure is not None and res.failure.retry_after_s == 5.0
+
+
+async def test_an_overflow_body_is_context_overflow() -> None:
+    def handle(_request: httpx.Request) -> httpx.Response:
+        body = {"error": {"message": "input exceeds the maximum context length", "type": "invalid_request_error"}}
+        return httpx.Response(400, json=body)
+
+    res = await HttpReranker(URL, "rr-model", transport=httpx.MockTransport(handle)).rerank("q", DOCS)
+    assert res.failure is not None and res.failure.kind == "context_overflow"
+
+
+async def test_transport_and_timeout_carry_their_kinds() -> None:
+    conn = await _rr(httpx.ConnectError("refused")).rerank("q", DOCS)
+    assert conn.failure is not None and (conn.failure.kind, conn.failure.phase) == ("transport", "connect")
+    slow = await _rr(httpx.ReadTimeout("slow")).rerank("q", DOCS)
+    assert slow.failure is not None and (slow.failure.kind, slow.failure.phase) == ("timeout", "read")
+
+
+async def test_a_broken_reply_is_invalid_output_and_ok_has_no_failure() -> None:
+    bad = await _rr(b"<html>oops</html>").rerank("q", DOCS)
+    assert bad.failure is not None and bad.failure.kind == "invalid_output"
+    good = await _rr([{"index": i, "relevance_score": float(i)} for i in range(3)]).rerank("q", DOCS)
+    assert good.ok and good.failure is None and good.answered is not None and good.answered.requested == "rr-model"

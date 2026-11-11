@@ -219,3 +219,43 @@ async def test_without_a_policy_a_request_is_sent_once() -> None:
     calls: list[int] = []
     res = await _embedder(_flaky(calls, {1})).embed(["a"])
     assert res.outcome == "unavailable" and res.retries == 0 and calls == [1]
+
+
+# ── failures acceptance test 10: the embedder's failures come from the shared table ──────────────
+
+
+@pytest.mark.parametrize(
+    ("status", "kind"),
+    [(429, "rate_limited"), (401, "auth"), (404, "not_found"), (500, "server"), (400, "bad_request")],
+)
+async def test_a_status_carries_the_shared_kind(status: int, kind: str) -> None:
+    res = await _embedder(_wire([], status=status)).embed(["a"])
+    assert res.failure is not None and res.failure.kind == kind and res.outcome == res.failure.outcome
+
+
+async def test_a_dead_wire_is_transport_and_a_wrong_dimension_is_invalid_output() -> None:
+    def boom(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    dead = await _embedder(httpx.MockTransport(boom)).embed(["a"])
+    assert dead.failure is not None and dead.failure.kind == "transport"
+    wrong = await _embedder(_wire([], dims=3)).embed(["a"])
+    assert wrong.failure is not None and wrong.failure.kind == "invalid_output"
+
+
+async def test_auth_is_not_retried_but_a_server_error_is() -> None:
+    # The retry predicate is `Failure.retryable`: a wait cannot fix a key, it can fix a busy server.
+    calls: list[int] = []
+    res = await _embedder(_flaky(calls, {1}, status=401), retry=NO_WAIT).embed(["a"])
+    assert res.failure is not None and res.failure.kind == "auth" and calls == [1]
+    calls = []
+    res = await _embedder(_flaky(calls, {1}, status=500), retry=NO_WAIT).embed(["a"])
+    assert res.ok and calls == [1, 1]
+
+
+async def test_an_ok_embed_reports_usage_and_who_answered() -> None:
+    res = await _embedder(_wire([])).embed(["a", "b"])
+    assert res.ok and res.failure is None and res.usage_v2 is not None and res.usage_v2.input == 6
+    assert res.answered is not None and res.answered.requested == "embeddings"
+    unmeasured = await _embedder(_wire([], usage=False)).embed(["a"])
+    assert unmeasured.usage_v2 is not None and unmeasured.usage_v2.unmeasured == 1

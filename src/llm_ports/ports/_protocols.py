@@ -22,12 +22,16 @@ Ten ports, each named for the pattern it stands for:
   document.
 - `Judge`: LLM-as-a-judge. A prompt, the reply it drew and a rubric become a graded verdict.
 
+Two smaller seams sit beside them: `Pricer` turns a call's usage into a `Cost`, and
+`GatewayReader` reads what a gateway in front of the model reported in its response headers.
+
 Invariants:
     - No I/O: the module holds Protocols only; the value types they exchange are in `_types`.
     - `Generator`, `Embedder` and `Reranker` never raise for a model, wire or gate failure; the
       failure is the result's `outcome`, and a partial result is `invalid`.
     - `Tracer` and `Generation` never raise; a sink that is down yields a no-op `Generation`.
     - `Judge` raises when the judging model cannot answer; the caller owns the catch.
+    - `Pricer.price` never raises; an unknown price is `Cost(usd=None)`, never 0.
 
 Rationale: ADR-0001.
 """
@@ -36,6 +40,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date
+from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
 from llm_ports.ports._types import (
@@ -51,6 +56,7 @@ from llm_ports.ports._types import (
     Prompt,
     Reranked,
 )
+from llm_ports.ports._usage import Answered, Cost, Usage
 
 
 @runtime_checkable
@@ -344,15 +350,53 @@ class Judge(Protocol):
         ...
 
 
+@runtime_checkable
+class Pricer(Protocol):
+    """A price table: a call's usage and who answered become what it cost."""
+
+    def price(self, usage: Usage, answered: Answered) -> Cost:
+        """Return the cost of `usage` on the model `answered` names.
+
+        Never raises: a model the table does not know is `Cost(None, "unknown",
+        reason="unknown_model")`, and usage with nothing measured is `reason="no_usage"`.
+
+        Rationale: ADR-0019.
+        """
+        ...
+
+
+@runtime_checkable
+class GatewayReader(Protocol):
+    """What a gateway in front of the model reported in a response's headers.
+
+    A module of two functions satisfies it (`llm_ports.adapters.litellm_proxy`).
+    """
+
+    def cost_from_headers(self, headers: Mapping[str, str]) -> Decimal | None:
+        """Return the cost the gateway reported for the response, or None when it reported none.
+
+        Raises:
+            ValueError: The cost header is present but not a number. A caller treats it as absent
+                and reports the bad header.
+        """
+        ...
+
+    def answered_from_headers(self, headers: Mapping[str, str]) -> tuple[str | None, str | None]:
+        """Return `(deployment id, upstream api base)` as the gateway reported them; None for each it did not."""
+        ...
+
+
 __all__ = [
     "Citer",
     "Embedder",
     "Evaluator",
+    "GatewayReader",
     "Generation",
     "Generator",
     "Grader",
     "Grounder",
     "Judge",
+    "Pricer",
     "PromptSource",
     "Reranker",
     "Retriever",

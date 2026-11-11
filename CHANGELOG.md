@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Behaviour fixes (read first)
+
+- **A reply the token ceiling cut is no longer `ok`.** A `finish_reason` of `length` is now
+  `truncated` (kind `truncated`) on the success path too, even when the cut text parsed; the cut
+  value is kept on the result. `Role.accept_truncated=True` (or `GenRequest.accept_truncated`)
+  restores `ok`, with a `CallWarning` on the result (ADR-0020).
+- **A caller's bug is no longer a model outage.** An exception the classifier does not recognise
+  (a `KeyError` in a `validate` function, a bug in a `model_for`) is now `request_fault` with kind
+  `internal`, never `unavailable`: it is not retried, failed over or counted against a backend.
+  It is reported as the event `llm_call_internal_error` with its traceback (ADR-0020).
+
 ### Changed
 
 - **A prompt pack now fails at load where it used to load** (ADR-0026):
@@ -36,6 +47,15 @@ All notable changes to this project are documented here. The format is based on
   paths.
 - `LangfusePromptSource` re-pushes a mirror whose `config.identity` differs from the seed's even
   when its content sha matches. `get`'s default `label` is unchanged (`production`).
+- The `pydantic-ai` and `evals` extras need pydantic-ai-slim / pydantic-evals **2.62** or newer
+  (was 2.57): 2.62 is the first release with every `ModelAPIError` category class the failure
+  table reads (`ModelAuthenticationError`, `ModelNotFoundError` and `ModelRequestRejectedError`
+  arrived in 2.62). Verified against 2.62.0 and 2.66.0.
+- `PydanticAIEmbedder`'s retry predicate is `Failure.retryable`: `auth`, `not_found`, `quota` and
+  `internal` are no longer retried.
+- `Generated.model` is documented as the requested id (deprecated in favour of `answered`);
+  `usage` and `finish_reason` are derived from `usage_v2` and `finish`. Their 1.22.0 values are
+  pinned by a golden test.
 
 ### Added
 
@@ -66,6 +86,45 @@ All notable changes to this project are documented here. The format is based on
   return `could_not_run` with the reason before anything fires, and emit a `golden_run` WARNING.
   `evals.golden.resolve_pack` resolves with `call.graders.GRADERS` behind the caller's registry.
   The `golden_item` event gains `identity`.
+- `Outcome` gains a seventh member, `refused`: the model or its provider declined (a
+  `content_filter` finish, an explicit `refusal`, pydantic-ai's `ContentFilterError`).
+- `ports.Failure` and `ports.failure(...)`: the failure's `kind` (16 kinds, `FailureKind`), with
+  `outcome` and `retryable` derived from it (`OUTCOME_FOR`, `RETRYABLE`), and `retry_after_s`,
+  `status`, `provider_code`, `phase`, `in_stream`, `reason`. On `Generated`, `Embedded` and
+  `Reranked` as `failure`; the 1.x `reason` is derived from it (ADR-0020).
+- The result contract (ADR-0019): `Usage` (inclusive buckets: `input`, `output`, `cache_read`,
+  `cache_write`, `reasoning`, `requests`, `unmeasured`, `details`; unknown is None), `Cost`
+  (`usd` as a `Decimal` or None, `source`, `priced_model`, `reason`), `Answered` (who answered:
+  the body's `model`, the gateway's `deployment`, `response_id`), `Finish` (`unified`, `raw`),
+  `CallWarning`, `Attempt`. `Generated` gains `usage_v2` (summed over every request of the call),
+  `cost`, `finish`, `answered`, `attempts`, `warnings`, `failure`; `Embedded` gains `usage_v2`,
+  `cost`, `answered`, `failure`; `Reranked` gains `answered`, `failure`.
+- The `Pricer` and `GatewayReader` ports, and `PydanticAIGenerator(pricer=, gateway=, extra=,
+  on_event=)`, `PydanticAIEmbedder(pricer=, gateway=, on_event=)`. Cost precedence: the gateway's
+  cost header, then the pricer, then unknown.
+- `adapters.genai_prices.GenaiPricesPricer` (new extra `[prices]`, `genai-prices>=0.2.3`, also in
+  `[all]`): prices a call from genai-prices' dated table, with per-request `overrides` for a
+  self-hosted model; an unknown model is `Cost(None, "unknown", reason="unknown_model")`.
+- `adapters.litellm_proxy` (no extra, no vendor import): reads a LiteLLM proxy's cost, deployment
+  and attempt headers (a `GatewayReader`), and `classify_gateway` names a spent budget or quota 429
+  `quota` (never retryable) while a parallel-limit 429 stays `rate_limited` with its wait.
+- The shared classification table `adapters._classify.classify_core` (exported from
+  `adapters.pydantic_ai` with `WireFacts`, `Classifier`, `kind_for_status`, `retry_after_s`,
+  `is_context_overflow`), used by the generator, the embedder and the HTTP reranker; and
+  `adapters.pydantic_ai.classify_failure`, `openai_finish`, `OPENAI_FINISH`, `parse_usage`,
+  `WireReply`.
+- Events: `llm_cost_unknown` (once per model per process), `llm_usage_unmeasured`,
+  `llm_pricer_failed`, `llm_gateway_header_invalid`, `llm_call_internal_error`. The
+  `llm_call_failed` event carries `kind`; the call's observation metadata carries the kind, the
+  cost and its source, who answered, the unified finish, the attempt count and every usage bucket.
+- `testing.StubGenerator`: a reply function may return a `ports.failure(...)` to fail a call with
+  that kind. The stubs fill `answered` and `failure`.
+
+### Fixed
+
+- `adapters.langfuse.tracer.usage_details` no longer books an unreported side as 0: only the
+  measured sides are sent.
+
 
 ## [1.22.0] - 2026-11-11
 

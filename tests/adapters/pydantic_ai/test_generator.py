@@ -138,8 +138,9 @@ def test_classify(exc: BaseException, finish: str | None, want: str) -> None:
     assert classify(exc, finish, gated=(_Refused,))[0] == want
 
 
-def test_with_no_gated_types_a_refusal_is_just_unavailable() -> None:
-    assert classify(_chain(RuntimeError("x"), _Refused("no")))[0] == "unavailable"
+def test_with_no_gated_types_a_refusal_is_a_bug_not_an_outage() -> None:
+    # 2.0 behaviour fix: an unrecognised exception is `internal` (request_fault), never `unavailable`.
+    assert classify(_chain(RuntimeError("x"), _Refused("no")))[0] == "request_fault"
 
 
 def test_a_reason_never_carries_the_error_body() -> None:

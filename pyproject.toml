@@ -40,13 +40,16 @@ Decisions = "https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr"
 # `adapters.pydantic_ai`: the Generator, the Embedder, output schemas and record/replay. httpx2 is
 # named, not inherited: the adapter builds its own `httpx2.AsyncClient` (ADR-0009); its floor is
 # the OpenAI SDK 3's (`openai` requires `httpx2>=2.12`). httpx stays for `IndexOrderedTransport` and a legacy transport.
-# tenacity carries the embedder's per-request retry (`RetryPolicy`).
-pydantic-ai = ["pydantic-ai-slim[openai]>=2.57,<3", "httpx2>=2.12", "httpx>=0.27", "tenacity>=8.2"]
+# tenacity carries the embedder's per-request retry (`RetryPolicy`). The floor is 2.62, the first
+# release with every `ModelAPIError` category class the failure taxonomy reads (ADR-0020).
+pydantic-ai = ["pydantic-ai-slim[openai]>=2.62,<3", "httpx2>=2.12", "httpx>=0.27", "tenacity>=8.2"]
 # `adapters.http`: the reranker, the grounder client and the index-ordered transport.
 http = ["httpx>=0.27"]
 # `adapters.pydantic_evals` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
 # pydantic-ai-slim to its own version, so it moves with the `pydantic-ai` extra.
-evals = ["pydantic-evals>=2.57,<3"]
+evals = ["pydantic-evals>=2.62,<3"]
+# `adapters.genai_prices` (the Pricer on genai-prices' dated price table, ADR-0019).
+prices = ["genai-prices>=0.2.3"]
 # `adapters.lettucedetect` with the REAL model (torch + transformers, hundreds of MB). The module
 # imports it lazily; without the extra it runs over an injected detector (`testing.StubDetector`).
 lettucedetect = ["lettucedetect>=0.1.6"]
@@ -82,7 +85,7 @@ mlflow = ["mlflow-skinny>=3.18,<4", "sqlalchemy>=2.0", "alembic>=1.13"]
 market = ["pluggy>=1.5"]
 # Every extra but `lettucedetect` (its model weighs hundreds of MB) and the `forecast` four (the
 # numpy/scipy/pandas stack, which a caller that only calls models never needs).
-all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql,gepa,market]"]
+all = ["llm-ports[pydantic-ai,http,evals,prices,langfuse,otel,sql,gepa,market]"]
 
 [build-system]
 requires = ["hatchling"]
@@ -96,14 +99,15 @@ packages = ["src/llm_ports"]
 # lettucedetect is NOT here: its tests run over `testing.StubDetector`; the real model is the
 # consumer's lane.
 dev = [
-    "pydantic-ai-slim[openai]>=2.57,<3",
+    "pydantic-ai-slim[openai]>=2.62,<3",
+    "genai-prices>=0.2.3",
     "httpx2>=2.12",
     "httpx>=0.27",
     "tenacity>=8.2",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.15",
-    "pydantic-evals>=2.57,<3",
+    "pydantic-evals>=2.62,<3",
     "langfuse>=5.0.2,<6",
     "opentelemetry-sdk>=1.30",
     "opentelemetry-semantic-conventions>=0.58b0",
@@ -223,10 +227,12 @@ id = "adapter-independence"
 name = "adapters do not import each other"
 type = "independence"
 modules = [
+    "llm_ports.adapters.genai_prices",
     "llm_ports.adapters.gepa",
     "llm_ports.adapters.http",
     "llm_ports.adapters.langfuse",
     "llm_ports.adapters.lettucedetect",
+    "llm_ports.adapters.litellm_proxy",
     "llm_ports.adapters.mlflow",
     "llm_ports.adapters.optuna",
     "llm_ports.adapters.otel",
@@ -296,7 +302,8 @@ filterwarnings = [
 # Types: the `types` CI job runs `mypy` (strict, over the package) and `pyright --verifytypes`
 # (the public surface fully typed). A vendor that ships no type information is listed here.
 [tool.mypy]
-files = ["src"]
+# tests/typing holds code that must keep type-checking against the public types.
+files = ["src", "tests/typing"]
 strict = true
 python_version = "3.12"
 
@@ -315,6 +322,8 @@ ignore_names = [
     "propose_new_texts", "date_from", "date_to", "question", "extras", "model_config", "create_score",
     # fields of test models that exist to shape a schema
     "confidence", "conviction", "entry_low", "hedge", "stop", "summary", "thesis", "ticker", "tickers",
+    # a Protocol's call signature; a result field the retry layer fills; a function only mypy reads
+    "__call__", "waited_s", "exhaustive",
 ]
 
 [tool.coverage.run]

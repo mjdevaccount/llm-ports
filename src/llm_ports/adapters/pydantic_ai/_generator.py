@@ -15,41 +15,76 @@ The model source is the caller's choice:
 - `openai_compatible(base_url, api_key)` builds a `model_for` for any OpenAI-wire endpoint (a
   LiteLLM gateway, vLLM, llama.cpp's server, OpenAI itself).
 
-`capture=` is a context-manager factory whose value (a `CaptureLike`) carries the last reply's
-`finish_reason`, `usage` and `sources` as they appeared on the wire (pydantic-ai drops
-non-standard keys). The default capture is filled by the response hook on the httpx2 client
-`openai_compatible` builds; a caller on its own transport passes its own factory.
+`capture=` is a context-manager factory whose value (a `CaptureLike`) carries what the wire
+showed: every reply's usage, finish reason, model, id and headers, and the latest response's
+status and error code (pydantic-ai drops non-standard keys and keeps no headers). The default
+capture is filled by the response hook on the httpx2 client `openai_compatible` builds; a caller
+on its own transport passes its own factory, and a capture without per-reply detail falls back to
+pydantic-ai's own messages.
+
+Every result carries the result contract (ADR-0019): `usage_v2` summed over every request,
+`answered` (the model and id the response reported, the gateway's deployment), `finish`, `cost`
+(the gateway's report, else the `pricer=`, else None), and `warnings` (settings the model class
+ignores). A failure carries a `Failure` from the shared classification table (ADR-0020).
 
 Invariants:
     - A model, wire or gate failure never raises; it returns a `Generated` with a named outcome.
-    - `classify` names the outcome from the exception chain, whose root cause is at the bottom
-      (pydantic-ai -> openai -> httpx2 -> the transport).
+    - `asyncio.CancelledError` is never caught: a cancelled call propagates.
+    - A length-cut reply is `truncated` even when it parsed; its value is kept on the result.
+      `GenRequest.accept_truncated` returns it as `ok` with a `CallWarning`.
+    - An exception the classification table does not know (a bug in the caller's `validate`, a
+      hook, this adapter) is `internal` under `request_fault`, and is reported as
+      `llm_call_internal_error` with its traceback; it never reads as a model outage.
     - Exception types passed as `gated=` (a refusal raised by the caller's transport) map to
       `gated`.
+    - Unknown is None: an unreported count, an unpriced model and a missing finish reason are
+      None, never 0 or `stop`.
 
-Rationale: ADR-0001; the httpx2 client, ADR-0009.
+Rationale: ADR-0001, ADR-0019, ADR-0020; the httpx2 client, ADR-0009.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager, contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
-from typing import Any, Protocol, cast
+import logging
+import traceback
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager
+from dataclasses import replace
+from typing import Any, cast
 
 from llm_ports._extras import extra
+from llm_ports.adapters._classify import Classifier, WireFacts
+from llm_ports.adapters.pydantic_ai._capture import CaptureLike, WireReply, capture, record_response
+from llm_ports.adapters.pydantic_ai._classify import classify, classify_failure
+from llm_ports.adapters.pydantic_ai._result import (
+    answered_of,
+    finish_of,
+    gateway_cost,
+    price,
+    refused_in,
+    responses,
+    unsupported,
+    usage_of,
+)
 from llm_ports.adapters.pydantic_ai._schema import framework_output
-from llm_ports.ports import Generated, GenRequest, Outcome
-from llm_ports.ports.outcomes import REASON_MAX, exception_chain, failure_reason, outcome_for_status
+from llm_ports.observability import EventHook, log_events
+from llm_ports.ports import (
+    Answered,
+    CallWarning,
+    Cost,
+    Failure,
+    Finish,
+    GatewayReader,
+    Generated,
+    GenRequest,
+    Pricer,
+    Usage,
+)
 
 with extra("pydantic-ai"):
     import httpx
     import httpx2
-    from pydantic_ai import Agent, BinaryContent, ModelRetry, NativeOutput, RunContext
-    from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
-    from pydantic_ai.messages import ModelResponse
+    from pydantic_ai import Agent, BinaryContent, ModelRetry, NativeOutput, RunContext, capture_run_messages
     from pydantic_ai.models import Model
     from pydantic_ai.profiles import ModelProfileSpec
     from pydantic_ai.settings import ModelSettings
@@ -58,81 +93,13 @@ with extra("pydantic-ai"):
 
 ModelFor = Callable[[GenRequest], AbstractAsyncContextManager[Model]]
 
-
-class CaptureLike(Protocol):
-    """What `PydanticAIGenerator` reads from a capture after a call; the type of its `capture=`."""
-
-    @property
-    def finish_reason(self) -> str | None:
-        """The last reply's `finish_reason`, or None."""
-
-    @property
-    def usage(self) -> Mapping[str, int | None]:
-        """`input` and `output` token counts; None for a count the server did not report."""
-
-    @property
-    def sources(self) -> tuple[str, ...] | None:
-        """The reply's top-level `sources` strings, or None."""
-
-
-@dataclass
-class _Capture:
-    """What the wire showed on the last chat-completions reply of one call.
-
-    Attributes:
-        finish_reason: The reply's `finish_reason`, or None when the reply had none.
-        usage: `input` and `output` token counts; a count the server did not report is None.
-        sources: The reply's non-standard top-level `sources` strings, or None when it had none.
-    """
-
-    finish_reason: str | None = None
-    usage: dict[str, int | None] = field(default_factory=dict)
-    sources: tuple[str, ...] | None = None
-
-
-_active: ContextVar[_Capture | None] = ContextVar("llm_ports_capture", default=None)
-
-
-@contextmanager
-def _capture() -> Iterator[_Capture]:
-    """Open a capture for one call; `_record_response` fills it from inside the httpx2 client."""
-    cap = _Capture()
-    token = _active.set(cap)
-    try:
-        yield cap
-    finally:
-        try:
-            _active.reset(token)
-        except ValueError:  # reset from another context: clear rather than leak this call's capture
-            _active.set(None)
-
-
-async def _record_response(response: httpx2.Response) -> None:
-    """Record a chat-completions reply into the active capture (an httpx2 `response` event hook).
-
-    Invariants:
-        - Never raises; an unreadable body is ignored.
-        - With no capture open, does nothing.
-    """
-    cap = _active.get()
-    if cap is None:
-        return
-    try:
-        await response.aread()
-        body = json.loads(response.content or b"{}")
-        if not isinstance(body, dict):
-            return
-        choices = body.get("choices") or []
-        choice = choices[0] if choices and isinstance(choices[0], dict) else {}
-        cap.finish_reason = choice.get("finish_reason")
-        usage = body.get("usage")
-        if not isinstance(usage, dict):
-            usage = {}
-        cap.usage = {"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens")}
-        src = body.get("sources")
-        cap.sources = tuple(u for u in src if isinstance(u, str)) if isinstance(src, list) else None
-    except Exception:  # telemetry must not break the call it describes
-        return
+#: The 1.x names of the capture and its hook, kept for callers that reached for them.
+_capture = capture
+_record_response = record_response
+#: Models already reported as `llm_cost_unknown` in this process.
+_COST_UNKNOWN_SEEN: set[str] = set()
+#: The longest traceback an `llm_call_internal_error` event carries, in characters.
+TRACEBACK_MAX = 4000
 
 
 def openai_compatible(
@@ -176,77 +143,13 @@ def openai_compatible(
     @asynccontextmanager
     async def model_for(req: GenRequest) -> AsyncIterator[Model]:
         async with httpx2.AsyncClient(
-            timeout=req.timeout_s, transport=as_httpx2(transport), event_hooks={"response": [_record_response]}
+            timeout=req.timeout_s, transport=as_httpx2(transport), event_hooks={"response": [record_response]}
         ) as client:
             provider = OpenAIProvider(base_url=base_url, api_key=api_key or "no-key", http_client=client)
             provider = OpenAIProvider(openai_client=provider.client.with_options(max_retries=max_retries))
             yield OpenAIChatModel(req.model, provider=provider, profile=profile, settings=settings)
 
     return model_for
-
-
-def classify(
-    exc: BaseException, finish_reason: str | None = None, *, gated: tuple[type[BaseException], ...] = ()
-) -> tuple[Outcome, str]:
-    """Name the outcome a failed run maps to, with a one-line reason.
-
-    The checks run in order: an exception of a `gated` type anywhere in the chain is `gated`; a
-    `length` finish is `truncated`, even though it surfaces as a parse error; an HTTP status maps
-    by `ports.outcomes.outcome_for_status`; a parse failure is `invalid`. Anything else is
-    `unavailable`. Pure.
-
-    Args:
-        exc: The exception the run raised.
-        finish_reason: The last reply's `finish_reason`, when the wire reported one.
-        gated: Exception types that mean the caller's gate refused the call.
-
-    Returns:
-        The outcome and its reason.
-
-    Rationale: ADR-0001.
-    """
-    chain = list(exception_chain(exc))
-    if gated:
-        for e in chain:
-            if isinstance(e, gated):
-                return "gated", str(e)[:REASON_MAX]
-    if finish_reason == "length":
-        return "truncated", "finish_reason=length: the token ceiling cut the reply"
-    for e in chain:
-        if isinstance(e, ModelHTTPError):
-            return outcome_for_status(e.status_code), failure_reason(e)
-        if isinstance(e, httpx2.HTTPStatusError | httpx.HTTPStatusError):
-            return outcome_for_status(e.response.status_code), failure_reason(e)
-    if isinstance(exc, UnexpectedModelBehavior):
-        return "invalid", failure_reason(exc)
-    return "unavailable", failure_reason(exc)
-
-
-def _usage(res: Any, fallback: Mapping[str, int | None]) -> dict[str, int | None] | None:
-    """Return the run's token usage, else the capture's.
-
-    pydantic-ai's run usage sums every request, re-asks included; the capture holds only the last
-    reply's. A count nobody reported stays None, never 0.
-
-    Rationale: ADR-0007.
-    """
-    try:
-        u = res.usage
-        if not hasattr(u, "input_tokens"):  # a method before pydantic-ai made it a property (2.6x)
-            u = u()
-        got = {"input": u.input_tokens, "output": u.output_tokens}
-        if any(v for v in got.values()):
-            return got
-    except Exception:  # a run without usage reads as unmeasured, never as a failed call
-        pass
-    return dict(fallback) or None
-
-
-def _last_finish(res: Any) -> str | None:
-    for m in reversed(res.all_messages()):
-        if isinstance(m, ModelResponse):
-            return getattr(m, "finish_reason", None)
-    return None
 
 
 def _prompt(req: GenRequest) -> Any:
@@ -266,6 +169,15 @@ class PydanticAIGenerator:
         gated: Exception types that classify as `gated`.
         wrap: Applied to each model that `model_for` yields (not to a fixed `model`), e.g. a
             `replay.Recorder`.
+        pricer: Prices a call the gateway did not price (e.g. `adapters.genai_prices.GenaiPricesPricer`);
+            None leaves `cost` None unless a gateway reported one.
+        gateway: Reads a gateway's response headers (e.g. the module `adapters.litellm_proxy`):
+            its cost, which takes precedence over `pricer`, and its deployment id.
+        extra: Classifiers consulted before the shared table, in order (e.g.
+            `adapters.litellm_proxy.classify_gateway`).
+        on_event: Receives `llm_call_internal_error`, `llm_cost_unknown`, `llm_usage_unmeasured`,
+            `llm_pricer_failed` and `llm_gateway_header_invalid`; without one they go to the stdlib
+            logger `llm_ports.adapters.pydantic_ai`.
 
     Raises:
         ValueError: When neither or both of `model` and `model_for` are given.
@@ -279,6 +191,10 @@ class PydanticAIGenerator:
         capture: Callable[[], AbstractContextManager[CaptureLike]] = _capture,
         gated: tuple[type[BaseException], ...] = (),
         wrap: Callable[[Model], Model] | None = None,
+        pricer: Pricer | None = None,
+        gateway: GatewayReader | None = None,
+        extra: Sequence[Classifier] = (),
+        on_event: EventHook | None = None,
     ) -> None:
         if (model is None) == (model_for is None):
             raise ValueError("PydanticAIGenerator needs exactly one of model= / model_for=")
@@ -287,6 +203,10 @@ class PydanticAIGenerator:
         self._capture = capture
         self._gated = gated
         self._wrap = wrap
+        self._pricer = pricer
+        self._gateway = gateway
+        self._extra = tuple(extra)
+        self._emit: EventHook = on_event or log_events("llm_ports.adapters.pydantic_ai")
 
     async def generate[T](
         self,
@@ -303,6 +223,7 @@ class PydanticAIGenerator:
             output: `str` for prose, a pydantic model, or a `JsonOutput` subclass.
             validate: Returns the problems in a parsed value. A non-empty list triggers a re-ask
                 while `req.output_retries` remain; after that the value is kept with its problems.
+                An exception it raises is `internal`, never a model outage.
             retry_message: Renders the problems into the re-ask message; by default they are
                 joined with "; ".
 
@@ -318,8 +239,17 @@ class PydanticAIGenerator:
                     model = self._wrap(model)
                 return await self.run(model, req, output, validate, retry_message)
         except Exception as exc:  # building the wire failed (bad URL, a refusing transport)
-            outcome, reason = classify(exc, gated=self._gated)
-            return Generated(value=None, outcome=outcome, model=req.model, reason=reason, retries=None)
+            got = classify_failure(exc, WireFacts(), extra=self._extra, gated=self._gated)
+            assert got is not None  # an exception always classifies
+            self._report_internal(req, exc, got)
+            return Generated(
+                value=None,
+                outcome=got.outcome,
+                model=req.model,
+                retries=None,
+                answered=Answered(requested=req.model),
+                failure=got,
+            )
 
     async def run[T](
         self,
@@ -335,31 +265,102 @@ class PydanticAIGenerator:
         validator and the classification.
         """
         agent, kept = self._agent(model, req, output, validate, retry_message)
-        with self._capture() as cap:
+        warns = unsupported(model, {**(model.settings or {}), **req.settings})
+        with self._capture() as cap, capture_run_messages() as messages:
             try:
                 res = await agent.run(_prompt(req))
             except Exception as exc:
-                outcome, reason = classify(exc, cap.finish_reason, gated=self._gated)
-                return Generated(
-                    value=None,
-                    outcome=outcome,
-                    model=req.model,
-                    reason=reason,
-                    retries=None,
-                    usage=cap.usage or None,
-                    sources=cap.sources,
-                    finish_reason=cap.finish_reason,
-                )
-        retries = max(0, sum(isinstance(m, ModelResponse) for m in res.all_messages()) - 1)
+                facts = self._facts(cap, messages)
+                got = classify_failure(exc, facts.wire, extra=self._extra, gated=self._gated)
+                assert got is not None  # an exception always classifies
+                self._report_internal(req, exc, got)
+                # 1.x `usage` on a failed run was the last reply's; it stays so (usage_v2 sums them all).
+                last_1x = dict(cap.usage) or None
+                return self._result(req, None, got, None, facts, cap, warns, (), usage_1x=last_1x)
+        facts = self._facts(cap, messages)
+        retries = max(0, len(responses(res.all_messages())) - 1)
+        got = classify_failure(None, facts.wire, extra=self._extra, gated=self._gated)
+        value: Any = res.output
+        if got is not None and got.kind == "truncated" and req.accept_truncated:
+            got = None
+            warns = (
+                *warns,
+                CallWarning("other", "accept_truncated", "finish_reason=length: the cut reply is kept as ok"),
+            )
+        elif got is not None and got.kind != "truncated":
+            value = None
+        return self._result(req, value, got, retries, facts, cap, warns, kept["problems"])
+
+    def _facts(self, cap: CaptureLike, messages: Sequence[Any]) -> _Facts:
+        """Read what the call showed, preferring the wire's replies over pydantic-ai's messages."""
+        replies: tuple[WireReply, ...] = tuple(getattr(cap, "replies", None) or ())
+        last: WireFacts | None = getattr(cap, "last", None)
+        resps = responses(messages)
+        if last is None and cap.finish_reason is not None:  # a 1.x capture: finish only
+            last = WireFacts(finish_raw=cap.finish_reason)
+        finish = finish_of(last, resps)
+        wire = replace(
+            last or WireFacts(),
+            finish_raw=finish.raw if finish is not None else None,
+            refusal=(last is not None and last.refusal) or refused_in(resps),
+        )
+        usage = usage_of(replies, resps)
+        return _Facts(replies, wire, finish, usage, resps)
+
+    def _result(
+        self,
+        req: GenRequest,
+        value: Any,
+        got: Failure | None,
+        retries: int | None,
+        facts: _Facts,
+        cap: CaptureLike,
+        warns: tuple[CallWarning, ...],
+        problems: tuple[Any, ...],
+        *,
+        usage_1x: Mapping[str, int | None] | None = None,
+    ) -> Generated[Any]:
+        """Assemble the result contract for one finished run, and emit its usage and cost events."""
+        answered = answered_of(req.model, facts.replies, facts.resps, self._gateway)
+        gw = gateway_cost(self._gateway, facts.replies, self._emit)
+        cost = price(facts.usage, answered, gateway_usd=gw, pricer=self._pricer, emit=self._emit)
+        self._report_usage(answered, facts.usage, cost)
         return Generated(
-            value=res.output,
-            outcome="ok",
+            value=value,
+            outcome=got.outcome if got is not None else "ok",
             model=req.model,
             retries=retries,
-            problems=kept["problems"],
-            usage=_usage(res, cap.usage),
+            problems=problems,
             sources=cap.sources,
-            finish_reason=cap.finish_reason or _last_finish(res),
+            usage=usage_1x,
+            usage_v2=facts.usage,
+            cost=cost,
+            finish=facts.finish,
+            answered=answered,
+            warnings=warns,
+            failure=got,
+        )
+
+    def _report_usage(self, answered: Answered, usage: Usage | None, cost: Cost | None) -> None:
+        model = answered.model or answered.requested
+        if usage is not None and usage.unmeasured:
+            self._emit(
+                logging.INFO,
+                "llm_usage_unmeasured",
+                {"model": model, "requests": usage.requests, "unmeasured": usage.unmeasured},
+            )
+        if cost is not None and cost.reason == "unknown_model" and model not in _COST_UNKNOWN_SEEN:
+            _COST_UNKNOWN_SEEN.add(model)
+            self._emit(logging.WARNING, "llm_cost_unknown", {"model": model, "priced_model": cost.priced_model})
+
+    def _report_internal(self, req: GenRequest, exc: BaseException, got: Failure) -> None:
+        if got.kind != "internal":
+            return
+        tb = "".join(traceback.format_exception(exc))[-TRACEBACK_MAX:]
+        self._emit(
+            logging.ERROR,
+            "llm_call_internal_error",
+            {"label": req.label, "model": req.model, "reason": got.reason, "traceback": tb},
         )
 
     @staticmethod
@@ -394,7 +395,28 @@ class PydanticAIGenerator:
         return agent, kept
 
 
+class _Facts:
+    """What one run showed: the wire's replies, the latest facts, the finish, the usage, the responses."""
+
+    __slots__ = ("finish", "replies", "resps", "usage", "wire")
+
+    def __init__(
+        self,
+        replies: tuple[WireReply, ...],
+        wire: WireFacts,
+        finish: Finish | None,
+        usage: Usage | None,
+        resps: Sequence[Any],
+    ) -> None:
+        self.replies = replies
+        self.wire = wire
+        self.finish = finish
+        self.usage = usage
+        self.resps = resps
+
+
 __all__ = [
+    "TRACEBACK_MAX",
     "CaptureLike",
     "ModelFor",
     "PydanticAIGenerator",

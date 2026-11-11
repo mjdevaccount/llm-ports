@@ -1,7 +1,8 @@
 """A fallback policy written as a `match` on the outcome, because every failure has a name.
 
 `generate` never raises for a model, wire or gate failure. Each one comes back as an outcome
-(`ok | gated | unavailable | request_fault | truncated | invalid`) with a short reason, so the
+(`ok | gated | unavailable | request_fault | truncated | invalid | refused`) with a short reason and a
+`res.failure.kind` that names the detail (`rate_limited`, `context_overflow`, `internal`, ...), so the
 policy is plain control flow: retry elsewhere on `unavailable`, give up on `gated`, shrink the
 request on `request_fault`, and so on.
 """
@@ -50,7 +51,7 @@ async def tag(ticket: str, *, budget_left: bool) -> str:
             return res.value if res.outcome == "ok" and res.value else "untagged"
         case "gated":  # a cap said no; nothing was sent
             return f"skipped: {res.reason}"
-        case _:  # request_fault / truncated / invalid: the reply is not usable as-is
+        case _:  # request_fault / truncated / invalid / refused: the reply is not usable as-is
             return "untagged"
 
 

@@ -99,7 +99,7 @@ async def test_a_failed_outcome_is_an_error_observation_and_still_returns(outcom
     ended = tracer.generations[0].ended
     assert ended is not None and ended["level"] == "ERROR" and outcome in ended["status_message"]
     assert events == [
-        (logging.WARNING, "llm_call_failed", {"role": "test.facade", "outcome": outcome, "reason": "why"})
+        (logging.WARNING, "llm_call_failed", {"role": "test.facade", "outcome": outcome, "kind": None, "reason": "why"})
     ]
 
 
