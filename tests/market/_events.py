@@ -14,3 +14,7 @@ class Events:
 
     def __call__(self, level: int, event: str, fields: Mapping[str, Any]) -> None:
         self.seen.append((level, event, dict(fields)))
+
+
+#: The output columns a spec with a `desired_ttl` must name.
+CACHE: dict[str, str] = {"cache_table": "out.items", "age_col": "made_at"}

@@ -123,6 +123,12 @@ def test_the_core_loads_no_vendor_module() -> None:
     assert _loaded_vendors(*CORE) == []
 
 
+def test_the_model_table_and_the_provider_registry_are_core() -> None:
+    """Spec routing test 11: a core-only install imports the table and `build` with no vendor."""
+    assert {"llm_ports.call.models", "llm_ports.call.providers", "llm_ports.ports._health"} <= set(CORE)
+    assert _loaded_vendors("llm_ports.call.models", "llm_ports.call.providers") == []
+
+
 @pytest.mark.skipif(not _installed("httpx"), reason="the `http` extra is not installed")
 def test_the_http_adapters_load_httpx_and_nothing_else() -> None:
     assert _loaded_vendors("llm_ports.adapters.http") == ["httpx"]

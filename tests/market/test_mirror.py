@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from llm_ports.market import CODE_OWNED, OPERATOR_TUNED, ActionRegistry, ActionSpec, sync_all
+from tests.market._events import CACHE
 
 
 class Mirror:
@@ -27,7 +28,7 @@ async def _h(_session: object, key: str) -> None: ...
 def _registry() -> ActionRegistry:
     reg = ActionRegistry("main")
     for action in ("a", "b", "c"):
-        reg.action(feature="f", action=action, desired_ttl="6h", model="m")(_h)
+        reg.action(feature="f", action=action, desired_ttl="6h", **CACHE, model="m")(_h)
     return reg
 
 

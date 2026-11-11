@@ -28,4 +28,5 @@ named in its record.
 | [0016](0016-seams-to-bigger-ml-engines.md) | Seams to bigger ML engines: run ids, artifact URIs, a `ModelRegistry` port, conformance suites, and MLflow as the first engine adapter |
 | [0017](0017-prompt-tuning-on-gepa-core.md) | Prompt tuning runs on the `gepa` core behind a caller's evaluator; the study UI is launched on demand |
 | [0018](0018-the-work-market-declaration-side.md) | The work market's declaration side is a core subpackage (`llm_ports.market`); packs from other distributions load through pluggy entry points (`adapters.pluggy`) |
+| [0022](0022-the-model-table.md) | The model table: schema 2 states each model's capabilities and its provider by name; capability is checked before the wire; providers and packs load through one strict plugin contract; a never-read gate fails closed |
 | [0026](0026-a-pack-has-an-identity-beside-its-content-sha.md) | A pack has an `identity` (`byte_sha` over the manifest and the closed template set) beside its frozen `content_sha`; CRLF is refused; the manifest is resolved by the library |

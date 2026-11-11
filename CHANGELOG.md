@@ -7,8 +7,44 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-### Changed
+### Changed (behaviour, stated first)
 
+- `adapters.pluggy.load_packs` raises `PackLoadError` (an `ImportError`) on the first pack that
+  fails, naming the group, the pack and the stage (`import`, `register`, `hook`, `duplicate`,
+  `pin`, `pending`). 1.22 recorded the failure and carried on, so a scheduler booted without a
+  producer it was meant to run. `load_packs(..., strict=False)` keeps the old record-and-continue
+  behaviour for a diagnostic. Entry points now load sorted by name, not in install order, and a
+  misspelled hook name fails at `pending` instead of loading a plugin that does nothing (ADR-0022).
+- A strict `load_packs` freezes the `ActionRegistry` it loaded into when it finishes, so a
+  declaration after the composition root raises `RuntimeError` (declare the process's own actions
+  first, or pass them as `builtins`); calling `load_packs` on an already frozen registry raises
+  before loading anything. `strict=False` leaves the registry open.
+- `market_pack_failed` keeps 1.22's `stage` vocabulary (`PackLoad.stage`: `import`, `validate`,
+  `pack`, `join`, plus `pin`) and adds `plugin_stage` in `PluginLoadError.stage`'s vocabulary.
+- `ActionRegistry`: re-declaring a held `feature.action` with any spec object other than the
+  identical one raises `DuplicateAction` (a `ValueError`) naming both origins, even when the
+  metadata is equal. 1.22 replaced the held spec, so an equal declaration with a different handler
+  swapped the handler in silently. Re-adding the identical object stays a no-op.
+- A `desired_ttl` needs both `cache_table` and `age_col` (the output row its age is measured
+  against); without them nothing can judge the TTL, so the declaration is refused at import.
+- `GateCache` fails closed until its first successful read: `check` (and `admit`) return
+  `gate_unread: ...` for every category, so a boot that forgot `refresh()` refuses instead of
+  admitting ungated. `GateCache(..., fail_open=True)` admits instead. Either way, each judgement
+  from never-read gates emits `market_gate_unread` (WARNING) with `serving: "closed"` or
+  `"open"`. A failed boot read keeps the gate closed until a later `refresh()` succeeds, and the
+  cache never reads on its own: call `await gates.refresh()` at boot and on a schedule.
+- The `market` extra needs `pluggy>=1.7` (was `>=1.5`).
+- `call.providers.build` refuses a secret whose value holds whitespace, a control or a non-ASCII
+  character (`TableInvalid` at `providers.<name>.secret`, naming the secret, never its value): no
+  header can carry it, and httpx quotes a refused header, value and all, in its error and its
+  DEBUG trace. A trailing newline from a secret file is the usual cause.
+- `adapters.pydantic_ai.openai_compatible` and `openai_compatible_embeddings` raise `ValueError`
+  at construction for an `api_key` that holds whitespace, a control or a non-ASCII character (the
+  message never shows the value). 1.22 accepted it and every call then failed with an error, and a
+  DEBUG log line, quoting `Bearer <key>`. `build`, the `openai_compatible` kind, these two and
+  `HttpProbe` share one validator.
+- Every `call.generate` result carries `stamp["tiers"]`, the fingerprint of the tier table that
+  routed it (absent only for a hand-built `Tier`).
 - **A prompt pack now fails at load where it used to load** (ADR-0026):
   - a template that `{% include %}`s, `{% import %}`s or `{% extends %}` a file not listed in
     `templates` or the new `includes`;
@@ -39,6 +75,54 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Tier table `schema_version = 2` (ADR-0022): `[providers.<name>]` (a registered `kind`, and by
+  name only a `base_url` key and a `secret` name), `[models.<key>]` (`call.models.ModelInfo`: wire
+  id, provider, `supports` from the closed `Capability` vocabulary, `thinking` style, limits that
+  are None when unknown, `slots`, `group`, `self_hosted`, `usd_per_request` as a `Decimal`),
+  `[policies.<name>]` (read-only), and per tier `policy`, `fallback` and `fallback_on`. Every
+  refusal is `TableInvalid(ValueError)` naming the dotted path. A table without `schema_version`
+  loads to the same values as 1.22.0, a `[providers]` or `[policies]` section in it included
+  (ignored, as 1.22 ignored it, and named once per load by a `llm_table_ignored` WARNING).
+  `Tier.policy` is read-only and hashable (nested tables read as mappings, arrays as tuples), so a
+  `Tier` hashes as it did in 1.22. New `Tier` fields (`info`, `policy`, `fallback`,
+  `fallback_on`, `table_fingerprint`) and `TierTable` fields (`model_info`, `providers`,
+  `policies`, `schema_version`) all default, so 1.x construction is unchanged.
+- `TierTable.fingerprint()` and `TierTable.require(role, *caps)`, which proves at import that a
+  role's tier and every fallback tier state the capabilities it needs.
+- The capability pre-check in `call.generate`: a request whose model does not state `vision`,
+  `web` or structured output (`json_schema`, or `json_object` in its place) ends `request_fault`
+  with an `unsupported: ...` reason and no wire request. A schema 1 table is not checked, and one
+  `llm_call_warning` per process says so; a role that overrides its tier's model id is named once.
+- On a schema 2 tier, `Role.model_settings()` sends a provider-neutral `thinking: bool`.
+- `call.providers`: `ProviderFactory`, `ProviderRegistry` (a duplicate kind raises naming both
+  plugins; frozen after load), `build(table, urls=, secrets=, deps=, factories=)`, which raises at
+  boot for an unknown kind, an unresolved URL key or a secret that resolves to nothing, and returns
+  `Backends` (`generator_for`, `chat_for`, `embedder_for`, `reranker_for`, `probe_for`, `aclose`).
+  `build` emits `llm_backends_built` with the fingerprint and the plugin origins; no secret value
+  is logged. `BuildDeps` and `Built` hold typed placeholders (`policy`, `limiter`, `pricer`,
+  `chat`) for the resilience, result-contract and chat rows.
+- `adapters.pydantic_ai.OpenAICompatibleFactory`, the `openai_compatible` kind (generator,
+  embedder per model that states `embed`, probe), and `translate_settings`, which spells
+  `thinking` per `ThinkingStyle` (`unified`, `chat_template`, `none`; `none` warns once per model
+  as `llm_call_warning` when a role asked to think).
+- `ports.Probe`, `ports.Health`, `ports.HealthState`; `adapters.http.HttpProbe` (`GET` one URL
+  under a 5 s deadline: `up` with the listed model ids, `down` when unreachable or an error
+  status, `unknown` when the probe itself failed or could not send its request, the credential
+  was refused (401/403, reason `auth: HTTP <status>`), the endpoint is missing (404/405), or a
+  200 body is not a model list; never raises). A `Health.reason` names an exception by its type
+  only, never its message, and a secret no header can carry is refused before any request.
+- `adapters.pluggy`: `load_providers` for the second entry-point group `llm_ports.providers`
+  (hook `register_providers(register)`, marker `provider_hookimpl`, `builtin(name, *factories)`),
+  on the same loader as packs; `load_packs(builtins=, pin=, strict=)`; `PluginLoadError`,
+  `PackLoadError`, `PluginStage`; `PackLoad.origin`; `packs_loaded(loads)` returning a
+  `call.providers.Loaded`; the event `plugins_loaded` (group, names, origins); the conventional
+  pin setting names `PACKS_PIN_ENV` and `PROVIDERS_PIN_ENV` (the library reads no environment).
+- `market`: `DuplicateAction`, `ActionRegistry(sources=...)` (a `source` id outside it is refused),
+  `ActionRegistry.freeze()`, `.frozen`, `.origin(feature, action)`, `add(..., origin=)` and
+  `include(..., origin=)`; `KillSwitch(..., registry=)` checks the paused set against the
+  registry on every parse; `GATE_UNREAD`; `LastKnown.known`.
+- `tests/contract/api_surface.json`: the public `__all__` of every module, snapshotted; a name
+  that disappears fails the suite.
 - `prompts.byte_sha(parts)`: sha256 over named byte strings, length-prefixed so a re-split, rename
   or reorder never collides. Pinned vectors freeze it.
 - `Pack.identity`: `byte_sha` over the manifest's bytes and every file of the closed template set,
