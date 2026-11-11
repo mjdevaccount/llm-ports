@@ -7,6 +7,48 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A prompt pack now fails at load where it used to load** (ADR-0026): a template that
+  `{% include %}`s, `{% import %}`s or `{% extends %}` a file not listed in `templates` or the new
+  `includes`, a dynamic include whose target cannot be read statically, and a pack file holding a
+  carriage return (CRLF or a lone CR) each raise `PromptPackInvalid` naming the file. Templates
+  render from exactly the manifest's files; nothing else in the pack directory is ever read.
+- `call.graders.GRADERS` is a read-only mapping (`types.MappingProxyType`): assigning into it raises
+  `TypeError`. `{**GRADERS, "mine": fn}` still copies and extends it.
+- `Pack.stamp()` gains the key `identity`. The `sha` key, `stamp_str()` and `content_sha` are
+  unchanged for every pack, byte for byte.
+- `PackManifest.graders` accepts bare grader names (resolved through a registry) as well as dotted
+  paths, and refuses a name listed twice.
+- `LangfusePromptSource.get` with no `label` serves under the seed's `config["label"]`, else
+  `production`, and re-pushes a mirror whose `config.identity` differs from the seed's even when
+  its content sha matches.
+
+### Added
+
+- `prompts.byte_sha(parts)`: sha256 over named byte strings, length-prefixed so a re-split, rename
+  or reorder never collides. Pinned vectors freeze it.
+- `Pack.identity`: `byte_sha` over the manifest's bytes and every file of the closed template set,
+  by sorted path. `Pack.files()` lists that set; `Pack.seed()` builds the repo `Seed` a managed
+  mirror copies, carrying `content_sha`, `identity` and the manifest's label in its config.
+- `PackManifest.includes`, `PackManifest.schema_version` (only `prompts.SCHEMA_VERSION` = 1 loads),
+  and `label`, the neutral alias of `langfuse_label` (YAML key and read-only property); the manifest
+  label is now read, by `Pack.seed()`.
+- `prompts.resolve(pack, registry=, import_roots=)` and `Pack.resolved(...)`, returning
+  `ResolvedPack`: the `output_schema` type imported only from the caller's module roots, each grader
+  looked up in a `GraderRegistry` (or a plain mapping), the golden path kept inside the pack
+  directory, and `output_schema_sha`. Every miss is `PromptPackInvalid` naming the field.
+  `prompts.schema_sha` hashes an output type's canonical JSON schema.
+- `prompts.scan(root, registry=, import_roots=)` reports resolution failures beside load failures;
+  `prompts.served_shas(root, key="identity")` serves identities for `unevaluated`.
+- `evals.golden.fire_pack(resolved, role=, generator_for=, ...)`: reads the pack's golden set
+  (`evals.golden.read_golden`: a JSON list, an object with `items`, or JSON lines), fires it, grades
+  it on the pack's graders and returns a `GoldenRun` stamped with `identity`, the role's tier and
+  model, and the table fingerprint the caller passes. A missing, unreadable or empty golden set is
+  `could_not_run` with the reason, never a pass over zero items, and emits a `golden_run` WARNING.
+  `evals.golden.resolve_pack` resolves with `call.graders.GRADERS` behind the caller's registry.
+  The `golden_item` event gains `identity`.
+
 ## [1.22.0] - 2026-11-11
 
 ### Added

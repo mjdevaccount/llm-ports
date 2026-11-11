@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import pytest
 from pydantic import BaseModel, Field
 
 from llm_ports.call import graders as cg
@@ -142,6 +143,18 @@ class TestBoardShape:
     def test_the_built_in_names_are_this_modules_functions(self) -> None:
         assert set(GRADERS) | {"cites_url", "no_refusal"} == set(cg.GRADERS)
         assert all(cg.GRADERS[n] is getattr(cg, n) for n in cg.GRADERS)
+
+    def test_the_table_is_read_only_and_extends_by_copying(self) -> None:
+        """Packs-and-evals acceptance 10: assigning into GRADERS raises; a copy extends it."""
+
+        def mine(_p: str, _v: Any, _r: Any) -> cg.CallScore:
+            return cg.CallScore("mine", 1.0, True, "")
+
+        with pytest.raises(TypeError):
+            cg.GRADERS["mine"] = mine  # type: ignore[index]  # the assignment under test is refused
+        extended = {**cg.GRADERS, "mine": mine}
+        assert extended["mine"] is mine and "mine" not in cg.GRADERS and set(extended) - set(cg.GRADERS) == {"mine"}
+        assert cg.score_one("mine", "", None, ROLE, extended).passed
 
 
 class TestWebGraders:
