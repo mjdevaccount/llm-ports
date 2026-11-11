@@ -1,4 +1,7 @@
-"""Adapters on pydantic-ai: `PydanticAIGenerator`, `PydanticAIEmbedder`, output schemas, and `replay`.
+"""Adapters on pydantic-ai: generator, embedder, output schemas, replay, the `openai_compatible` kind.
+
+`PydanticAIGenerator`, `PydanticAIEmbedder`, `replay`, and `OpenAICompatibleFactory`, the
+`openai_compatible` provider kind.
 
 The failure-classification table every adapter shares (`classify_core`, `WireFacts`) and the
 pydantic-ai categories over it (`classify_failure`) are exported here too.
@@ -31,6 +34,7 @@ from llm_ports.adapters.pydantic_ai._embedder import (
     PydanticAIEmbedder,
     openai_compatible_embeddings,
 )
+from llm_ports.adapters.pydantic_ai._factory import OpenAICompatibleFactory, translate_settings
 from llm_ports.adapters.pydantic_ai._generator import (
     TRACEBACK_MAX,
     ModelFor,
@@ -52,6 +56,7 @@ __all__ = [
     "EmbedModelFor",
     "IndexOrderedTransport",
     "ModelFor",
+    "OpenAICompatibleFactory",
     "PydanticAIEmbedder",
     "PydanticAIGenerator",
     "WireFacts",
@@ -70,4 +75,5 @@ __all__ = [
     "retry_after_s",
     "strict_json_schema",
     "structured_dict",
+    "translate_settings",
 ]

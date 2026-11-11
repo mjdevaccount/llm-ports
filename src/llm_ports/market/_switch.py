@@ -11,6 +11,9 @@ Invariants:
     - A non-empty paused set is emitted once per parse as `market_actions_disabled`, with
       `source` `configured` or `default`.
     - A paused action stays registered; the consumer's scheduler skips it.
+    - Constructed with a `registry`, every parse also checks the names against it (`unknown`): a
+      paused name that matches no action is `market_kill_unknown` at WARNING each time the setting
+      is read, so a typo cannot quietly pause nothing.
 
 Rationale: ADR-0018.
 """
@@ -46,9 +49,11 @@ class KillSwitch:
         default: The paused set while the setting is unset.
         on_event: Receives `market_actions_disabled` and `market_kill_unknown`; without one, the
             stdlib logger `llm_ports.market`.
+        registry: The actions the names must match; each parse runs `unknown` against it. None
+            checks nothing (call `unknown` yourself).
     """
 
-    __slots__ = ("_default", "_emit", "_keys", "_read")
+    __slots__ = ("_default", "_emit", "_keys", "_read", "_registry")
 
     def __init__(
         self,
@@ -56,8 +61,10 @@ class KillSwitch:
         *,
         default: Iterable[str] = (),
         on_event: EventHook | None = None,
+        registry: ActionRegistry | None = None,
     ) -> None:
         self._read = read
+        self._registry = registry
         self._default = frozenset(default)
         self._emit = on_event or _log_event
         self._keys: frozenset[str] | None = None
@@ -76,6 +83,8 @@ class KillSwitch:
                 source = "default" if raw is None else "configured"
                 self._emit(logging.INFO, "market_actions_disabled", {"actions": sorted(keys), "source": source})
             self._keys = keys
+            if self._registry is not None:
+                self.unknown(self._registry)
         return self._keys
 
     def is_disabled(self, feature: str, action: str) -> bool:

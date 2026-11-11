@@ -5,8 +5,10 @@ Invariants:
       producer with none cannot be judged stale and would read as unknown forever.
     - Interval literals are parsed when the spec is declared, so a malformed one fails at import,
       not on the first sync.
-    - Specs compare on their declared metadata (and `handler_path`), never on the callables: a
-      module imported twice declares an equal spec.
+    - Specs compare on their declared metadata (and `handler_path`), never on the callables. A
+      registry therefore never treats equality as sameness: only the identical object re-adds.
+    - A `desired_ttl` needs `cache_table` and `age_col`: a TTL with nothing to date the output
+      by can never be judged stale.
 
 Rationale: ADR-0018.
 """
@@ -14,7 +16,7 @@ Rationale: ADR-0018.
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -124,12 +126,15 @@ class ActionSpec:
         return span.total_seconds() / 3600.0 if span is not None else None
 
 
-def refusal(spec: ActionSpec, clocks: tuple[str, ...] = SILENCE_CLOCKS) -> str | None:
+def refusal(
+    spec: ActionSpec, clocks: Collection[str] = SILENCE_CLOCKS, sources: Collection[str] | None = None
+) -> str | None:
     """Return why `spec` cannot be declared, or None when it can.
 
     Args:
         spec: The declaration.
         clocks: The silence clocks the registry accepts.
+        sources: The source ids that exist (the consumer's lane registry); None checks none.
 
     Returns:
         The reason, naming the field; None for a declarable spec. Never raises.
@@ -147,10 +152,16 @@ def refusal(spec: ActionSpec, clocks: tuple[str, ...] = SILENCE_CLOCKS) -> str |
                 parse_interval(literal)
             except ValueError as exc:
                 return f"{label}: {exc}"
+    if spec.desired_ttl is not None and not (spec.cache_table and spec.age_col):
+        return "desired_ttl needs cache_table and age_col: a TTL with no output to date can never be judged stale"
     if spec.max_silence_h is not None and not spec.max_silence_h > 0:
         return f"max_silence_h must be > 0, not {spec.max_silence_h!r}"
     if spec.silence_clock not in clocks:
-        return f"silence_clock {spec.silence_clock!r} not in {clocks}"
+        return f"silence_clock {spec.silence_clock!r} not in {tuple(clocks)}"
+    if sources is not None:
+        unknown = [s for s in spec.source if s not in sources]
+        if unknown:
+            return f"source {unknown} not among the known sources"
     if isinstance(spec.lane, bool) or not isinstance(spec.lane, int) or spec.lane < 0:
         return f"lane must be an int >= 0, not {spec.lane!r}"
     if not spec.value_weight > 0:

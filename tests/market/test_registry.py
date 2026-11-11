@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from llm_ports.market import SILENCE_CLOCKS, ActionRegistry, ActionSpec, parse_interval, refusal
-from tests.market._events import Events
+from llm_ports.market import SILENCE_CLOCKS, ActionRegistry, ActionSpec, DuplicateAction, parse_interval, refusal
+from tests.market._events import CACHE, Events
 
 
 async def _handler(_session: object, key: str) -> dict[str, Any]:
@@ -30,7 +30,7 @@ def test_a_spec_with_no_freshness_rule_is_refused_at_decoration_and_not_register
     assert events.seen[0][2]["action"] == "zz.probe"
 
 
-@pytest.mark.parametrize("kw", [{"desired_ttl": "6h"}, {"cadence": "24h"}, {"max_silence_h": 48}])
+@pytest.mark.parametrize("kw", [{"desired_ttl": "6h", **CACHE}, {"cadence": "24h"}, {"max_silence_h": 48}])
 def test_each_freshness_rule_alone_is_admitted(kw: dict[str, Any]) -> None:
     reg = ActionRegistry()
     reg.action(feature="zz", action="probe", **kw)(_handler)
@@ -54,7 +54,7 @@ def test_each_freshness_rule_alone_is_admitted(kw: dict[str, Any]) -> None:
     ],
 )
 def test_a_malformed_field_is_refused(kw: dict[str, Any], match: str) -> None:
-    args: dict[str, Any] = {"feature": "zz", "action": "probe", "desired_ttl": "6h", **kw}
+    args: dict[str, Any] = {"feature": "zz", "action": "probe", "desired_ttl": "6h", **CACHE, **kw}
     reg = ActionRegistry()
     with pytest.raises(ValueError, match=match):
         reg.action(**args)(_handler)
@@ -63,14 +63,16 @@ def test_a_malformed_field_is_refused(kw: dict[str, Any], match: str) -> None:
 
 def test_a_registry_can_accept_its_own_clocks() -> None:
     reg = ActionRegistry(clocks=(*SILENCE_CLOCKS, "rth"))
-    reg.action(feature="zz", action="probe", desired_ttl="6h", silence_clock="rth")(_handler)
+    reg.action(feature="zz", action="probe", desired_ttl="6h", **CACHE, silence_clock="rth")(_handler)
     assert reg.clocks == ("wall", "session", "rth")
     assert reg.find("zz", "probe") is not None
 
 
 def test_spec_values_parse_and_name_themselves() -> None:
     reg = ActionRegistry()
-    reg.action(feature="f", action="a", desired_ttl="90m", cadence="2d", source="src", stale_fn=_stale)(_handler)
+    reg.action(feature="f", action="a", desired_ttl="90m", **CACHE, cadence="2d", source="src", stale_fn=_stale)(
+        _handler
+    )
     spec = reg[("f", "a")]
     assert (spec.key, spec.name, spec.source) == (("f", "a"), "f.a", ("src",))
     assert spec.ttl == timedelta(minutes=90)
@@ -84,24 +86,59 @@ def test_spec_values_parse_and_name_themselves() -> None:
     assert reg[("f", "c")].limit_h == 168.0 and reg[("f", "c")].source == ("x", "y")
 
 
-def test_an_equal_redeclaration_replaces_the_callables_and_a_different_one_raises() -> None:
-    reg = ActionRegistry("t")
-    reg.action(feature="f", action="a", desired_ttl="6h")(_handler)
+def test_a_redeclaration_raises_even_with_equal_metadata_and_the_identical_object_is_a_no_op() -> None:
+    events = Events()
+    reg = ActionRegistry("t", on_event=events)
+    reg.action(feature="f", action="a", desired_ttl="6h", **CACHE)(_handler)
 
     async def other(_session: object, key: str) -> None: ...
 
     other.__qualname__ = _handler.__qualname__
-    reg.action(feature="f", action="a", desired_ttl="6h")(other)
-    assert reg[("f", "a")].fn is other, "a re-import runs the newest callables"
-    with pytest.raises(ValueError, match="registered twice with a different spec"):
-        reg.action(feature="f", action="a", desired_ttl="12h")(_handler)
-    assert reg[("f", "a")].desired_ttl == "6h"
+    with pytest.raises(DuplicateAction, match=r"f\.a declared by both '[^']+_handler' and '[^']+_handler'"):
+        reg.action(feature="f", action="a", desired_ttl="6h", **CACHE)(other)
+    assert reg[("f", "a")].fn is _handler, "a different fn never swaps in"
+    assert events.seen[-1][1] == "market_action_refused"
+    with pytest.raises(DuplicateAction):
+        reg.action(feature="f", action="a", desired_ttl="12h", **CACHE)(_handler)
+    held = reg[("f", "a")]
+    assert reg.add(held) is held and len(reg) == 1, "the identical object re-adds as a no-op"
+    assert reg.origin("f", "a") == held.handler_path and reg.origin("f", "z") is None
+
+
+def test_a_ttl_needs_its_output_columns_and_a_source_must_exist() -> None:
+    reg = ActionRegistry("t", sources=("chain", "news"))
+    with pytest.raises(ValueError, match="desired_ttl needs cache_table and age_col"):
+        reg.action(feature="f", action="a", desired_ttl="6h", cache_table="out.items")(_handler)
+    with pytest.raises(ValueError, match=r"source \['tape'\] not among the known sources"):
+        reg.action(feature="f", action="a", cadence="1h", source=("chain", "tape"))(_handler)
+    reg.action(feature="f", action="a", desired_ttl="6h", **CACHE, source=("chain", "news"))(_handler)
+    assert len(reg) == 1 and reg.empty().find("f", "a") is None
+    spec = reg[("f", "a")]
+    assert refusal(spec, SILENCE_CLOCKS, ("chain",)) is not None and refusal(spec, SILENCE_CLOCKS, None) is None
+
+
+def test_a_frozen_registry_refuses_every_write_and_keeps_raw_teardown() -> None:
+    reg = ActionRegistry("t")
+    reg.action(feature="f", action="a", cadence="1h")(_handler)
+    assert not reg.frozen
+    reg.freeze()
+    assert reg.frozen
+    with pytest.raises(RuntimeError, match="frozen"):
+        reg.action(feature="f", action="b", cadence="1h")(_handler)
+    pack = ActionRegistry("pack")
+    pack.action(feature="g", action="x", cadence="1h")(_handler)
+    with pytest.raises(RuntimeError, match="frozen"):
+        reg.include(pack)
+    with pytest.raises(RuntimeError, match="frozen"):
+        reg[("g", "x")] = pack[("g", "x")]
+    del reg[("f", "a")]
+    assert len(reg) == 0 and not reg.empty().frozen
 
 
 def test_the_mapping_surface_keeps_the_guard_on_writes_and_stays_raw_on_deletes() -> None:
     reg = ActionRegistry("t")
-    reg.action(feature="f", action="a", desired_ttl="6h")(_handler)
-    reg.action(feature="f", action="b", desired_ttl="6h")(_handler)
+    reg.action(feature="f", action="a", desired_ttl="6h", **CACHE)(_handler)
+    reg.action(feature="f", action="b", desired_ttl="6h", **CACHE)(_handler)
     assert list(reg) == [("f", "a"), ("f", "b")]
     assert [s.name for s in reg.registered()] == ["f.a", "f.b"]
     spec = reg.pop(("f", "a"))
@@ -118,25 +155,29 @@ def test_the_mapping_surface_keeps_the_guard_on_writes_and_stays_raw_on_deletes(
 def test_include_is_all_or_nothing() -> None:
     events = Events()
     main = ActionRegistry("main", on_event=events)
-    main.action(feature="f", action="a", desired_ttl="6h")(_handler)
+    main.action(feature="f", action="a", desired_ttl="6h", **CACHE)(_handler)
     pack = ActionRegistry("pack")
-    pack.action(feature="g", action="x", desired_ttl="6h")(_handler)
-    pack.action(feature="f", action="a", desired_ttl="12h")(_handler)
-    with pytest.raises(ValueError, match=r"pack 'pack' cannot join 'main': f\.a"):
+    pack.action(feature="g", action="x", desired_ttl="6h", **CACHE)(_handler)
+    pack.action(feature="f", action="a", desired_ttl="12h", **CACHE)(_handler)
+    with pytest.raises(DuplicateAction, match=r"pack 'pack' cannot join 'main': market action f\.a"):
         main.include(pack)
     assert main.find("g", "x") is None, "no action of a refused pack joins"
     assert events.seen[-1][1] == "market_action_refused"
 
     clocked = ActionRegistry("clocked", clocks=("wall", "rth"))
-    clocked.action(feature="h", action="y", desired_ttl="6h", silence_clock="rth")(_handler)
+    clocked.action(feature="h", action="y", desired_ttl="6h", **CACHE, silence_clock="rth")(_handler)
     with pytest.raises(ValueError, match="silence_clock 'rth'"):
         main.include(clocked)
 
+    equal = ActionRegistry("equal")
+    equal.action(feature="f", action="a", desired_ttl="6h", **CACHE)(_handler)  # equal to main's, not the same
+    with pytest.raises(DuplicateAction, match=r"cannot join 'main': market action f\.a declared by both"):
+        main.include(equal, origin="equal-pack")
     ok = ActionRegistry("ok")
-    ok.action(feature="g", action="x", desired_ttl="6h")(_handler)
-    ok.action(feature="f", action="a", desired_ttl="6h")(_handler)  # equal to main's: joins
+    ok.action(feature="g", action="x", desired_ttl="6h", **CACHE)(_handler)
+    ok[("f", "a")] = main[("f", "a")]  # the identical object: no conflict
     assert [s.name for s in main.include(ok)] == ["g.x", "f.a"]
-    assert len(main) == 2
+    assert len(main) == 2 and main.origin("g", "x") == "ok"
 
 
 def test_the_default_event_sink_is_the_stdlib_logger(

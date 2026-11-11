@@ -1,0 +1,33 @@
+{
+  "ladder": {
+    "cloud_s": 60.0,
+    "default_s": 120.0,
+    "web_deadline_s": 240.0,
+    "web_timeout_s": 260.0
+  },
+  "models": {
+    "chat": "small-chat",
+    "cloud": "gpt-5-nano",
+    "web": "small-web"
+  },
+  "tiers": {
+    "cloud": {
+      "model": "gpt-5-nano",
+      "name": "cloud",
+      "self_hosted": false,
+      "timeout_s": 60.0
+    },
+    "local": {
+      "model": "small-chat",
+      "name": "local",
+      "self_hosted": true,
+      "timeout_s": 120.0
+    },
+    "local-web": {
+      "model": "small-web",
+      "name": "local-web",
+      "self_hosted": true,
+      "timeout_s": 260.0
+    }
+  }
+}

@@ -40,6 +40,7 @@ from typing import Any
 
 from llm_ports import ports
 from llm_ports.call.graders import CallGrader, CallScore, graders_for_inputs, score_all
+from llm_ports.call.models import missing, needs
 from llm_ports.call.roles import Role
 from llm_ports.observability import EventHook, NoopTracer, Observation, llm_feature, log_events, observe
 from llm_ports.ports import Generated, Generator, GenRequest, Tracer
@@ -207,6 +208,44 @@ def _grade(role: Role, prompt: str, res: Generated[Any], obs: Observation, h: Ho
     return replace(res, stamp={**res.stamp, "scores": scores})
 
 
+#: Warnings already emitted once in this process (`llm_call_warning`), by key.
+_WARNED: set[str] = set()
+
+
+def _warn_once(h: Hooks, key: str, setting: str, detail: str) -> None:
+    if key in _WARNED:
+        return
+    _WARNED.add(key)
+    _event(h, logging.WARNING, "llm_call_warning", kind="other", setting=setting, detail=detail)
+
+
+def _unsupported(role: Role, req: GenRequest, output: type[Any], web: bool, h: Hooks) -> Generated[Any] | None:
+    """Return the `request_fault` result when the tier's model lacks a capability the call needs.
+
+    Nothing is sent: the refusal is decided from the table before the wire. A schema 1 tier states
+    no capability, so nothing is checked, and `llm_call_warning` says so once per process.
+    """
+    info = role.resolved_tier.info
+    if info is None:
+        _warn_once(h, "capabilities", "capabilities", "a schema 1 tier table states no capability; none is checked")
+        return None
+    if role.model is not None and role.model != info.id:
+        _warn_once(h, f"model:{role.name}", "model", f"role {role.name!r} overrides the table's model id")
+    wanted = needs(structured=output is not str, images=bool(req.images), web=web)
+    lacks = missing(info, wanted)
+    if not lacks:
+        return None
+    reason = f"unsupported: model {info.key!r} ({info.id}) does not state {', '.join(lacks)}"
+    _event(h, logging.WARNING, "llm_call_failed", role=role.name, outcome="request_fault", reason=reason)
+    return Generated(value=None, outcome="request_fault", model=req.model, reason=reason[:REASON_MAX])
+
+
+def _stamped[T](role: Role, res: Generated[T]) -> Generated[T]:
+    """Stamp the fingerprint of the tier table that routed the call (`stamp["tiers"]`)."""
+    fp = role.resolved_tier.table_fingerprint
+    return res if fp is None else replace(res, stamp={**res.stamp, "tiers": fp})
+
+
 def _gated(role: Role, req: GenRequest, h: Hooks) -> Generated[Any] | None:
     """Return the `gated` result when the admit hook refuses the call, else None."""
     refused = h.admit(role) if h.admit is not None else None
@@ -301,9 +340,9 @@ async def generate[T](
         role = replace(role, graders=seen)
     req = request_for(role, prompt=prompt, system=system, images=images, settings=settings)
     with llm_feature(role.category):
-        gated = _gated(role, req, h)
-        if gated is not None:
-            return gated
+        refused = _unsupported(role, req, output, web, h) or _gated(role, req, h)
+        if refused is not None:
+            return _stamped(role, refused)
         res: Generated[T] | None = None
         trace = h.trace or _null_trace
         try:
@@ -326,6 +365,7 @@ async def generate[T](
             )
         if res is None:  # reachable only when a trace hook swallowed a generator exception
             raise RuntimeError(f"llm_call {role.name}: the generator returned nothing")
+        res = _stamped(role, res)
         await _report(role, prompt, res, h)
         return res
 

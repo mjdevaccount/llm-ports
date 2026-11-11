@@ -1,0 +1,65 @@
+# A consumer's schema 2 tier table, as a test fixture: one gateway, a self-hosted model that
+# thinks through its chat template, a web model, an embedder, and a cloud model to fall back to.
+schema_version = 2
+
+[ladder]
+default_s = 120.0
+web_s = 260.0
+cloud_s = 60.0
+
+[providers.gateway]
+kind = "openai_compatible"
+base_url = "gateway"
+secret = "gateway_key"
+
+[providers.local]
+kind = "openai_compatible"
+base_url = "local"
+
+[models.chat]
+id = "small-chat"
+provider = "local"
+context_window = 65536
+max_output = 8192
+supports = ["json_schema", "vision", "thinking", "tools"]
+thinking = "chat_template"
+slots = 1
+group = "gpu"
+usd_per_request = "0"
+
+[models.web]
+id = "small-web"
+provider = "local"
+supports = ["web", "json_object"]
+slots = 2
+group = "gpu"
+
+[models.embed]
+id = "small-embed"
+provider = "local"
+supports = ["embed"]
+
+[models.cloud]
+id = "gpt-5-nano"
+provider = "gateway"
+supports = ["json_schema", "vision", "tools"]
+thinking = "unified"
+self_hosted = false
+
+[policies.local]
+rate_limited = { attempts = 45, wait_initial_s = 2.0 }
+
+[tiers.local]
+model = "chat"
+timeout = "default_s"
+policy = "local"
+fallback = ["cloud"]
+
+[tiers.local-web]
+model = "web"
+timeout = "web_s"
+
+[tiers.cloud]
+model = "cloud"
+timeout = "cloud_s"
+fallback_on = ["overloaded", "quota"]

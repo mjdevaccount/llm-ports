@@ -80,9 +80,9 @@ gepa = ["gepa>=0.1.4"]
 # skinny client is enough against a tracking server; SQLAlchemy and Alembic let it open a local
 # `sqlite:///` store with no server (MLflow 3 refuses its old file store by default). Not in `all`.
 mlflow = ["mlflow-skinny>=3.18,<4", "sqlalchemy>=2.0", "alembic>=1.13"]
-# `adapters.pluggy` (action packs from other distributions, found by entry point). `llm_ports.market`
-# itself is core and needs no extra.
-market = ["pluggy>=1.5"]
+# `adapters.pluggy` (action packs and provider kinds from other distributions, found by entry
+# point). `llm_ports.market` and `llm_ports.call.providers` themselves are core and need no extra.
+market = ["pluggy>=1.7"]
 # Every extra but `lettucedetect` (its model weighs hundreds of MB) and the `forecast` four (the
 # numpy/scipy/pandas stack, which a caller that only calls models never needs).
 all = ["llm-ports[pydantic-ai,http,evals,prices,langfuse,otel,sql,gepa,market]"]
@@ -127,7 +127,7 @@ dev = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",
     "mlflow>=3.18,<4",
-    "pluggy>=1.5",
+    "pluggy>=1.7",
 ]
 docs = [
     "mkdocs-material>=9.8.0",
@@ -317,8 +317,14 @@ ignore_missing_imports = true
 [tool.vulture]
 paths = ["src", "tests"]
 min_confidence = 60
-ignore_decorators = ["@field_validator", "@model_validator", "@*.output_validator"]
+ignore_decorators = [
+    "@field_validator", "@model_validator", "@*.output_validator",
+    # pluggy finds hook implementations and specs by name; a pack's action is found through its registry
+    "@hookimpl", "@provider_hookimpl", "@_hookspec", "@_provider_hookspec", "@*.action", "@pytest.fixture",
+]
 ignore_names = [
+    # `BuildDeps` placeholders the resilience and result-contract rows read
+    "limiter", "pricer",
     "propose_new_texts", "date_from", "date_to", "question", "extras", "model_config", "create_score",
     # fields of test models that exist to shape a schema
     "confidence", "conviction", "entry_low", "hedge", "stop", "summary", "thesis", "ticker", "tickers",

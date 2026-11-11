@@ -5,6 +5,7 @@ mapping every adapter shares.
 """
 
 from llm_ports.ports import outcomes
+from llm_ports.ports._health import Health, HealthState, Probe
 from llm_ports.ports._failure import (
     FAILURE_KINDS,
     OUTCOME_FOR,
@@ -87,12 +88,15 @@ __all__ = [
     "Grader",
     "Grounder",
     "GroundingVerdict",
+    "Health",
+    "HealthState",
     "JsonOutput",
     "Judge",
     "JudgeVerdict",
     "Outcome",
     "Phase",
     "Pricer",
+    "Probe",
     "Prompt",
     "PromptSource",
     "Reranked",
