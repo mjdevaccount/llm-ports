@@ -15,7 +15,9 @@ from typing import Any
 import httpx
 import pytest
 from pydantic_ai.exceptions import (
+    ConcurrencyLimitExceeded,
     ContentFilterError,
+    FallbackExceptionGroup,
     ModelAPIError,
     ModelAuthenticationError,
     ModelConnectionError,
@@ -30,13 +32,23 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    RunCancelled,
     RunTimedOut,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
 )
 
-from llm_ports.adapters._classify import WireFacts, classify_core, kind_for_status, retry_after_s
+from llm_ports.adapters._classify import (
+    SEVERITY,
+    WireFacts,
+    classify_core,
+    kind_for_status,
+    raised_in_provider,
+    retry_after_s,
+    worst,
+)
 from llm_ports.adapters.pydantic_ai import classify_failure, openai_finish
-from llm_ports.ports import failure
+from llm_ports.ports import FAILURE_KINDS, failure
 
 M = "small-chat"
 
@@ -84,6 +96,9 @@ TABLE: list[tuple[str, BaseException, str | None, str, str]] = [
     ("builtin_connection", ConnectionRefusedError(), None, "transport", "unavailable"),
     ("httpx_connect", httpx.ConnectError("refused"), None, "transport", "unavailable"),
     ("httpx_read_timeout", httpx.ReadTimeout("slow"), None, "timeout", "unavailable"),
+    ("usage_limit", UsageLimitExceeded("request_limit of 3"), None, "caller_limit", "unavailable"),
+    ("app_cancelled", RunCancelled("cancelled by the app"), None, "caller_limit", "unavailable"),
+    ("concurrency", ConcurrencyLimitExceeded("queue full"), None, "overloaded", "unavailable"),
     ("a_bug", KeyError("headline"), None, "internal", "request_fault"),
     ("wrapped_bug", _chain(RuntimeError("validator"), ValueError("bad")), None, "internal", "request_fault"),
 ]
@@ -278,3 +293,113 @@ def test_every_status_keeps_its_1x_outcome() -> None:
     for status in range(400, 600):
         got = classify_core(None, WireFacts(status=status))
         assert got is not None and got.outcome == outcome_for_status(status), status
+
+
+# ── step 9: the provider's parse failure is not the caller's bug ─────────────────────────────────
+
+
+def _raise_from(module: str, exc: BaseException) -> BaseException:
+    """Raise `exc` from a frame whose module is `module`, and return it with that traceback."""
+    code = "def boom(e):\n    raise e\n"
+    scope: dict[str, Any] = {"__name__": module}
+    exec(compile(code, f"<{module}>", "exec"), scope)
+    try:
+        scope["boom"](exc)
+    except BaseException as caught:
+        return caught
+    raise AssertionError("unreachable")
+
+
+def _through_json_from(module: str) -> BaseException:
+    """A `JSONDecodeError` raised inside the standard library, called from `module`."""
+    code = "import json\ndef boom():\n    json.loads('{')\n"
+    scope: dict[str, Any] = {"__name__": module}
+    exec(compile(code, f"<{module}>", "exec"), scope)
+    try:
+        scope["boom"]()
+    except ValueError as caught:
+        return caught
+    raise AssertionError("unreachable")
+
+
+@pytest.mark.parametrize(
+    ("module", "provider"),
+    [
+        ("pydantic_ai.models.openai", True),
+        ("openai._models", True),
+        ("httpx2._models", True),
+        ("pydantic_ai._agent_graph", False),
+        ("llm_ports.adapters.pydantic_ai._generator", False),
+        ("consumer_app.validators", False),
+    ],
+)
+def test_who_raised_decides_malformed_response_or_internal(module: str, provider: bool) -> None:
+    exc = _raise_from(module, IndexError("list index out of range"))
+    assert raised_in_provider(exc) is provider
+    got = classify_failure(exc, WireFacts(status=200))
+    assert got is not None
+    want = ("malformed_response", "unavailable", True) if provider else ("internal", "request_fault", False)
+    assert (got.kind, got.outcome, got.retryable) == want
+
+
+def test_the_standard_library_is_skipped_when_finding_who_raised() -> None:
+    caller = _through_json_from("consumer_app.validators")
+    provider = _through_json_from("pydantic_ai.models.openai")
+    assert (raised_in_provider(caller), raised_in_provider(provider)) == (False, True)
+
+
+def test_an_exception_with_no_traceback_is_internal() -> None:
+    got = classify_failure(IndexError("never raised"), WireFacts())
+    assert got is not None and got.kind == "internal"
+
+
+# ── exception groups: each member through the same table, the worst names the call ──────────────
+
+
+def test_severity_ranks_every_kind_once() -> None:
+    assert sorted(SEVERITY) == sorted(FAILURE_KINDS)
+
+
+def test_a_fallback_group_is_its_worst_member() -> None:
+    group = FallbackExceptionGroup(
+        "all models failed",
+        [_http(ModelRateLimitError, 429), _http(ModelAuthenticationError, 401), ModelTimeoutError(M, "slow")],
+    )
+    got = classify_failure(group, WireFacts())
+    assert got is not None and (got.kind, got.outcome, got.status) == ("auth", "unavailable", 401)
+    assert got.reason.startswith("FallbackExceptionGroup: ")
+
+
+def test_a_group_of_retryable_members_stays_retryable() -> None:
+    group = FallbackExceptionGroup("all failed", [_http(ModelOverloadedError, 529), _http(ModelRateLimitError, 429)])
+    got = classify_failure(group, WireFacts())
+    assert got is not None and got.kind == "overloaded" and got.retryable
+
+
+def test_a_gated_member_and_a_cancelled_member_in_a_group() -> None:
+    class Refused(Exception):
+        pass
+
+    got = classify_core(ExceptionGroup("g", [Refused("off"), ValueError("x")]), WireFacts(), gated=(Refused,))
+    assert got is not None and got.kind == "internal", "a bug outranks a gate"
+    got = classify_core(ExceptionGroup("g", [Refused("off")]), WireFacts(), gated=(Refused,))
+    assert got is not None and got.kind == "gated"
+    with pytest.raises(asyncio.CancelledError):
+        classify_core(BaseExceptionGroup("g", [asyncio.CancelledError()]), WireFacts())
+
+
+def test_worst_of_nothing_is_an_error() -> None:
+    with pytest.raises(ValueError, match="no failures"):
+        worst([])
+    assert worst([failure("timeout"), failure("server")]).kind == "server"
+
+
+# ── step 5 needs a failure: an overflow phrase in a returned reply is not an overflow ────────────
+
+
+def test_an_overflow_message_on_a_returned_reply_is_not_a_failure() -> None:
+    facts = WireFacts(status=200, finish_raw="stop", error_message="maximum context length is 8192 tokens")
+    assert classify_core(None, facts) is None
+    coded = WireFacts(status=200, finish_raw="stop", error_code="context_length_exceeded")
+    assert classify_core(None, coded) is None
+    assert classify_core(None, WireFacts(status=400, error_code="context_length_exceeded")) is not None

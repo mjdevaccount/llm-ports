@@ -13,8 +13,9 @@ client: it reads header mappings and `WireFacts`.
 
 Invariants:
     - Pure: no I/O.
-    - A cost header that is present but not a finite, non-negative number raises `ValueError`
-      from `cost_from_headers`; the generator treats it as absent and reports it.
+    - A cost header that is present but not a plausible dollar amount (a finite number, 0 or
+      between `COST_MIN_USD` and `COST_MAX_USD`) raises `ValueError` from `cost_from_headers`;
+      the generator treats it as absent and reports it.
     - `classify_gateway` names only `quota`; a plain 429 is left to the shared table
       (`rate_limited`, retryable, with the server's `Retry-After`).
 
@@ -48,6 +49,12 @@ RETRIES_HEADER = "x-litellm-attempted-retries"
 #: Fallback deployments the proxy tried.
 FALLBACKS_HEADER = "x-litellm-attempted-fallbacks"
 
+#: The largest cost one call may report, in US dollars; at or past it the header is implausible
+#: (`1e9999999` overflows any sum).
+COST_MAX_USD = Decimal("1e7")
+#: The smallest non-zero cost one call may report; below it the header is implausible.
+COST_MIN_USD = Decimal("1e-12")
+
 #: A provider's own retry hint past this many seconds is a spent quota, not a queue: it resets on
 #: the provider's clock.
 QUOTA_HINT_MAX_S = 120.0
@@ -70,8 +77,11 @@ def cost_from_headers(headers: Mapping[str, str]) -> Decimal | None:
 
     Pure.
 
+    A reported zero (`0`, `-0`, `0.000`) is `Decimal(0)`.
+
     Raises:
-        ValueError: The header is present but not a finite, non-negative number.
+        ValueError: The header is present but not a finite number of dollars that is 0 or between
+            `COST_MIN_USD` and `COST_MAX_USD` (exclusive of the maximum).
     """
     raw = _get(headers, COST_HEADER)
     if raw is None:
@@ -80,8 +90,12 @@ def cost_from_headers(headers: Mapping[str, str]) -> Decimal | None:
         usd = Decimal(raw)
     except InvalidOperation as exc:
         raise ValueError(f"{COST_HEADER} is not a number: {raw[:40]!r}") from exc
-    if not usd.is_finite() or usd < 0:
-        raise ValueError(f"{COST_HEADER} is not a finite non-negative number: {raw[:40]!r}")
+    if not usd.is_finite():
+        raise ValueError(f"{COST_HEADER} is not a finite number: {raw[:40]!r}")
+    if usd.is_zero():
+        return Decimal(0)
+    if usd < 0 or not COST_MIN_USD <= usd < COST_MAX_USD:
+        raise ValueError(f"{COST_HEADER} is not a plausible cost in dollars: {raw[:40]!r}")
     return usd
 
 

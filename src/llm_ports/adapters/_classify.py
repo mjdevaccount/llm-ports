@@ -14,8 +14,14 @@ the facts the wire showed (`WireFacts`). The order is fixed, and the first match
    `TimeoutError` and `ConnectionError`) is `timeout` or `transport`, with its phase.
 8. No exception: a refusal or a `content_filter` finish is `refused`; a `length` finish is
    `truncated`, whether or not the output parsed; anything else is success (None).
-9. Anything else is `internal`, under `request_fault`: a bug is not an outage, so it is never
-   retried, failed over, or counted against a backend's health.
+9. An exception raised while a provider client was reading the response (its innermost owning
+   frame is in `PROVIDER_MODULES`; the standard library and pydantic are skipped as neutral) is
+   `malformed_response`, under `unavailable` and retryable: a 200 with `choices: []` is the
+   provider's fault. Anything else is `internal`, under `request_fault`: a bug in the caller's
+   code is not an outage, so it is never retried, failed over, or counted against a backend.
+
+An exception group (a fallback chain's `FallbackExceptionGroup`) is classified member by member
+through this same order, and the worst member names the call (`SEVERITY`).
 
 This module is shared by the adapters that classify (the pydantic-ai generator and embedder, the
 HTTP reranker, the LiteLLM gateway reader), so it sits directly under `adapters/`, outside the
@@ -34,9 +40,10 @@ from __future__ import annotations
 import asyncio
 import email.utils
 import math
+import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from llm_ports.ports import Failure, FailureKind, Phase, UnifiedFinish, failure
@@ -64,7 +71,37 @@ STATUS_KINDS: Mapping[int, FailureKind] = {
     529: "overloaded",
 }
 
+#: Modules whose code reads a provider's response: an exception raised there is the response's
+#: fault (step 9), not the caller's.
+PROVIDER_MODULES = ("pydantic_ai.models", "openai", "httpx", "httpx2", "httpcore")
+
+#: Every kind, worst first: the order an exception group's members are ranked by. A failure no
+#: retry fixes outranks one a retry might; among those, the caller's own fault outranks the
+#: backend's.
+SEVERITY: tuple[FailureKind, ...] = (
+    "internal",
+    "bad_request",
+    "context_overflow",
+    "unsupported",
+    "auth",
+    "not_found",
+    "quota",
+    "caller_limit",
+    "gated",
+    "refused",
+    "invalid_output",
+    "truncated",
+    "malformed_response",
+    "server",
+    "overloaded",
+    "rate_limited",
+    "timeout",
+    "transport",
+)
+
 _TRANSPORT_MODULES = ("httpx", "httpx2", "httpcore", "openai")
+#: Packages a frame is skipped through when finding who raised: they are called by both sides.
+_NEUTRAL = frozenset({"pydantic", "pydantic_core", "typing_extensions", "anyio", "sniffio"})
 _PHASES: Mapping[str, Phase] = {"Connect": "connect", "Read": "read", "Write": "write", "Pool": "pool"}
 
 
@@ -188,6 +225,38 @@ def _transport(chain: Sequence[BaseException]) -> Failure | None:
     return None
 
 
+def raised_in_provider(e: BaseException) -> bool:
+    """True when `e` was raised by code in `PROVIDER_MODULES` (step 9). Pure.
+
+    The owner is the innermost frame of `e`'s traceback whose package is neither the standard
+    library nor a neutral helper (pydantic, anyio): a `KeyError` from `json` inside a caller's
+    validator is owned by the validator; an `IndexError` in `pydantic_ai.models.openai` by the
+    provider client.
+    """
+    tb = e.__traceback__
+    owners: list[str] = []
+    while tb is not None:
+        owners.append(str(tb.tb_frame.f_globals.get("__name__", "")))
+        tb = tb.tb_next
+    for mod in reversed(owners):
+        top = mod.split(".")[0]
+        if top in sys.stdlib_module_names or top in _NEUTRAL or not top:
+            continue
+        return any(mod == p or mod.startswith(p + ".") for p in PROVIDER_MODULES)
+    return False
+
+
+def worst(failures: Sequence[Failure]) -> Failure:
+    """Return the worst of `failures` by `SEVERITY`; the first of equals. Pure.
+
+    Raises:
+        ValueError: `failures` is empty.
+    """
+    if not failures:
+        raise ValueError("worst() of no failures")
+    return min(failures, key=lambda f: SEVERITY.index(f.kind))
+
+
 def _phase(class_name: str) -> Phase | None:
     for prefix, phase in _PHASES.items():
         if class_name.startswith(prefix):
@@ -230,6 +299,13 @@ def classify_core(
     """
     if isinstance(exc, asyncio.CancelledError):
         raise exc
+    if isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        members = [
+            classify_core(m, facts, finish=finish, extra=extra, gated=gated, categorize=categorize)
+            for m in exc.exceptions
+        ]
+        named = worst([m for m in members if m is not None])
+        return replace(named, reason=f"{type(exc).__name__}: {named.reason}"[:REASON_MAX])
     for c in extra:
         got = c(exc, facts)
         if got is not None:
@@ -267,6 +343,9 @@ def classify_core(
         got = _transport(chain)
         if got is not None:
             return got
+        for e in chain:
+            if raised_in_provider(e):
+                return failure("malformed_response", status=status, reason=failure_reason(e))
         return failure("internal", reason=failure_reason(chain[0], with_cause=True))
     if facts.refusal or finish == "content_filter":
         return failure("refused", reason=f"the model declined (finish_reason={facts.finish_raw})")
@@ -279,6 +358,8 @@ __all__ = [
     "ERROR_MESSAGE_MAX",
     "OVERFLOW_CODES",
     "OVERFLOW_MESSAGES",
+    "PROVIDER_MODULES",
+    "SEVERITY",
     "STATUS_KINDS",
     "Categorize",
     "Classifier",
@@ -286,5 +367,7 @@ __all__ = [
     "classify_core",
     "is_context_overflow",
     "kind_for_status",
+    "raised_in_provider",
     "retry_after_s",
+    "worst",
 ]

@@ -27,10 +27,20 @@ def test_cost_reads_the_header_and_none_when_absent() -> None:
     assert lp.cost_from_headers({"x-litellm-response-cost": ""}) is None
 
 
-@pytest.mark.parametrize("raw", ["abc", "nan", "inf", "-0.5"])
-def test_a_cost_header_that_is_not_a_finite_non_negative_number_raises(raw: str) -> None:
+@pytest.mark.parametrize("raw", ["abc", "nan", "inf", "-0.5", "1e9999999", "1e7", "1e-9999999", "9e-13"])
+def test_a_cost_header_that_is_not_a_plausible_dollar_amount_raises(raw: str) -> None:
     with pytest.raises(ValueError, match="x-litellm-response-cost"):
         lp.cost_from_headers({"x-litellm-response-cost": raw})
+
+
+@pytest.mark.parametrize(
+    ("raw", "usd"),
+    [("-0", Decimal(0)), ("0E-50", Decimal(0)), ("1e-12", Decimal("1e-12")), ("9999999.99", Decimal("9999999.99"))],
+)
+def test_a_cost_header_at_the_edges_of_the_plausible_band_is_kept(raw: str, usd: Decimal) -> None:
+    got = lp.cost_from_headers({"x-litellm-response-cost": raw})
+    assert got == usd and got is not None and not got.is_signed(), "a zero is never a signed zero"
+    assert (lp.COST_MIN_USD, lp.COST_MAX_USD) == (Decimal("1e-12"), Decimal("1e7"))
 
 
 def test_answered_and_attempts_read_their_headers() -> None:

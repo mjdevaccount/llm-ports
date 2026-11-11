@@ -12,6 +12,8 @@ own categories as step 4, walking the whole exception chain:
 | `ModelAuthenticationError` | `auth` |
 | `ModelNotFoundError` | `not_found` |
 | `ModelTimeoutError`, `ModelRequestTimeout`, `RunTimedOut` | `timeout`, with its phase |
+| `RunCancelled` (the application cancelled the run), `UsageLimitExceeded` | `caller_limit` |
+| `ConcurrencyLimitExceeded` (the agent's queue is full) | `overloaded` |
 | `ModelConnectionError` | `transport`, with its phase |
 | `ModelServerError`, `ModelUnavailableError` | `server` |
 | `ContentFilterError` | `refused` |
@@ -38,6 +40,7 @@ from llm_ports.ports.outcomes import failure_reason
 
 with extra("pydantic-ai"):
     from pydantic_ai.exceptions import (
+        ConcurrencyLimitExceeded,
         ContentFilterError,
         ModelAPIError,
         ModelAuthenticationError,
@@ -53,8 +56,10 @@ with extra("pydantic-ai"):
         ModelServerError,
         ModelTimeoutError,
         ModelUnavailableError,
+        RunCancelled,
         RunTimedOut,
         UnexpectedModelBehavior,
+        UsageLimitExceeded,
     )
 
 #: The OpenAI-wire finish reasons and what each means; anything else is `other`. `tool_call` is
@@ -80,6 +85,9 @@ _CATEGORIES: tuple[tuple[type[BaseException], FailureKind], ...] = (
     (ModelTimeoutError, "timeout"),
     (ModelRequestTimeout, "timeout"),
     (RunTimedOut, "timeout"),
+    (RunCancelled, "caller_limit"),
+    (UsageLimitExceeded, "caller_limit"),
+    (ConcurrencyLimitExceeded, "overloaded"),
     (ModelConnectionError, "transport"),
     (ModelServerError, "server"),
     (ModelUnavailableError, "server"),

@@ -1,4 +1,51 @@
 {
+  "custom_capture_500": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "unavailable",
+    "problems": [],
+    "reason": "ModelServerError: status 500",
+    "retries": null,
+    "sources": null,
+    "usage": null,
+    "value": null
+  },
+  "custom_capture_invalid": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "invalid",
+    "problems": [],
+    "reason": "UnexpectedModelBehavior: Exceeded maximum output retries (1)",
+    "retries": null,
+    "sources": null,
+    "usage": null,
+    "value": null
+  },
+  "custom_capture_no_usage": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": null,
+    "value": "plain"
+  },
+  "custom_capture_usage": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": {
+      "input": 11,
+      "output": 7
+    },
+    "value": "plain"
+  },
   "function_ok": {
     "finish_reason": null,
     "model": "small-chat",

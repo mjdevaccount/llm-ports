@@ -435,3 +435,77 @@ async def test_a_failure_reason_is_the_1x_reason(wire) -> None:
     wire["replies"] = [(500, {"error": {"message": "boom"}}, {})]
     res = await _gen(wire).generate(REQ, _Note)
     assert res.failure is not None and res.reason == res.failure.reason and res.failure.status == 500
+
+
+# ── a cost header is a report, never a reason to fail the call ────────────────────────────────────
+
+#: (header, the gateway cost it yields): an implausible magnitude is absent; a signed zero is 0.
+COST_HEADERS = [("1e9999999", None), ("1e7", None), ("-0", Decimal(0)), ("1e-9999999", None)]
+
+
+@pytest.mark.parametrize(("header", "usd"), COST_HEADERS, ids=[h for h, _ in COST_HEADERS])
+async def test_an_implausible_cost_header_never_fails_generate(wire, header: str, usd: Decimal | None) -> None:
+    events = _Events()
+    wire["replies"] = [(200, _completion(_j("a")), {"x-litellm-response-cost": header})]
+    res = await _gen(wire, gateway=litellm_proxy, on_event=events).generate(REQ, _Note)
+    assert res.outcome == "ok" and res.value is not None and res.failure is None
+    assert (res.cost.usd if res.cost is not None else None) == usd
+    assert len(events.named("llm_gateway_header_invalid")) == (1 if usd is None else 0)
+
+
+class _HugeGateway:
+    """A custom gateway reader that passes an overflowing cost through, or raises."""
+
+    def __init__(self, *, boom: bool = False) -> None:
+        self.boom = boom
+
+    def cost_from_headers(self, _headers: Any) -> Decimal | None:
+        if self.boom:
+            raise RuntimeError("reader bug")
+        return Decimal("9e999999")
+
+    def answered_from_headers(self, _headers: Any) -> tuple[str | None, str | None]:
+        return None, None
+
+
+async def test_a_cost_sum_that_overflows_is_unknown_not_a_failure(wire) -> None:
+    events = _Events()
+    wire["replies"] = [(200, _completion(_j("")), {}), (200, _completion(_j("b")), {})]
+    gen = _gen(wire, gateway=_HugeGateway(), pricer=_Pricer(Decimal("0.5")), on_event=events)
+    res = await gen.generate(REQ, _Note, validate=lambda n: [] if n.headline else ["empty"], retry_message="; ".join)
+    assert res.outcome == "ok" and res.retries == 1
+    assert res.cost is not None and res.cost.source == "price_table", "the pricer answers once the gateway sum is lost"
+    (fields,) = events.named("llm_gateway_header_invalid")
+    assert fields["detail"].startswith("Overflow")
+
+
+async def test_a_gateway_reader_that_raises_is_unknown_cost_and_an_error_event(wire) -> None:
+    events = _Events()
+    wire["replies"] = [(200, _completion(_j("a")), {})]
+    res = await _gen(wire, gateway=_HugeGateway(boom=True), on_event=events).generate(REQ, _Note)
+    assert res.outcome == "ok" and res.cost is None
+    assert [lvl for lvl, e, _ in events.seen if e == "llm_gateway_header_invalid"] == [logging.ERROR]
+
+
+# ── step 9: a reply the provider client cannot read is the provider's fault ──────────────────────
+
+
+async def test_a_200_with_no_choices_is_malformed_response_and_retryable(wire) -> None:
+    events = _Events()
+    body = _completion(_j("a"))
+    body["choices"] = []
+    wire["replies"] = [(200, body, {})]
+    res = await _gen(wire, on_event=events).generate(REQ, _Note)
+    assert res.failure is not None
+    assert (res.outcome, res.failure.kind, res.failure.retryable) == ("unavailable", "malformed_response", True)
+    assert events.named("llm_call_internal_error") == [], "a provider's bad reply does not page as a code bug"
+
+
+async def test_a_validator_bug_after_a_good_reply_stays_internal(wire) -> None:
+    wire["replies"] = [(200, _completion(_j("a")), {})]
+
+    def validate(_n: _Note) -> list[str]:
+        return [{}["missing"]]
+
+    res = await _gen(wire).generate(REQ, _Note, validate=validate)
+    assert res.failure is not None and (res.outcome, res.failure.kind) == ("request_fault", "internal")

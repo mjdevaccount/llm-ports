@@ -1,7 +1,8 @@
 """Test doubles for the library's ports, so a consumer's tests do not hand-roll their own.
 
 - `StubGenerator` fakes `Generator` with a reply function and records every request; a reply
-  function returns a `ports.failure(...)` to fail a call with that kind.
+  function returns `Reply.failed(kind, **detail)` (or `ports.failure(...)`) to fail a call with
+  that kind.
 - `RecordingTracer` fakes `Tracer` and records every generation, its end and its scores.
 - `StubEmbedder` fakes `Embedder` with deterministic unit vectors hashed from each text, and
   records every call.
@@ -30,7 +31,7 @@ import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from llm_ports.ports import (
     Answered,
@@ -49,7 +50,39 @@ from llm_ports.ports import (
 )
 from llm_ports.ports.outcomes import failure_reason
 
-Reply = Callable[[GenRequest, type[Any]], Any]
+
+class _ReplyNamespace(type(Protocol)):  # type: ignore[misc]  # Protocol's metaclass, named at runtime
+    """Gives `Reply` a constructor that is not a protocol member, so any plain function is a `Reply`."""
+
+    def failed(cls, kind: FailureKind, **detail: Any) -> Failure:
+        """Return the `Failure` a reply function returns to fail its call with `kind`.
+
+        Pure. `detail` is `ports.failure`'s keyword arguments (`status`, `retry_after_s`, ...).
+
+        Raises:
+            ValueError: `kind` is not a `FailureKind`.
+        """
+        return failure(kind, **detail)
+
+
+class Reply(Protocol, metaclass=_ReplyNamespace):
+    """A `StubGenerator` reply function: `(request, output type)` to a value, `Generated` or `Failure`.
+
+    Any function of that shape is a `Reply`. `Reply.failed(kind, **detail)` builds the `Failure`
+    one returns to fail its call with that kind.
+
+    Example:
+        gen = StubGenerator(lambda req, out: Reply.failed("rate_limited", retry_after_s=2.0))
+    """
+
+    def __call__(self, req: GenRequest, output: type[Any], /) -> Any:
+        """Answer `req` for `output`."""
+        ...
+
+
+#: The model id a `StubGenerator` reports as having answered unless told otherwise; never the
+#: request's id, since a real result's `answered.model` is what the response said.
+STUB_MODEL = "stub-generator"
 
 #: The kind a stub fails with for a configured outcome: one representative per outcome.
 _KIND_FOR: Mapping[Outcome, FailureKind] = {
@@ -76,6 +109,7 @@ class StubGenerator:
     Args:
         reply: A function of `(request, output type)`, or a non-callable value returned for every
             request.
+        model: The model id the stub reports in `answered.model`.
 
     Attributes:
         requests: Every `GenRequest` received, in call order.
@@ -86,8 +120,9 @@ class StubGenerator:
           re-ask.
     """
 
-    def __init__(self, reply: Reply | Any) -> None:
+    def __init__(self, reply: Reply | Any, *, model: str = STUB_MODEL) -> None:
         self._reply: Reply = reply if callable(reply) else (lambda _req, _out: reply)
+        self._model = model
         self.requests: list[GenRequest] = []
 
     async def generate[T](
@@ -101,7 +136,7 @@ class StubGenerator:
         """Return the reply function's answer to `req` as a `Generated`; `retry_message` is unused."""
         del retry_message
         self.requests.append(req)
-        answered = Answered(requested=req.model, model=req.model)
+        answered = Answered(requested=req.model, model=self._model)
         try:
             got = self._reply(req, output)
         except Exception as exc:
@@ -336,6 +371,7 @@ _DIGITS = re.compile(r"\d+(?:\.\d+)?")
 
 
 __all__ = [
+    "STUB_MODEL",
     "RecordedGeneration",
     "RecordingTracer",
     "Reply",

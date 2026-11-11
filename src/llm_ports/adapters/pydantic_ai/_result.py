@@ -14,7 +14,7 @@ Rationale: ADR-0019.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, Overflow, Underflow, localcontext
 from typing import Any
 
 from llm_ports._extras import extra
@@ -100,11 +100,23 @@ def answered_of(
     return Answered(requested=requested, model=model, deployment=deployment, response_id=rid)
 
 
+def usage_1x(usage: Usage | None, captured: Mapping[str, int | None] | None) -> dict[str, int | None] | None:
+    """The 1.x `Generated.usage` of a returned run, as 1.22.0 computed it.
+
+    The summed counts when either is non-zero; else whatever the capture recorded (a 1.x custom
+    capture that saw no usage block recorded nothing, which 1.x reported as None).
+    """
+    if usage is not None and (usage.input or usage.output):
+        return dict(usage.as_mapping())
+    return dict(captured or {}) or None
+
+
 def gateway_cost(gateway: GatewayReader | None, replies: Sequence[WireReply], emit: Emit) -> Decimal | None:
     """The gateway's cost for the call: the sum over every reply, when every reply carried one.
 
-    A cost header that is present but not a number is treated as absent, and reported as
-    `llm_gateway_header_invalid`.
+    Never raises: a cost header the reader refuses, a reader that fails, or a sum that overflows
+    leaves the cost unknown (None) and is reported as `llm_gateway_header_invalid`; the call it
+    prices is unaffected.
     """
     if gateway is None or not replies:
         return None
@@ -112,13 +124,21 @@ def gateway_cost(gateway: GatewayReader | None, replies: Sequence[WireReply], em
     for r in replies:
         try:
             got = gateway.cost_from_headers(r.headers)
-        except ValueError as exc:
-            emit(30, "llm_gateway_header_invalid", {"detail": str(exc)[:200]})
+            if got is None:
+                return None
+            total = _add(total, got)
+        except Exception as exc:  # a cost is a report about the call, never a reason to fail it
+            level = 30 if isinstance(exc, ValueError | ArithmeticError) else 40
+            emit(level, "llm_gateway_header_invalid", {"detail": f"{type(exc).__name__}: {exc}"[:200]})
             return None
-        if got is None:
-            return None
-        total += got
     return total
+
+
+def _add(a: Decimal, b: Decimal) -> Decimal:
+    """`a + b`, raising `ArithmeticError` on overflow, underflow or an invalid operand."""
+    with localcontext() as ctx:
+        ctx.traps[Overflow] = ctx.traps[Underflow] = ctx.traps[InvalidOperation] = True
+        return a + b
 
 
 def price(

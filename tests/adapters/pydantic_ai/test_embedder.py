@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import struct
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -259,3 +260,33 @@ async def test_an_ok_embed_reports_usage_and_who_answered() -> None:
     assert res.answered is not None and res.answered.requested == "embeddings"
     unmeasured = await _embedder(_wire([], usage=False)).embed(["a"])
     assert unmeasured.usage_v2 is not None and unmeasured.usage_v2.unmeasured == 1
+
+
+# ── a cost header is a report, never a reason to fail or raise from embed ─────────────────────────
+
+
+def _with_cost(inner: httpx.MockTransport, header: str) -> httpx.MockTransport:
+    async def handler(req: httpx.Request) -> httpx.Response:
+        r = await inner.handle_async_request(req)
+        await r.aread()
+        return httpx.Response(
+            r.status_code, content=r.content, headers={**r.headers, "x-litellm-response-cost": header}
+        )
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize(
+    ("header", "usd"),
+    [("1e9999999", None), ("1e7", None), ("-0", Decimal(0)), ("1e-9999999", None)],
+    ids=["1e9999999", "1e7", "-0", "1e-9999999"],
+)
+async def test_an_implausible_cost_header_never_fails_embed(header: str, usd: Decimal | None) -> None:
+    from llm_ports.adapters import litellm_proxy
+
+    seen: list[str] = []
+    emb = _embedder(_with_cost(_wire([]), header), gateway=litellm_proxy, on_event=lambda _l, e, _f: seen.append(e))
+    res = await emb.embed(["a", "b"])
+    assert res.outcome == "ok" and len(res.vectors) == 2 and res.failure is None
+    assert (res.cost.usd if res.cost is not None else None) == usd
+    assert seen.count("llm_gateway_header_invalid") == (1 if usd is None else 0)

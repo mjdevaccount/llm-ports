@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -53,7 +54,21 @@ def _completion(content: str, *, finish: str = "stop", usage: bool = True, **ext
     return body
 
 
-def _wire(*replies: tuple[int, Any]) -> pag.PydanticAIGenerator:
+@dataclass
+class Capture1x:
+    """A consumer's own 1.x capture: it records a finish reason and nothing else."""
+
+    finish_reason: str | None = None
+    usage: dict[str, int | None] = field(default_factory=dict)
+    sources: tuple[str, ...] | None = None
+
+
+@contextmanager
+def capture_1x() -> Iterator[Capture1x]:
+    yield Capture1x(finish_reason="stop")
+
+
+def _wire(*replies: tuple[int, Any], capture: Any = None) -> pag.PydanticAIGenerator:
     sent: list[int] = []
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -61,9 +76,11 @@ def _wire(*replies: tuple[int, Any]) -> pag.PydanticAIGenerator:
         code, body = replies[min(len(sent) - 1, len(replies) - 1)]
         return httpx.Response(code, json=body)
 
+    kw: dict[str, Any] = {"capture": capture} if capture is not None else {}
     return pag.PydanticAIGenerator(
         model_for=pag.openai_compatible("http://gateway.test/v1", "k", transport=httpx.MockTransport(handler)),
         gated=(Refused,),
+        **kw,
     )
 
 
@@ -106,6 +123,18 @@ async def run_all() -> dict[str, Any]:
     out["wire_413"] = _dump(await _wire((413, {"error": {"message": "big"}})).generate(REQ, Note))
     out["wire_429"] = _dump(await _wire((429, {"error": {"message": "slow"}})).generate(REQ, Note))
     out["wire_500"] = _dump(await _wire((500, {"error": {"message": "boom"}})).generate(REQ, Note))
+
+    custom = capture_1x
+    out["custom_capture_no_usage"] = _dump(
+        await _wire((200, _completion("plain", usage=False)), capture=custom).generate(REQ, str)
+    )
+    out["custom_capture_usage"] = _dump(await _wire((200, _completion("plain")), capture=custom).generate(REQ, str))
+    out["custom_capture_500"] = _dump(
+        await _wire((500, {"error": {"message": "boom"}}), capture=custom).generate(REQ, str)
+    )
+    out["custom_capture_invalid"] = _dump(
+        await _wire((200, _completion("not json")), capture=custom).generate(REQ, Note)
+    )
 
     def refusing(_req: GenRequest) -> Any:
         raise Refused("category_disabled: switched off")

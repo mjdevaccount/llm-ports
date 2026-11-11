@@ -5,6 +5,7 @@ against its port's contract; `testing.langfuse` (the `langfuse` extra) is import
 """
 
 from llm_ports.testing._stubs import (
+    STUB_MODEL,
     RecordedGeneration,
     RecordingTracer,
     Reply,
@@ -17,6 +18,7 @@ from llm_ports.testing._stubs import (
 )
 
 __all__ = [
+    "STUB_MODEL",
     "RecordedGeneration",
     "RecordingTracer",
     "Reply",

@@ -32,20 +32,30 @@ Every consumer re-derived the detail from provider strings: a 429 with "budget" 
 1. `Outcome` gains exactly one member, `refused`: the model or its provider declined.
 2. `Failure(kind, outcome, retryable, retry_after_s, status, provider_code, phase, in_stream,
    reason)`, with `outcome` and `retryable` derived from `kind` (`OUTCOME_FOR`, `RETRYABLE`).
-   Sixteen kinds: `gated`; under `unavailable` `rate_limited`, `quota`, `overloaded`, `server`,
-   `timeout`, `transport`, `auth`, `not_found`; under `request_fault` `bad_request`,
-   `context_overflow`, `unsupported`, `internal`; `truncated`; `invalid_output`; `refused`.
+   Eighteen kinds: `gated`; under `unavailable` `rate_limited`, `quota`, `overloaded`, `server`,
+   `timeout`, `transport`, `auth`, `not_found`, `malformed_response`, `caller_limit`; under
+   `request_fault` `bad_request`, `context_overflow`, `unsupported`, `internal`; `truncated`;
+   `invalid_output`; `refused`.
 3. One classification order (`adapters._classify.classify_core`): extra classifiers first (a
    gateway's knowledge), then a gated type in the chain, the framework's categories (pydantic-ai's
    `ModelAPIError` classes, walked over the whole chain), a context-overflow code or message, the
-   HTTP status, a transport error, and otherwise `internal`. With no exception, a refusal or
-   `content_filter` finish is `refused` and a `length` finish is `truncated`.
+   HTTP status, a transport error, then `malformed_response` when a provider client raised while
+   reading the response, and otherwise `internal`. With no exception, a refusal or
+   `content_filter` finish is `refused` and a `length` finish is `truncated`. An exception group
+   (a fallback chain's) is classified member by member, and its worst member names the call
+   (`SEVERITY`).
 4. **Behaviour fix: a `length` finish is `truncated` on the success path too.** The cut value is
    kept on the result; `Role.accept_truncated` / `GenRequest.accept_truncated` restore `ok` with
    a `CallWarning`.
-5. **Behaviour fix: an unrecognised exception is `internal`, under `request_fault`**, never
-   retried and never counted against a backend. It is reported as `llm_call_internal_error` with
-   its traceback.
+5. **Behaviour fix: a caller's bug is `internal`, under `request_fault`**, never retried and
+   never counted against a backend. It is reported as `llm_call_internal_error` with its
+   traceback. Who raised decides: an exception whose innermost owning frame is a provider client
+   (`PROVIDER_MODULES`: `pydantic_ai.models`, `openai`, `httpx`, `httpx2`, `httpcore`) is that
+   provider's malformed reply (`malformed_response`, `unavailable`, retryable), as is a 200 with
+   `choices: []`. pydantic-ai's `UsageLimitExceeded` and an application's `RunCancelled` are
+   `caller_limit` (`unavailable`, not retryable: a limit the caller set does not lift within a
+   backoff); `ConcurrencyLimitExceeded` is `overloaded`. All three were `unavailable` in 1.x and
+   stay so.
 6. `adapters.litellm_proxy.classify_gateway` names a 429 that no wait clears (a budget, a per-day
    limit, a provider retry hint over two minutes) `quota`; a parallel-limit 429 stays
    `rate_limited` with the server's `Retry-After`.

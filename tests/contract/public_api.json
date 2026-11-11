@@ -222,8 +222,10 @@
   "OPENAI_FINISH",
   "OVERFLOW_CODES",
   "OVERFLOW_MESSAGES",
+  "PROVIDER_MODULES",
   "PydanticAIEmbedder",
   "PydanticAIGenerator",
+  "SEVERITY",
   "STATUS_KINDS",
   "TRACEBACK_MAX",
   "WireFacts",
@@ -238,10 +240,12 @@
   "openai_compatible_embeddings",
   "openai_finish",
   "parse_usage",
+  "raised_in_provider",
   "replay",
   "retry_after_s",
   "strict_json_schema",
-  "structured_dict"
+  "structured_dict",
+  "worst"
  ],
  "llm_ports.adapters.pydantic_ai.replay": [
   "MakeGenerator",
@@ -802,6 +806,7 @@
   "RecordedGeneration",
   "RecordingTracer",
   "Reply",
+  "STUB_MODEL",
   "StubCiter",
   "StubDetector",
   "StubEmbedder",

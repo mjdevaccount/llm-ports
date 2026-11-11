@@ -31,6 +31,8 @@ FailureKind = Literal[
     "transport",
     "auth",
     "not_found",
+    "malformed_response",
+    "caller_limit",
     "bad_request",
     "context_overflow",
     "unsupported",
@@ -55,6 +57,8 @@ OUTCOME_FOR: Mapping[FailureKind, Outcome] = {
     "transport": "unavailable",
     "auth": "unavailable",
     "not_found": "unavailable",
+    "malformed_response": "unavailable",
+    "caller_limit": "unavailable",
     "bad_request": "request_fault",
     "context_overflow": "request_fault",
     "unsupported": "request_fault",
@@ -65,8 +69,11 @@ OUTCOME_FOR: Mapping[FailureKind, Outcome] = {
 }
 
 #: The kinds a retry can help: the server, not the request, was the problem, and it comes back in
-#: seconds. `quota` is not here: a spent budget does not come back within a backoff.
-RETRYABLE: frozenset[FailureKind] = frozenset({"rate_limited", "overloaded", "server", "timeout", "transport"})
+#: seconds. `quota` and `caller_limit` are not here: a spent budget does not come back within a
+#: backoff, and neither does a limit the caller set.
+RETRYABLE: frozenset[FailureKind] = frozenset(
+    {"rate_limited", "overloaded", "server", "timeout", "transport", "malformed_response"}
+)
 
 #: Every `FailureKind`, in declaration order.
 FAILURE_KINDS: tuple[FailureKind, ...] = get_args(FailureKind)

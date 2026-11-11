@@ -65,6 +65,7 @@ from llm_ports.adapters.pydantic_ai._result import (
     refused_in,
     responses,
     unsupported,
+    usage_1x,
     usage_of,
 )
 from llm_ports.adapters.pydantic_ai._schema import framework_output
@@ -296,7 +297,8 @@ class PydanticAIGenerator:
             )
         elif got is not None and got.kind != "truncated":
             value = None
-        return self._result(req, value, got, retries, facts, cap, warns, kept["problems"])
+        u1 = usage_1x(facts.usage, cap.usage)
+        return self._result(req, value, got, retries, facts, cap, warns, kept["problems"], usage_1x=u1)
 
     def _facts(self, cap: CaptureLike, messages: Sequence[Any]) -> _Facts:
         """Read what the call showed, preferring the wire's replies over pydantic-ai's messages."""
@@ -332,7 +334,7 @@ class PydanticAIGenerator:
         gw = gateway_cost(self._gateway, facts.replies, self._emit)
         cost = price(facts.usage, answered, gateway_usd=gw, pricer=self._pricer, emit=self._emit)
         self._report_usage(answered, facts.usage, cost)
-        return Generated(
+        res = Generated(
             value=value,
             outcome=got.outcome if got is not None else "ok",
             model=req.model,
@@ -347,6 +349,10 @@ class PydanticAIGenerator:
             warnings=warns,
             failure=got,
         )
+        if usage_1x is None and res.usage is not None:
+            # 1.x reported None here (a capture that recorded no usage); `usage_v2` keeps the counts.
+            object.__setattr__(res, "usage", None)
+        return res
 
     def _report_usage(self, answered: Answered, usage: Usage | None, cost: Cost | None) -> None:
         model = answered.model or answered.requested

@@ -17,6 +17,8 @@ from llm_ports.adapters._classify import (
     ERROR_MESSAGE_MAX,
     OVERFLOW_CODES,
     OVERFLOW_MESSAGES,
+    PROVIDER_MODULES,
+    SEVERITY,
     STATUS_KINDS,
     Categorize,
     Classifier,
@@ -24,7 +26,9 @@ from llm_ports.adapters._classify import (
     classify_core,
     is_context_overflow,
     kind_for_status,
+    raised_in_provider,
     retry_after_s,
+    worst,
 )
 from llm_ports.adapters.pydantic_ai import replay
 from llm_ports.adapters.pydantic_ai._capture import CaptureLike, WireReply, parse_usage
@@ -48,6 +52,8 @@ __all__ = [
     "OPENAI_FINISH",
     "OVERFLOW_CODES",
     "OVERFLOW_MESSAGES",
+    "PROVIDER_MODULES",
+    "SEVERITY",
     "STATUS_KINDS",
     "TRACEBACK_MAX",
     "CaptureLike",
@@ -71,9 +77,11 @@ __all__ = [
     "openai_compatible_embeddings",
     "openai_finish",
     "parse_usage",
+    "raised_in_provider",
     "replay",
     "retry_after_s",
     "strict_json_schema",
     "structured_dict",
     "translate_settings",
+    "worst",
 ]
