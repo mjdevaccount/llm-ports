@@ -318,7 +318,7 @@ ignore_decorators = [
 ignore_names = [
     # `BuildDeps` placeholders the resilience and result-contract rows read
     "limiter", "pricer",
-    "propose_new_texts", "date_from", "date_to", "question", "extras", "model_config", "output_schema", "langfuse_label", "create_score",
+    "propose_new_texts", "date_from", "date_to", "question", "extras", "model_config", "create_score",
     # fields of test models that exist to shape a schema
     "confidence", "conviction", "entry_low", "hedge", "stop", "summary", "thesis", "ticker", "tickers",
 ]

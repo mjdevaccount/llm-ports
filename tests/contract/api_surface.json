@@ -384,13 +384,17 @@
  "llm_ports.evals.golden": [
   "Generate",
   "GeneratorFor",
+  "GoldenRun",
   "OutputFor",
   "PARALLEL",
   "citations_resolve",
   "fire",
   "fire_one",
+  "fire_pack",
   "grade",
   "monitors",
+  "read_golden",
+  "resolve_pack",
   "rows_of"
  ],
  "llm_ports.evals.judge": [
@@ -724,16 +728,24 @@
   "outcome_for_status"
  ],
  "llm_ports.prompts": [
+  "AnyGrader",
+  "GraderRegistry",
   "MANIFEST",
   "PRIMARY_TEMPLATE",
   "Pack",
   "PackManifest",
   "PromptPackInvalid",
+  "Registry",
   "RepoPromptSource",
+  "ResolvedPack",
+  "SCHEMA_VERSION",
+  "byte_sha",
   "content_sha",
   "load",
   "registry",
+  "resolve",
   "scan",
+  "schema_sha",
   "served_shas",
   "sha",
   "unevaluated"
