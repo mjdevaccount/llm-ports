@@ -19,9 +19,9 @@ MANIFEST = "id: demo.note\nversion: 1.0.0\nrole: m\ntemplates:\n  prompt: prompt
 def _pack(root: Path, pid: str, manifest: str, files: dict[str, str]) -> Path:
     d = root / pid
     d.mkdir(parents=True)
-    (d / "pack.yaml").write_text(manifest, encoding="utf-8")
+    (d / "pack.yaml").write_bytes(manifest.encode())  # bytes: a text-mode write is CRLF on Windows
     for name, text in files.items():
-        (d / name).write_text(text, encoding="utf-8")
+        (d / name).write_bytes(text.encode())
     return d
 
 
@@ -53,7 +53,7 @@ def test_load_renders_under_strict_undefined() -> None:
 
 def test_stamp_names_pack_version_and_sha() -> None:
     one = packs.load("demo.one", PACKS)
-    assert one.stamp() == {"pack": "demo.one", "version": "1.2.3", "sha": "1b952fc947eb43f2"}
+    assert one.stamp() == {"pack": "demo.one", "version": "1.2.3", "sha": "1b952fc947eb43f2", "identity": one.identity}
     assert one.stamp_str() == "demo.one@1.2.3+1b952fc947eb43f2"
 
 

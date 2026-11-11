@@ -13,6 +13,14 @@ flow:
     grade:  the role's call graders (`call.graders.board_graders`) plus any extra row graders,
             through one `Evaluator`, over `{**item, prompt, value, outcome, reason, retries}` rows
 
+`fire_pack(resolved, ...)` is the whole run for a resolved pack (`prompts.resolve`, or
+`resolve_pack` here, which falls back to the built-in call graders): it reads the golden set the
+manifest names (a JSON list of items, a JSON object with an `items` list, or JSON lines), fires it
+through the pack's own source and output type, grades it on the pack's graders, and stamps the run
+and every row with the pack's `identity`. A run that cannot start (no golden set or no graders, a
+missing, unreadable or empty file, an item with no `id` or whose slots do not render) is
+`could_not_run` with the reason, never a pass over zero items.
+
 `source` is the template text under evaluation, so a candidate revision is graded before it is
 installed. `output(item)` is the `output=` type the producer itself compiles: a grammar that
 differs from the live one grades a different model. `generator_for()` returns a fresh `Generator`
@@ -20,7 +28,7 @@ per item and the list its raw attempts land in (`adapters.pydantic_ai.replay.rec
 one), so a recording keeps every attempt and not only the last.
 
 Invariants:
-    - `fire` never raises for a model or wire failure: the item's outcome names it.
+    - `fire` and `fire_pack` never raise for a model or wire failure: the item's outcome names it.
     - A row whose model never answered fails every call grader with its reason; the board names the
       outage instead of grading an absence.
 """
@@ -28,16 +36,20 @@ Invariants:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Any, Literal
 
 from llm_ports.call import generate as call_generate
-from llm_ports.call.graders import CallGrader, board_graders
+from llm_ports.call.graders import GRADERS, CallGrader, board_graders
 from llm_ports.call.roles import Role
+from llm_ports.evals._gauntlet import GauntletEvaluator
 from llm_ports.observability import EventHook, log_events
 from llm_ports.ports import Evaluator, Generated, Generator, Grader
-from llm_ports.prompts import Pack
+from llm_ports.prompts import AnyGrader, GraderRegistry, Pack, Registry, ResolvedPack, resolve
 
 #: `(item) -> the output= type` the producer generates under.
 OutputFor = Callable[[Mapping[str, Any]], Any]
@@ -47,6 +59,7 @@ GeneratorFor = Callable[[], tuple[Generator, list[Any]]]
 Generate = Callable[..., Awaitable[Generated[Any]]]
 #: Items fired concurrently by default.
 PARALLEL = 2
+_REASON_CAP = 200
 
 
 async def fire_one(
@@ -78,7 +91,9 @@ async def fire_one(
         res = await generate(role, prompt=prompt, output=output(item), generator=gen, **sys_kw)
     verdict = res.outcome if res.outcome in ("ok", "gated") else "error"
     (on_event or log_events("llm_ports.evals.golden"))(
-        logging.INFO, "golden_item", {"pack": pack.id, "id": item["id"], "outcome": res.outcome, "retries": res.retries}
+        logging.INFO,
+        "golden_item",
+        {"pack": pack.id, "identity": pack.identity, "id": item["id"], "outcome": res.outcome, "retries": res.retries},
     )
     return {
         "id": item["id"],
@@ -204,15 +219,180 @@ def citations_resolve(cited: str, known: str) -> Grader:
     return grader
 
 
+class _Chained:
+    """A grader registry over the caller's, falling back to the built-in call graders."""
+
+    def __init__(self, first: GraderRegistry | Registry | None) -> None:
+        self._first = first
+
+    def get(self, name: str) -> AnyGrader:
+        first = self._first
+        try:
+            fn = None if first is None else first[name] if isinstance(first, Mapping) else first.get(name)
+        except KeyError:
+            fn = None
+        return fn if fn is not None else GRADERS[name]
+
+
+def resolve_pack(
+    pack: Pack, *, registry: GraderRegistry | Registry | None = None, import_roots: Sequence[str] = ()
+) -> ResolvedPack:
+    """Return `prompts.resolve(pack, ...)` with `call.graders.GRADERS` behind `registry`.
+
+    A grader name the caller's registry lacks resolves to the built-in grader of that name.
+
+    Raises:
+        PromptPackInvalid: A manifest pointer does not resolve; the message names the field.
+    """
+    return resolve(pack, registry=_Chained(registry), import_roots=import_roots)
+
+
+@dataclass(frozen=True)
+class GoldenRun:
+    """One golden run of a resolved pack.
+
+    Attributes:
+        status: `ran`, or `could_not_run` when nothing was fired.
+        reason: Why the run could not run; empty when it ran.
+        stamp: The pack's stamp (`pack`, `version`, `sha`, `identity`), the role's `tier` and
+            `model`, `table_fingerprint` (None when the caller passed none) and
+            `output_schema_sha` (None for a prose pack; `identity` covers the manifest's pointer,
+            not the model it names). Two runs are comparable only when `identity` and
+            `output_schema_sha` match.
+        rows: The graded rows (`rows_of`), each carrying `identity`.
+        outs: `fire`'s results by item id.
+        board: The evaluator's board; None when the run could not run.
+    """
+
+    status: Literal["ran", "could_not_run"]
+    reason: str
+    stamp: Mapping[str, str | None]
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    outs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    board: Mapping[str, Any] | None = None
+
+
+def read_golden(path: Path) -> list[dict[str, Any]]:
+    """Read a golden set: a JSON list of items, a JSON object with an `items` list, or JSON lines (`.jsonl`).
+
+    Returns:
+        The items, in file order.
+
+    Raises:
+        ValueError: The file is not one of those shapes, or an item is not a mapping with an `id`.
+        OSError: The file cannot be read.
+    """
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".jsonl":
+        doc: Any = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        doc = json.loads(text)
+    items = doc.get("items") if isinstance(doc, dict) else doc
+    if not isinstance(items, list):
+        raise ValueError("not a list of items, nor an object with an `items` list")
+    for i, it in enumerate(items):
+        if not isinstance(it, dict) or "id" not in it:
+            raise ValueError(f"item {i} is not a mapping with an `id`")
+    return items
+
+
+async def fire_pack(
+    resolved: ResolvedPack,
+    *,
+    role: Role,
+    generator_for: GeneratorFor,
+    generate: Generate = call_generate,
+    parallel: int = PARALLEL,
+    on_event: EventHook | None = None,
+    evaluator: Evaluator | None = None,
+    table_fingerprint: str | None = None,
+) -> GoldenRun:
+    """Fire a resolved pack's golden set through its own source and output type, and grade it.
+
+    Args:
+        resolved: The pack with its manifest resolved (`prompts.resolve` or `resolve_pack`).
+        role: The role the items fire under; its tier and model are stamped on the run.
+        generator_for: A fresh generator per item and the list its attempts land in.
+        generate: The call path.
+        parallel: Items fired concurrently.
+        on_event: The event sink; defaults to the stdlib logger `llm_ports.evals.golden`. Emits one
+            `golden_item` per item and one `golden_run` per run (a WARNING when it could not run).
+        evaluator: The board's evaluator; defaults to `GauntletEvaluator()`.
+        table_fingerprint: The tier table's fingerprint, stamped on the run; None when unknown.
+
+    Returns:
+        The run. No golden set or no graders declared, a missing, unreadable or empty golden file,
+        or an item whose slots do not render the pack's template is `could_not_run` with the
+        reason, never a pass over zero items or zero graders. The board grades the pack's own
+        graders.
+
+    Invariants:
+        - Never raises for a model, wire or golden-file failure.
+    """
+    pack = resolved.pack
+    emit = on_event or log_events(__name__)
+    stamp: dict[str, str | None] = {
+        **pack.stamp(),
+        "tier": role.tier,
+        "model": role.resolved_model,
+        "table_fingerprint": table_fingerprint,
+        "output_schema_sha": resolved.output_schema_sha,
+    }
+
+    def could_not_run(reason: str) -> GoldenRun:
+        emit(logging.WARNING, "golden_run", {**stamp, "status": "could_not_run", "reason": reason})
+        return GoldenRun("could_not_run", reason, stamp)
+
+    if resolved.golden is None:
+        return could_not_run("the pack declares no golden set")
+    if not resolved.graders:
+        return could_not_run("the pack declares no graders: a run would grade nothing")
+    if not resolved.golden.is_file():
+        return could_not_run(f"golden file missing: {pack.manifest.golden!r} resolved to {resolved.golden}")
+    try:
+        items = read_golden(resolved.golden)
+    except (OSError, ValueError) as exc:  # a JSON or UTF-8 decode error is a ValueError
+        return could_not_run(f"golden file unreadable: {type(exc).__name__}: {exc}"[:_REASON_CAP])
+    if not items:
+        return could_not_run("golden set is empty")
+    for it in items:
+        try:
+            pack.render_source(pack.source, **(it.get("slots") or {}))
+        except Exception as exc:  # any render failure is this item's defect, named before anything fires
+            why = f"golden item {it['id']!r} does not render: {type(exc).__name__}: {exc}"
+            return could_not_run(why[:_REASON_CAP])
+    output: Any = resolved.output if resolved.output is not None else str
+    outs = await fire(
+        items,
+        role=role,
+        pack=pack,
+        source=pack.source,
+        output=lambda _item: output,
+        generator_for=generator_for,
+        generate=generate,
+        parallel=parallel,
+        on_event=on_event,
+    )
+    board_role = replace(role, graders=tuple(resolved.graders))
+    board, rows = grade(items, outs, board_role, evaluator or GauntletEvaluator(), table=resolved.graders)
+    rows = [{**r, "identity": pack.identity} for r in rows]
+    emit(logging.INFO, "golden_run", {**stamp, "status": "ran", "n": len(rows), "rows_failed": board["rows_failed"]})
+    return GoldenRun("ran", "", stamp, rows, outs, board)
+
+
 __all__ = [
     "PARALLEL",
     "Generate",
     "GeneratorFor",
+    "GoldenRun",
     "OutputFor",
     "citations_resolve",
     "fire",
     "fire_one",
+    "fire_pack",
     "grade",
     "monitors",
+    "read_golden",
+    "resolve_pack",
     "rows_of",
 ]

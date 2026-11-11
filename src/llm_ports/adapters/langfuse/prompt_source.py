@@ -8,15 +8,17 @@ The repository seed leads; the managed label mirrors it and never leads. Per `ge
 
 1. `get_prompt(name, label, fallback=<seed>, cache_ttl_seconds=ttl)` goes through the SDK's own
    cache (an expired entry is served and refreshed on a background thread).
-2. If the reply is the fallback, or its `config.content_sha` is not the seed's sha, the managed copy
-   is absent or stale: the seed is pushed under the label with `create_prompt(...)` and refetched
-   uncached.
+2. If the reply is the fallback, or its `config.content_sha` is not the seed's sha, or the seed's
+   config carries an `identity` the reply's config does not, the managed copy is absent or stale:
+   the seed is pushed under the label with `create_prompt(...)` and refetched uncached.
 3. If the reply is still the fallback, or its text is not the seed's, the seed is served as
    `Prompt(source="repo")`. Otherwise the result is `Prompt(source="langfuse:vN")` with the managed
    version and its stored config.
 
 `seed_for(name) -> Seed` is injected: the adapter knows nothing about where a repository prompt
-lives or how it is fingerprinted. A seed with a non-empty `system` (or `kind="chat"`) is a chat
+lives or how it is fingerprinted (`prompts.Pack.seed` builds one). With `label_from_seed=True`, a
+seed whose config names a `label` (a pack's manifest label) is served and mirrored under that
+label instead of the `label` argument. A seed with a non-empty `system` (or `kind="chat"`) is a chat
 prompt: pushed as `type="chat"` with the message list, fetched as chat, and compared message by
 message on role and content. Langfuse refuses a type change on an existing name, so `kind` can
 force chat for a seed with no system message.
@@ -78,6 +80,13 @@ def _served(p: Any) -> Any:
     return body
 
 
+def _stale(config: Any, seed: Seed) -> bool:
+    """True when the managed copy's config names another sha, or another identity than the seed's."""
+    if config.get("content_sha") != seed.sha:
+        return True
+    return "identity" in seed.config and config.get("identity") != seed.config["identity"]
+
+
 def _is_fallback(p: Any) -> bool:
     return bool(getattr(p, "is_fallback", False))
 
@@ -93,6 +102,8 @@ class LangfusePromptSource:
         cache_ttl_s: The SDK cache TTL, and how long a down verdict is held per name.
         clock: A monotonic clock, injectable for tests.
         on_event: The warning sink; defaults to the stdlib logger `llm_ports.adapters.langfuse.prompt_source`.
+        label_from_seed: Opt in to the seed's own label: a seed whose `config["label"]` is set is
+            served and mirrored under it, whatever `label` `get` is given. Off by default.
     """
 
     def __init__(
@@ -103,7 +114,9 @@ class LangfusePromptSource:
         cache_ttl_s: int = DEFAULT_CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
         on_event: EventHook | None = None,
+        label_from_seed: bool = False,
     ) -> None:
+        self._label_from_seed = label_from_seed
         self._client = client
         self._seed_for = seed_for
         self._ttl = cache_ttl_s
@@ -121,16 +134,19 @@ class LangfusePromptSource:
         """Return prompt `name`, mirrored to the managed store under `label`.
 
         Serves the managed version when it matches the seed, else the seed as `source == "repo"`;
-        the module docstring gives the steps. A store failure never raises.
+        the module docstring gives the steps. A store failure never raises. With
+        `label_from_seed`, a seed's `config["label"]` replaces `label`.
         """
         seed = self._seed_for(name)
+        if self._label_from_seed and seed.config.get("label"):
+            label = str(seed.config["label"])
         repo = Prompt(name, seed.text, None, "repo", config=dict(seed.config), system=seed.system)
         if self._down(name):
             return repo
         want = _wire(seed)
         try:
             p = self._fetch(name, label, seed, self._ttl)
-            if _is_fallback(p) or (p.config or {}).get("content_sha") != seed.sha:
+            if _is_fallback(p) or _stale(p.config or {}, seed):
                 self._client.create_prompt(
                     name=name,
                     type=_kind(seed),

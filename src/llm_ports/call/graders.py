@@ -23,7 +23,9 @@ Built-in graders, for structured outputs (a dict or pydantic value under a gramm
   my training data", "please consult ..."). An honest "the sources do not cover X" is not matched.
 
 A consumer adds its own graders by passing a table (`{**GRADERS, "mine": fn}`) to `score_all`,
-`board_graders` or `call.Hooks(graders=...)`. This package never mutates `GRADERS`.
+`board_graders` or `call.Hooks(graders=...)`, or a registry to `prompts.resolve`. `GRADERS` is a
+read-only mapping: assigning into it raises `TypeError`, so one consumer's grader cannot leak into
+another's table.
 
 Invariants:
     - `score_one` and `score_all` never raise. A grader's exception becomes a failed score of value
@@ -235,14 +237,17 @@ def no_refusal(_prompt: str, value: Any, _role: Role) -> CallScore:
     return CallScore("no_refusal", float(len(hits)), not hits, f"refusal: {hits[:2]}" if hits else "")
 
 
-#: The built-in graders by name; a `Role` names its graders as strings (data, comparable, printable).
-GRADERS: dict[str, CallGrader] = {
-    "schema_complete": schema_complete,
-    "numbers_from_inputs": numbers_from_inputs,
-    "echo": echo,
-    "cites_url": cites_url,
-    "no_refusal": no_refusal,
-}
+#: The built-in graders by name, read-only; a `Role` names its graders as strings (data,
+#: comparable, printable). Extend by copying: `{**GRADERS, "mine": fn}`.
+GRADERS: types.MappingProxyType[str, CallGrader] = types.MappingProxyType(
+    {
+        "schema_complete": schema_complete,
+        "numbers_from_inputs": numbers_from_inputs,
+        "echo": echo,
+        "cites_url": cites_url,
+        "no_refusal": no_refusal,
+    }
+)
 
 
 #: Graders whose verdict holds only when the prompt text is the call's whole input. A grader sees

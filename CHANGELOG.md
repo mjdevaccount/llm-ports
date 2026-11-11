@@ -7,6 +7,66 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A prompt pack now fails at load where it used to load** (ADR-0026):
+  - a template that `{% include %}`s, `{% import %}`s or `{% extends %}` a file not listed in
+    `templates` or the new `includes`;
+  - a dynamic include whose target cannot be read statically;
+  - a pack file holding a carriage return (CRLF or a lone CR);
+  - a `graders` list naming the same grader twice;
+  - an `includes` entry that is not a relative POSIX path inside the pack (`..`, a leading `/`, a
+    drive, a `\`, an empty or hidden segment, or `pack.yaml`), or that resolves outside it.
+
+  Each raises `PromptPackInvalid` naming the file or field. Templates render from exactly the
+  manifest's files; nothing else in the pack directory is read. A partial in a subdirectory or
+  with any extension (`partials/h.j2`, `rubric.md`) loads once it is listed in `includes`.
+- `PackManifest.golden` is resolved **against the pack directory** (it was documented as
+  repo-relative in 1.22.0, which nothing read) and must stay inside it.
+- `call.graders.GRADERS` is a read-only mapping (`types.MappingProxyType`): assigning into it raises
+  `TypeError`. **Consumers must** stop writing into it (`monkeypatch.setitem(GRADERS, ...)` now
+  fails) and pass a table instead: `{**GRADERS, "mine": fn}` to `score_all` / `score_one` /
+  `board_graders` / `call.Hooks(graders=...)` / `prompts.resolve(registry=)` /
+  `evals.golden.resolve_pack(registry=)`. A test that needs the default table changed replaces the
+  module global: `monkeypatch.setattr(llm_ports.call.graders, "GRADERS", {**GRADERS, "mine": fn})`
+  (`score_one` reads it at call time).
+- `Pack.stamp()` gains the key `identity`. The `sha` key, `stamp_str()` and `content_sha` are
+  unchanged for every pack, byte for byte.
+- `PackManifest.graders` accepts bare grader names (resolved through a registry) as well as dotted
+  paths.
+- `LangfusePromptSource` re-pushes a mirror whose `config.identity` differs from the seed's even
+  when its content sha matches. `get`'s default `label` is unchanged (`production`).
+
+### Added
+
+- `prompts.byte_sha(parts)`: sha256 over named byte strings, length-prefixed so a re-split, rename
+  or reorder never collides. Pinned vectors freeze it.
+- `Pack.identity`: `byte_sha` over the manifest's bytes and every file of the closed template set,
+  by sorted path. `Pack.files()` lists that set; `Pack.seed()` builds the repo `Seed` a managed
+  mirror copies, carrying `content_sha`, `identity` and the manifest's label in its config.
+- `PackManifest.includes`, `PackManifest.schema_version` (only `prompts.SCHEMA_VERSION` = 1 loads),
+  and `label`, the neutral alias of `langfuse_label` (YAML key and read-only property).
+- `LangfusePromptSource(..., label_from_seed=True)` opts in to serving and mirroring under a seed's
+  `config["label"]` (the manifest label `Pack.seed()` carries) instead of `get`'s `label`.
+- `prompts.resolve(pack, registry=, import_roots=)` and `Pack.resolved(...)`, returning
+  `ResolvedPack`: the `output_schema` type imported only from the caller's module roots, each grader
+  looked up in a `GraderRegistry` (or a plain mapping), the golden path kept inside the pack
+  directory, and `output_schema_sha`. Every miss is `PromptPackInvalid` naming the field.
+  `prompts.schema_sha` hashes an output type's canonical JSON schema.
+- `prompts.scan(root, registry=, import_roots=)` reports resolution failures beside load failures,
+  and `prompts.registry(root, registry=, import_roots=)` raises on the first one, so a mistyped
+  grader fails when the registry is built. Without the arguments both behave as in 1.22.0.
+  `prompts.served_shas(root, key="identity")` serves identities for `unevaluated`.
+- `evals.golden.fire_pack(resolved, role=, generator_for=, ...)`: reads the pack's golden set
+  (`evals.golden.read_golden`: a JSON list, an object with `items`, or JSON lines), fires it, grades
+  it on the pack's graders and returns a `GoldenRun` stamped with `identity`, `output_schema_sha`,
+  the role's tier and model, and the table fingerprint the caller passes. It never raises for a
+  golden-set defect: no golden set, no graders, a missing file (the reason names the manifest value
+  and the resolved path), an unreadable or empty file, or an item whose slots do not render each
+  return `could_not_run` with the reason before anything fires, and emit a `golden_run` WARNING.
+  `evals.golden.resolve_pack` resolves with `call.graders.GRADERS` behind the caller's registry.
+  The `golden_item` event gains `identity`.
+
 ## [1.22.0] - 2026-11-11
 
 ### Added
