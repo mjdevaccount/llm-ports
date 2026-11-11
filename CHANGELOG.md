@@ -18,10 +18,14 @@ All notable changes to this project are documented here. The format is based on
   `internal`, never `unavailable`: it is not retried, failed over or counted against a backend.
   It is reported as the event `llm_call_internal_error` with its traceback (ADR-0020). Who raised
   decides, so a provider's fault stays `unavailable` as in 1.x: an exception raised inside a
-  provider client while it read the response (a 200 with `choices: []`) is kind
-  `malformed_response` (retryable); pydantic-ai's `UsageLimitExceeded` and an application's
-  `RunCancelled` are `caller_limit` (not retryable); `ConcurrencyLimitExceeded` is `overloaded`;
-  a `FallbackExceptionGroup` is its worst member.
+  provider client while it read a response that arrived (a 200 with `choices: []`) is kind
+  `malformed_response` (retryable); pydantic-ai's `UsageLimitExceeded`, an application's
+  `RunCancelled` and `ConcurrencyLimitExceeded` (the agent's own queue) are `caller_limit` (not
+  retryable); a `FallbackExceptionGroup` is its worst member. A caller's configuration is
+  `internal` too, with no request sent: pydantic-ai's `UserError` (an output mode the model
+  lacks), and an HTTP client's `InvalidURL` or `UnsupportedProtocol` (a base URL such as
+  `http://[::1/v1`, `ftp://...` or one with no scheme), which 1.x reported as a retryable
+  `unavailable`.
 
 ### Changed
 
@@ -203,7 +207,8 @@ All notable changes to this project are documented here. The format is based on
   treated as absent; a signed zero is 0.
 - The shared classification table `adapters._classify.classify_core` (exported from
   `adapters.pydantic_ai` with `WireFacts`, `Classifier`, `kind_for_status`, `retry_after_s`,
-  `is_context_overflow`, `raised_in_provider`, `PROVIDER_MODULES`, `worst`, `SEVERITY`), used by
+  `is_context_overflow`, `raised_in_provider`, `PROVIDER_MODULES`, `CALLER_CONFIG_ERRORS`, `worst`,
+  `SEVERITY`), used by
   the generator, the embedder and the HTTP reranker; and
   `adapters.pydantic_ai.classify_failure`, `openai_finish`, `OPENAI_FINISH`, `parse_usage`,
   `WireReply`.

@@ -465,6 +465,8 @@ class _HugeGateway:
         return Decimal("9e999999")
 
     def answered_from_headers(self, _headers: Any) -> tuple[str | None, str | None]:
+        if self.boom:
+            raise RuntimeError("reader bug")
         return None, None
 
 
@@ -479,12 +481,12 @@ async def test_a_cost_sum_that_overflows_is_unknown_not_a_failure(wire) -> None:
     assert fields["detail"].startswith("Overflow")
 
 
-async def test_a_gateway_reader_that_raises_is_unknown_cost_and_an_error_event(wire) -> None:
+async def test_a_gateway_reader_that_raises_is_unknown_cost_and_deployment_with_error_events(wire) -> None:
     events = _Events()
     wire["replies"] = [(200, _completion(_j("a")), {})]
     res = await _gen(wire, gateway=_HugeGateway(boom=True), on_event=events).generate(REQ, _Note)
-    assert res.outcome == "ok" and res.cost is None
-    assert [lvl for lvl, e, _ in events.seen if e == "llm_gateway_header_invalid"] == [logging.ERROR]
+    assert res.outcome == "ok" and res.failure is None and res.cost is None and res.answered.deployment is None
+    assert [lvl for lvl, e, _ in events.seen if e == "llm_gateway_header_invalid"] == [logging.ERROR] * 2
 
 
 # ── step 9: a reply the provider client cannot read is the provider's fault ──────────────────────
@@ -509,3 +511,29 @@ async def test_a_validator_bug_after_a_good_reply_stays_internal(wire) -> None:
 
     res = await _gen(wire).generate(REQ, _Note, validate=validate)
     assert res.failure is not None and (res.outcome, res.failure.kind) == ("request_fault", "internal")
+
+
+@pytest.mark.parametrize(
+    ("url", "mock"), [("http://[::1/v1", True), ("ftp://gateway.test/v1", False)], ids=["bad_host", "ftp"]
+)
+async def test_a_url_no_client_can_send_is_internal_with_no_request(wire, url: str, mock: bool) -> None:
+    # A MockTransport serves any scheme; the real transport refuses ftp before it connects.
+    events = _Events()
+    kw: dict[str, Any] = {"transport": wire["transport"]} if mock else {}
+    gen = PydanticAIGenerator(model_for=pag.openai_compatible(url, "k", **kw), on_event=events)
+    res = await gen.generate(REQ, _Note)
+    assert res.failure is not None
+    assert (res.outcome, res.failure.kind, res.failure.retryable) == ("request_fault", "internal", False)
+    assert wire["sent"] == [] and len(events.named("llm_call_internal_error")) == 1
+
+
+async def test_an_output_mode_the_model_lacks_is_internal_with_no_request(wire) -> None:
+    events = _Events()
+    model_for = pag.openai_compatible(
+        "http://gateway.test/v1", "k", transport=wire["transport"], profile={"supports_json_schema_output": False}
+    )
+    res = await PydanticAIGenerator(model_for=model_for, on_event=events).generate(REQ, _Note)
+    assert res.failure is not None
+    assert (res.outcome, res.failure.kind, res.failure.retryable) == ("request_fault", "internal", False)
+    assert res.reason.startswith("UserError")
+    assert wire["sent"] == [] and len(events.named("llm_call_internal_error")) == 1

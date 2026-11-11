@@ -61,6 +61,7 @@ from llm_ports.adapters.pydantic_ai._result import (
     answered_of,
     finish_of,
     gateway_cost,
+    gateway_deployment,
     price,
     refused_in,
     responses,
@@ -330,7 +331,8 @@ class PydanticAIGenerator:
         usage_1x: Mapping[str, int | None] | None = None,
     ) -> Generated[Any]:
         """Assemble the result contract for one finished run, and emit its usage and cost events."""
-        answered = answered_of(req.model, facts.replies, facts.resps, self._gateway)
+        deployment = gateway_deployment(self._gateway, facts.replies, self._emit)
+        answered = answered_of(req.model, facts.replies, facts.resps, deployment)
         gw = gateway_cost(self._gateway, facts.replies, self._emit)
         cost = price(facts.usage, answered, gateway_usd=gw, pricer=self._pricer, emit=self._emit)
         self._report_usage(answered, facts.usage, cost)

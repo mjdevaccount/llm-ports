@@ -37,10 +37,12 @@ Every consumer re-derived the detail from provider strings: a 429 with "budget" 
    `request_fault` `bad_request`, `context_overflow`, `unsupported`, `internal`; `truncated`;
    `invalid_output`; `refused`.
 3. One classification order (`adapters._classify.classify_core`): extra classifiers first (a
-   gateway's knowledge), then a gated type in the chain, the framework's categories (pydantic-ai's
+   gateway's knowledge), then a gated type in the chain, an HTTP client's `InvalidURL` or
+   `UnsupportedProtocol` in the chain (`internal`: the caller's URL, nothing was sent), the
+   framework's categories (pydantic-ai's
    `ModelAPIError` classes, walked over the whole chain), a context-overflow code or message, the
    HTTP status, a transport error, then `malformed_response` when a provider client raised while
-   reading the response, and otherwise `internal`. With no exception, a refusal or
+   reading a response that arrived (a status is known), and otherwise `internal`. With no exception, a refusal or
    `content_filter` finish is `refused` and a `length` finish is `truncated`. An exception group
    (a fallback chain's) is classified member by member, and its worst member names the call
    (`SEVERITY`).
@@ -52,10 +54,14 @@ Every consumer re-derived the detail from provider strings: a 429 with "budget" 
    traceback. Who raised decides: an exception whose innermost owning frame is a provider client
    (`PROVIDER_MODULES`: `pydantic_ai.models`, `openai`, `httpx`, `httpx2`, `httpcore`) is that
    provider's malformed reply (`malformed_response`, `unavailable`, retryable), as is a 200 with
-   `choices: []`. pydantic-ai's `UsageLimitExceeded` and an application's `RunCancelled` are
-   `caller_limit` (`unavailable`, not retryable: a limit the caller set does not lift within a
-   backoff); `ConcurrencyLimitExceeded` is `overloaded`. All three were `unavailable` in 1.x and
-   stay so.
+   `choices: []`, but only once a response arrived: with no status nothing was parsed, so it is
+   `internal`. A caller's configuration is `internal` wherever it is raised: pydantic-ai's
+   `UserError` (an output mode the model lacks) and an HTTP client's `InvalidURL` /
+   `UnsupportedProtocol` (a base URL no client can send); none of them sends a request.
+   pydantic-ai's `UsageLimitExceeded`, an application's `RunCancelled` and
+   `ConcurrencyLimitExceeded` (the agent's own queue is full) are `caller_limit` (`unavailable`,
+   not retryable: a limit the caller set does not lift within a backoff, and it says nothing of
+   the backend's health). All three were `unavailable` in 1.x and stay so.
 6. `adapters.litellm_proxy.classify_gateway` names a 429 that no wait clears (a budget, a per-day
    limit, a provider retry hint over two minutes) `quota`; a parallel-limit 429 stays
    `rate_limited` with the server's `Retry-After`.

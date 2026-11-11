@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 import httpx
+import httpx2
 import pytest
 from pydantic_ai.exceptions import (
     ConcurrencyLimitExceeded,
@@ -36,6 +37,7 @@ from pydantic_ai.exceptions import (
     RunTimedOut,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
+    UserError,
 )
 
 from llm_ports.adapters._classify import (
@@ -98,7 +100,7 @@ TABLE: list[tuple[str, BaseException, str | None, str, str]] = [
     ("httpx_read_timeout", httpx.ReadTimeout("slow"), None, "timeout", "unavailable"),
     ("usage_limit", UsageLimitExceeded("request_limit of 3"), None, "caller_limit", "unavailable"),
     ("app_cancelled", RunCancelled("cancelled by the app"), None, "caller_limit", "unavailable"),
-    ("concurrency", ConcurrencyLimitExceeded("queue full"), None, "overloaded", "unavailable"),
+    ("concurrency", ConcurrencyLimitExceeded("queue full"), None, "caller_limit", "unavailable"),
     ("a_bug", KeyError("headline"), None, "internal", "request_fault"),
     ("wrapped_bug", _chain(RuntimeError("validator"), ValueError("bad")), None, "internal", "request_fault"),
 ]
@@ -351,6 +353,61 @@ def test_the_standard_library_is_skipped_when_finding_who_raised() -> None:
 def test_an_exception_with_no_traceback_is_internal() -> None:
     got = classify_failure(IndexError("never raised"), WireFacts())
     assert got is not None and got.kind == "internal"
+
+
+def test_a_provider_frame_is_malformed_response_only_once_a_response_arrived() -> None:
+    exc = _raise_from("pydantic_ai.models.openai", IndexError("list index out of range"))
+    before, after = classify_failure(exc, WireFacts()), classify_failure(exc, WireFacts(status=200))
+    assert before is not None and after is not None
+    assert (before.kind, before.retryable) == ("internal", False), "no response: nothing was parsed"
+    assert (after.kind, after.retryable) == ("malformed_response", True)
+
+
+@pytest.mark.parametrize("facts", [WireFacts(), WireFacts(status=200)], ids=["no_response", "after_200"])
+def test_a_user_error_is_the_callers_configuration_even_from_a_provider_module(facts: WireFacts) -> None:
+    exc = _raise_from(
+        "pydantic_ai.models.openai", UserError("Native structured output is not supported by this model.")
+    )
+    assert raised_in_provider(exc), "the provider rule alone would have called it malformed_response"
+    for e in (exc, _chain(RuntimeError("wrapped"), exc)):
+        got = classify_failure(e, facts)
+        assert got is not None
+        assert (got.kind, got.outcome, got.retryable) == ("internal", "request_fault", False)
+
+
+def _refused_by_client(lib: Any, url: str) -> BaseException:
+    try:
+        with lib.Client() as client:
+            client.get(url)
+    except Exception as caught:
+        return caught
+    raise AssertionError("unreachable")
+
+
+@pytest.mark.parametrize("lib", [httpx, httpx2], ids=["httpx", "httpx2"])
+@pytest.mark.parametrize(
+    ("url", "name"),
+    [
+        ("http://[::1/v1", "InvalidURL"),
+        ("ftp://gateway.test/v1", "UnsupportedProtocol"),
+        ("not-a-url", "UnsupportedProtocol"),
+    ],
+    ids=["bad_host", "ftp", "no_scheme"],
+)
+def test_a_url_the_client_cannot_send_is_internal(lib: Any, url: str, name: str) -> None:
+    exc = _refused_by_client(lib, url)
+    assert type(exc).__name__ == name
+    wrapped = _chain(ModelConnectionError(M, "refused", phase="connect"), exc)  # a category that would say transport
+    for e in (exc, wrapped):
+        for facts in (WireFacts(), WireFacts(status=200)):
+            got = classify_failure(e, facts)
+            assert got is not None
+            assert (got.kind, got.outcome, got.retryable) == ("internal", "request_fault", False), (e, facts)
+
+
+def test_a_transport_error_that_is_not_the_callers_url_stays_transport() -> None:
+    got = classify_failure(httpx.ConnectError("refused"), WireFacts())
+    assert got is not None and (got.kind, got.retryable) == ("transport", True)
 
 
 # ── exception groups: each member through the same table, the worst names the call ──────────────

@@ -290,3 +290,22 @@ async def test_an_implausible_cost_header_never_fails_embed(header: str, usd: De
     assert res.outcome == "ok" and len(res.vectors) == 2 and res.failure is None
     assert (res.cost.usd if res.cost is not None else None) == usd
     assert seen.count("llm_gateway_header_invalid") == (1 if usd is None else 0)
+
+
+class _BrokenReader:
+    """A custom gateway reader whose every read raises."""
+
+    def cost_from_headers(self, _headers: Any) -> Decimal | None:
+        raise RuntimeError("reader bug")
+
+    def answered_from_headers(self, _headers: Any) -> tuple[str | None, str | None]:
+        raise RuntimeError("reader bug")
+
+
+async def test_a_gateway_reader_that_raises_never_fails_embed() -> None:
+    seen: list[str] = []
+    emb = _embedder(_wire([]), gateway=_BrokenReader(), on_event=lambda _l, e, _f: seen.append(e))
+    res = await emb.embed(["a", "b"])
+    assert res.outcome == "ok" and len(res.vectors) == 2 and res.failure is None
+    assert res.answered is not None and res.answered.deployment is None
+    assert seen.count("llm_gateway_header_invalid") == 2

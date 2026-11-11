@@ -12,8 +12,8 @@ own categories as step 4, walking the whole exception chain:
 | `ModelAuthenticationError` | `auth` |
 | `ModelNotFoundError` | `not_found` |
 | `ModelTimeoutError`, `ModelRequestTimeout`, `RunTimedOut` | `timeout`, with its phase |
-| `RunCancelled` (the application cancelled the run), `UsageLimitExceeded` | `caller_limit` |
-| `ConcurrencyLimitExceeded` (the agent's queue is full) | `overloaded` |
+| `UserError` (the caller's configuration, e.g. an output mode the model lacks) | `internal` |
+| `RunCancelled` (the application cancelled the run), `UsageLimitExceeded`, `ConcurrencyLimitExceeded` (the agent's own queue is full) | `caller_limit` |
 | `ModelConnectionError` | `transport`, with its phase |
 | `ModelServerError`, `ModelUnavailableError` | `server` |
 | `ContentFilterError` | `refused` |
@@ -60,6 +60,7 @@ with extra("pydantic-ai"):
         RunTimedOut,
         UnexpectedModelBehavior,
         UsageLimitExceeded,
+        UserError,
     )
 
 #: The OpenAI-wire finish reasons and what each means; anything else is `other`. `tool_call` is
@@ -87,7 +88,7 @@ _CATEGORIES: tuple[tuple[type[BaseException], FailureKind], ...] = (
     (RunTimedOut, "timeout"),
     (RunCancelled, "caller_limit"),
     (UsageLimitExceeded, "caller_limit"),
-    (ConcurrencyLimitExceeded, "overloaded"),
+    (ConcurrencyLimitExceeded, "caller_limit"),
     (ModelConnectionError, "transport"),
     (ModelServerError, "server"),
     (ModelUnavailableError, "server"),
@@ -131,6 +132,9 @@ def _from_category(e: BaseException, kind: FailureKind, facts: WireFacts) -> Fai
 
 def categorize(chain: Sequence[BaseException], facts: WireFacts, finish: UnifiedFinish | None) -> Failure | None:
     """Step 4 of the shared order: pydantic-ai's error categories, walking the whole chain. Pure."""
+    for e in chain:
+        if isinstance(e, UserError):
+            return failure("internal", reason=failure_reason(chain[0], with_cause=True))
     for e in chain:
         for cls, kind in _CATEGORIES:
             if isinstance(e, cls):

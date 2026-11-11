@@ -14,6 +14,7 @@ from llm_ports._extras import extra
 with extra("pydantic-ai"):
     from llm_ports.adapters._index_order import IndexOrderedTransport
 from llm_ports.adapters._classify import (
+    CALLER_CONFIG_ERRORS,
     ERROR_MESSAGE_MAX,
     OVERFLOW_CODES,
     OVERFLOW_MESSAGES,
@@ -48,6 +49,7 @@ from llm_ports.adapters.pydantic_ai._generator import (
 from llm_ports.adapters.pydantic_ai._schema import framework_output, strict_json_schema, structured_dict
 
 __all__ = [
+    "CALLER_CONFIG_ERRORS",
     "ERROR_MESSAGE_MAX",
     "OPENAI_FINISH",
     "OVERFLOW_CODES",

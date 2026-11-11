@@ -231,6 +231,7 @@
   "provider_hookimpl"
  ],
  "llm_ports.adapters.pydantic_ai": [
+  "CALLER_CONFIG_ERRORS",
   "CaptureLike",
   "Categorize",
   "Classifier",

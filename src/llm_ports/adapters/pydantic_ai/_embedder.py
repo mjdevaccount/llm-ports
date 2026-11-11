@@ -53,7 +53,7 @@ from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.adapters._classify import WireFacts
 from llm_ports.adapters.pydantic_ai._capture import capture, record_response
 from llm_ports.adapters.pydantic_ai._classify import classify_failure
-from llm_ports.adapters.pydantic_ai._result import gateway_cost, price
+from llm_ports.adapters.pydantic_ai._result import gateway_cost, gateway_deployment, price
 from llm_ports.call.resilience import RetryPolicy
 from llm_ports.observability import EventHook, log_events
 from llm_ports.ports import Answered, Embedded, EmbedInput, Failure, GatewayReader, Pricer, Usage, failure
@@ -303,7 +303,7 @@ class PydanticAIEmbedder:
         answered = Answered(
             requested=tally.requested or self._stamp,
             model=(last.model if last is not None else None) or tally.model,
-            deployment=self._gateway.answered_from_headers(last.headers)[0] if self._gateway and last else None,
+            deployment=gateway_deployment(self._gateway, replies, self._emit),
             response_id=(last.response_id if last is not None else None) or tally.response_id,
         )
         gw = gateway_cost(self._gateway, replies, self._emit)

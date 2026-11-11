@@ -89,14 +89,11 @@ def answered_of(
     requested: str,
     replies: Sequence[WireReply],
     resps: Sequence[ModelResponse],
-    gateway: GatewayReader | None,
+    deployment: str | None,
 ) -> Answered:
     """Who answered: the model and id the last response reported, and the gateway's deployment."""
     model = replies[-1].model if replies else (resps[-1].model_name if resps else None)
     rid = replies[-1].response_id if replies else (resps[-1].provider_response_id if resps else None)
-    deployment = None
-    if gateway is not None and replies:
-        deployment, _ = gateway.answered_from_headers(replies[-1].headers)
     return Answered(requested=requested, model=model, deployment=deployment, response_id=rid)
 
 
@@ -128,10 +125,30 @@ def gateway_cost(gateway: GatewayReader | None, replies: Sequence[WireReply], em
                 return None
             total = _add(total, got)
         except Exception as exc:  # a cost is a report about the call, never a reason to fail it
-            level = 30 if isinstance(exc, ValueError | ArithmeticError) else 40
-            emit(level, "llm_gateway_header_invalid", {"detail": f"{type(exc).__name__}: {exc}"[:200]})
+            _header_invalid(emit, exc)
             return None
     return total
+
+
+def gateway_deployment(gateway: GatewayReader | None, replies: Sequence[WireReply], emit: Emit) -> str | None:
+    """The deployment the gateway says answered the last reply; None when it did not say.
+
+    Never raises: a reader that fails leaves the deployment unknown and is reported as
+    `llm_gateway_header_invalid`, exactly as `gateway_cost` reports one; the call is unaffected.
+    """
+    if gateway is None or not replies:
+        return None
+    try:
+        return gateway.answered_from_headers(replies[-1].headers)[0]
+    except Exception as exc:  # who answered is a report about the call, never a reason to fail it
+        _header_invalid(emit, exc)
+        return None
+
+
+def _header_invalid(emit: Emit, exc: Exception) -> None:
+    """Report a gateway header the reader refused (WARNING) or a reader that broke (ERROR)."""
+    level = 30 if isinstance(exc, ValueError | ArithmeticError) else 40
+    emit(level, "llm_gateway_header_invalid", {"detail": f"{type(exc).__name__}: {exc}"[:200]})
 
 
 def _add(a: Decimal, b: Decimal) -> Decimal:

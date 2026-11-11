@@ -4,7 +4,9 @@
 the facts the wire showed (`WireFacts`). The order is fixed, and the first match wins:
 
 1. `extra` classifiers, in order: gateway-specific knowledge lives there, not in this table.
-2. An exception of a `gated` type anywhere in the chain is `gated`.
+2. An exception of a `gated` type anywhere in the chain is `gated`; an HTTP client's
+   `InvalidURL` or `UnsupportedProtocol` anywhere in the chain is `internal` (`CALLER_CONFIG_ERRORS`:
+   the caller's URL could not be sent, so no request left and no backend is at fault).
 3. `asyncio.CancelledError` is never classified: it is re-raised, before even step 1 sees it.
 4. The framework's own categories (`categorize`, supplied by the adapter that knows them).
 5. A provider error code or message that names a context overflow is `context_overflow`, whatever
@@ -14,8 +16,9 @@ the facts the wire showed (`WireFacts`). The order is fixed, and the first match
    `TimeoutError` and `ConnectionError`) is `timeout` or `transport`, with its phase.
 8. No exception: a refusal or a `content_filter` finish is `refused`; a `length` finish is
    `truncated`, whether or not the output parsed; anything else is success (None).
-9. An exception raised while a provider client was reading the response (its innermost owning
-   frame is in `PROVIDER_MODULES`; the standard library and pydantic are skipped as neutral) is
+9. An exception raised while a provider client was reading a response that ARRIVED (a status is
+   known, and its innermost owning frame is in `PROVIDER_MODULES`; the standard library and
+   pydantic are skipped as neutral) is
    `malformed_response`, under `unavailable` and retryable: a 200 with `choices: []` is the
    provider's fault. Anything else is `internal`, under `request_fault`: a bug in the caller's
    code is not an outage, so it is never retried, failed over, or counted against a backend.
@@ -100,6 +103,9 @@ SEVERITY: tuple[FailureKind, ...] = (
 )
 
 _TRANSPORT_MODULES = ("httpx", "httpx2", "httpcore", "openai")
+#: HTTP-client errors raised before any byte leaves because the caller's URL cannot be sent: the
+#: caller's configuration, never a backend's (step 2). Matched by class name along the MRO.
+CALLER_CONFIG_ERRORS = ("InvalidURL", "UnsupportedProtocol")
 #: Packages a frame is skipped through when finding who raised: they are called by both sides.
 _NEUTRAL = frozenset({"pydantic", "pydantic_core", "typing_extensions", "anyio", "sniffio"})
 _PHASES: Mapping[str, Phase] = {"Connect": "connect", "Read": "read", "Write": "write", "Pool": "pool"}
@@ -204,6 +210,15 @@ def _codes(chain: Sequence[BaseException], facts: WireFacts) -> list[str | None]
 def _provider_messages(chain: Sequence[BaseException]) -> list[str]:
     """The text of each exception in the chain that came from a provider (it carries a status or a body)."""
     return [str(e) for e in chain if hasattr(e, "status_code") or hasattr(e, "body")]
+
+
+def _caller_config(chain: Sequence[BaseException]) -> Failure | None:
+    """Step 2: an HTTP client refused the caller's URL before sending anything."""
+    for e in chain:
+        for cls in type(e).__mro__:
+            if cls.__name__ in CALLER_CONFIG_ERRORS and cls.__module__.split(".")[0] in _TRANSPORT_MODULES:
+                return failure("internal", reason=failure_reason(e, with_cause=True))
+    return None
 
 
 def _transport(chain: Sequence[BaseException]) -> Failure | None:
@@ -314,6 +329,9 @@ def classify_core(
     for e in chain:
         if gated and isinstance(e, gated):
             return failure("gated", reason=str(e)[:REASON_MAX] or type(e).__name__)
+    got = _caller_config(chain)
+    if got is not None:
+        return got
     if chain and categorize is not None:
         got = categorize(chain, facts, finish)
         if got is not None:
@@ -344,7 +362,7 @@ def classify_core(
         if got is not None:
             return got
         for e in chain:
-            if raised_in_provider(e):
+            if status is not None and raised_in_provider(e):
                 return failure("malformed_response", status=status, reason=failure_reason(e))
         return failure("internal", reason=failure_reason(chain[0], with_cause=True))
     if facts.refusal or finish == "content_filter":
@@ -355,6 +373,7 @@ def classify_core(
 
 
 __all__ = [
+    "CALLER_CONFIG_ERRORS",
     "ERROR_MESSAGE_MAX",
     "OVERFLOW_CODES",
     "OVERFLOW_MESSAGES",
