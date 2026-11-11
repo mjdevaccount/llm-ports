@@ -39,11 +39,18 @@ class Conflicts:
         return pack
 
 
+class Misspelled:
+    @hookimpl
+    def market_action(self) -> ActionRegistry:  # the spec's hook is market_actions
+        return ActionRegistry("misspelled")
+
+
 no_hook = NoHook()
+misspelled = Misspelled()
 extra_argument = ExtraArgument()
 raises = Raises()
 not_a_registry = NotARegistry()
 conflicts = Conflicts()
 
 
-__all__ = ["conflicts", "extra_argument", "no_hook", "not_a_registry", "raises"]
+__all__ = ["conflicts", "extra_argument", "misspelled", "no_hook", "not_a_registry", "raises"]

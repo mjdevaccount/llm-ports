@@ -5,9 +5,10 @@ consumer's store. Reading it on every call is too slow and a failed read must no
 pipeline off, so both reads are cached for `ttl_s` and a failed read serves the last known value.
 
 `GateCache.admit` has the signature of `call.Hooks.admit`, so a switched-off category returns
-`gated` before any trace opens:
+`gated` before any trace opens. The consumer's boot reads the gates once:
 
     gates = GateCache(read_gates, window="daily")
+    await gates.refresh()
     hooks = call.Hooks(admit=gates.admit, trace=call.tracer_trace(tracer))
 
 Invariants:
@@ -15,7 +16,10 @@ Invariants:
       is emitted as `market_read_failed` (WARNING), and still marks the value fresh, so the next
       read waits one TTL instead of retrying in a hot loop.
     - `GateCache.check` and `admit` never read the store: they judge the last cached gates. An
-      unknown category, or a cache never filled, is admitted (the gate fails open).
+      unknown category is admitted.
+    - A gate that was never read is not a gate. Until one read succeeds, a category is refused as
+      `gate_unread` (the gate fails closed); a cache built `fail_open=True` admits instead and
+      emits `market_gate_unread` (WARNING) each time it judges from nothing.
     - A cap is enforced against the cached use count, so a burst can overshoot it by up to one TTL.
 
 Rationale: ADR-0018.
@@ -38,6 +42,8 @@ _log_event = log_events("llm_ports.market")
 CATEGORY_DISABLED = "category_disabled"
 #: The reason prefix of a category over its call cap.
 CATEGORY_CAPPED = "category_capped"
+#: The reason prefix of a category judged before the gates were ever read.
+GATE_UNREAD = "gate_unread"
 
 
 class LastKnown[T]:
@@ -52,7 +58,7 @@ class LastKnown[T]:
         on_event: Receives `market_read_failed`; without one, the stdlib logger `llm_ports.market`.
     """
 
-    __slots__ = ("_clock", "_emit", "_fresh_until", "_read", "_value", "name", "ttl_s")
+    __slots__ = ("_clock", "_emit", "_fresh_until", "_known", "_read", "_value", "name", "ttl_s")
 
     def __init__(
         self,
@@ -71,6 +77,12 @@ class LastKnown[T]:
         self._clock = clock
         self._emit = on_event or _log_event
         self._fresh_until: float | None = None
+        self._known = False
+
+    @property
+    def known(self) -> bool:
+        """Whether a read has ever succeeded (or a value was primed): False means `value` is `initial`."""
+        return self._known
 
     @property
     def value(self) -> T:
@@ -88,6 +100,7 @@ class LastKnown[T]:
             return self._value
         try:
             self._value = await self._read()
+            self._known = True
         except Exception as exc:
             self._emit(
                 logging.WARNING,
@@ -100,6 +113,7 @@ class LastKnown[T]:
     def prime(self, value: T) -> None:
         """Set the value and mark it fresh (a warm start, a test)."""
         self._value = value
+        self._known = True
         self._fresh_until = self._clock() + self.ttl_s
 
     def invalidate(self) -> None:
@@ -134,10 +148,13 @@ class GateCache:
         window: Names the cap's window in the refusal (`"daily"`); None leaves it out.
         ttl_s: Seconds a read stays fresh.
         clock: Monotonic seconds; injectable for tests.
-        on_event: Receives `market_read_failed`; without one, the stdlib logger `llm_ports.market`.
+        on_event: Receives `market_read_failed` and `market_gate_unread`; without one, the stdlib
+            logger `llm_ports.market`.
+        fail_open: Admit while the gates have never been read, instead of refusing as
+            `gate_unread`. Each such admission emits `market_gate_unread`.
     """
 
-    __slots__ = ("_cached", "_window")
+    __slots__ = ("_cached", "_emit", "_fail_open", "_window")
 
     def __init__(
         self,
@@ -147,7 +164,10 @@ class GateCache:
         ttl_s: float = 10.0,
         clock: Callable[[], float] = time.monotonic,
         on_event: EventHook | None = None,
+        fail_open: bool = False,
     ) -> None:
+        self._emit = on_event or _log_event
+        self._fail_open = fail_open
         self._cached: LastKnown[Mapping[str, Gate]] = LastKnown(
             read, _EMPTY, name="gates", ttl_s=ttl_s, clock=clock, on_event=on_event
         )
@@ -173,9 +193,15 @@ class GateCache:
     def check(self, category: str | None) -> str | None:
         """Judge `category` against the cached gates: the refusal reason, or None to admit. Never raises.
 
-        No category, an unknown one, or an empty cache is admitted.
+        No category, or an unknown one, is admitted. Before any read has succeeded, a category is
+        refused as `gate_unread`, or admitted with `market_gate_unread` when built `fail_open`.
         """
         if not category:
+            return None
+        if not self._cached.known:
+            if not self._fail_open:
+                return f"{GATE_UNREAD}: the gates were never read; refresh() at boot"
+            self._emit(logging.WARNING, "market_gate_unread", {"category": category, "serving": "open"})
             return None
         gate = self._cached.value.get(category)
         if gate is None:
@@ -191,4 +217,4 @@ class GateCache:
         return self.check(role.category)
 
 
-__all__ = ["CATEGORY_CAPPED", "CATEGORY_DISABLED", "Gate", "GateCache", "LastKnown"]
+__all__ = ["CATEGORY_CAPPED", "CATEGORY_DISABLED", "GATE_UNREAD", "Gate", "GateCache", "LastKnown"]

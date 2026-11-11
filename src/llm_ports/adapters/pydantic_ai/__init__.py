@@ -1,4 +1,5 @@
-"""Adapters on pydantic-ai: `PydanticAIGenerator`, `PydanticAIEmbedder`, output schemas, and `replay`.
+"""Adapters on pydantic-ai: `PydanticAIGenerator`, `PydanticAIEmbedder`, output schemas, `replay`, and the
+`openai_compatible` provider kind (`OpenAICompatibleFactory`).
 
 Needs the `pydantic-ai` extra (``pip install 'llm-ports[pydantic-ai]'``).
 """
@@ -13,6 +14,7 @@ from llm_ports.adapters.pydantic_ai._embedder import (
     PydanticAIEmbedder,
     openai_compatible_embeddings,
 )
+from llm_ports.adapters.pydantic_ai._factory import OpenAICompatibleFactory, translate_settings
 from llm_ports.adapters.pydantic_ai._generator import (
     CaptureLike,
     ModelFor,
@@ -27,6 +29,7 @@ __all__ = [
     "EmbedModelFor",
     "IndexOrderedTransport",
     "ModelFor",
+    "OpenAICompatibleFactory",
     "PydanticAIEmbedder",
     "PydanticAIGenerator",
     "classify",
@@ -36,4 +39,5 @@ __all__ = [
     "replay",
     "strict_json_schema",
     "structured_dict",
+    "translate_settings",
 ]

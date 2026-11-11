@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from llm_ports.market import ActionRegistry, KillSwitch, parse_names
-from tests.market._events import Events
+from tests.market._events import CACHE, Events
 
 
 class Setting:
@@ -56,7 +56,7 @@ def test_unknown_names_a_paused_name_no_action_carries() -> None:
     async def h(_session: object, key: str) -> None: ...
 
     reg = ActionRegistry("main")
-    reg.action(feature="a", action="slow", desired_ttl="6h")(h)
+    reg.action(feature="a", action="slow", desired_ttl="6h", **CACHE)(h)
     events = Events()
     switch = KillSwitch(Setting("a.slow,a.solw"), on_event=events)
     assert switch.unknown(reg) == {"a.solw"}
