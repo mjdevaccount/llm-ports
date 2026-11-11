@@ -75,7 +75,9 @@ class _TableGenerator:
 
     __slots__ = ("_emit", "_inner", "_models", "_provider", "_warned")
 
-    def __init__(self, inner: Generator, models: Sequence[ModelInfo], *, provider: str, on_event: EventHook | None) -> None:
+    def __init__(
+        self, inner: Generator, models: Sequence[ModelInfo], *, provider: str, on_event: EventHook | None
+    ) -> None:
         self._inner = inner
         self._models = {m.id: m for m in models}
         self._provider = provider

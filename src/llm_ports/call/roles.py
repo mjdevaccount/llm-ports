@@ -167,7 +167,9 @@ class TierTable:
             lacks = [c for c in caps if c not in info.supports]
             if lacks:
                 where = path if name == role.tier else f"{path}.fallback ({name})"
-                raise TableInvalid(where, f"role {role.name!r} needs {lacks}; model {info.key!r} supports {sorted(info.supports)}")
+                raise TableInvalid(
+                    where, f"role {role.name!r} needs {lacks}; model {info.key!r} supports {sorted(info.supports)}"
+                )
 
 
 def _canon(value: Any) -> Any:
@@ -232,7 +234,9 @@ def load_tiers(source: Path | Mapping[str, Any], *, check_ladder: LadderCheck | 
         path, raw = MAPPING_SOURCE, source
     version = raw.get("schema_version", 1)
     if version not in SCHEMA_VERSIONS or isinstance(version, bool):
-        raise TableInvalid("schema_version", f"{path.name}: unknown version {version!r} (known: {list(SCHEMA_VERSIONS)})")
+        raise TableInvalid(
+            "schema_version", f"{path.name}: unknown version {version!r} (known: {list(SCHEMA_VERSIONS)})"
+        )
     ladder = {k: float(v) for k, v in raw["ladder"].items()}
     if check_ladder is not None:
         check_ladder(ladder, path)
@@ -308,10 +312,10 @@ def _tier_v2(
         hint = "; self_hosted is set on [models.<key>] in schema 2" if extra[0] in ("self_hosted", "box") else ""
         raise TableInvalid(f"{path}.{extra[0]}", f"unknown key (allowed: {sorted(_V2_TIER_KEYS)}){hint}")
     model = t.get("model")
-    if model not in info:
+    if not isinstance(model, str) or model not in info:
         raise TableInvalid(f"{path}.model", f"unknown model key {model!r} (have {sorted(info)})")
     rung = t.get("timeout")
-    if rung not in ladder:
+    if not isinstance(rung, str) or rung not in ladder:
         raise TableInvalid(f"{path}.timeout", f"unknown rung {rung!r} (have {sorted(ladder)})")
     policy = t.get("policy")
     if policy is not None and policy not in policies:
@@ -324,7 +328,9 @@ def _tier_v2(
         listed = _names(t["fallback_on"], f"{path}.fallback_on")
         for i, kind in enumerate(listed):
             if kind not in FAILURE_KINDS:
-                raise TableInvalid(f"{path}.fallback_on[{i}]", f"unknown failure kind {kind!r} (known: {list(FAILURE_KINDS)})")
+                raise TableInvalid(
+                    f"{path}.fallback_on[{i}]", f"unknown failure kind {kind!r} (known: {list(FAILURE_KINDS)})"
+                )
         kinds = frozenset(listed)
     m = info[model]
     return Tier(

@@ -7,6 +7,75 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed (behaviour, stated first)
+
+- `adapters.pluggy.load_packs` raises `PackLoadError` (an `ImportError`) on the first pack that
+  fails, naming the group, the pack and the stage (`import`, `register`, `hook`, `duplicate`,
+  `pin`, `pending`). 1.22 recorded the failure and carried on, so a scheduler booted without a
+  producer it was meant to run. `load_packs(..., strict=False)` keeps the old record-and-continue
+  behaviour for a diagnostic. Entry points now load sorted by name, not in install order, and a
+  misspelled hook name fails at `pending` instead of loading a plugin that does nothing (ADR-0022).
+- `ActionRegistry`: re-declaring a held `feature.action` with any spec object other than the
+  identical one raises `DuplicateAction` (a `ValueError`) naming both origins, even when the
+  metadata is equal. 1.22 replaced the held spec, so an equal declaration with a different handler
+  swapped the handler in silently. Re-adding the identical object stays a no-op.
+- A `desired_ttl` needs both `cache_table` and `age_col` (the output row its age is measured
+  against); without them nothing can judge the TTL, so the declaration is refused at import.
+- `GateCache` fails closed until its first successful read: `check` (and `admit`) return
+  `gate_unread: ...` for every category, so a boot that forgot `refresh()` refuses instead of
+  admitting ungated. `GateCache(..., fail_open=True)` admits instead and emits
+  `market_gate_unread` on each such call.
+- The `market` extra needs `pluggy>=1.7` (was `>=1.5`).
+- A tier table without `schema_version` that carries a `[providers]` or `[policies]` section is
+  refused (`TableInvalid`, naming the section) rather than read as a 1.x table.
+- Every `call.generate` result carries `stamp["tiers"]`, the fingerprint of the tier table that
+  routed it (absent only for a hand-built `Tier`).
+
+### Added
+
+- Tier table `schema_version = 2` (ADR-0022): `[providers.<name>]` (a registered `kind`, and by
+  name only a `base_url` key and a `secret` name), `[models.<key>]` (`call.models.ModelInfo`: wire
+  id, provider, `supports` from the closed `Capability` vocabulary, `thinking` style, limits that
+  are None when unknown, `slots`, `group`, `self_hosted`, `usd_per_request` as a `Decimal`),
+  `[policies.<name>]` (read-only), and per tier `policy`, `fallback` and `fallback_on`. Every
+  refusal is `TableInvalid(ValueError)` naming the dotted path. A table without `schema_version`
+  loads to the same values as 1.22.0. New `Tier` fields (`info`, `policy`, `fallback`,
+  `fallback_on`, `table_fingerprint`) and `TierTable` fields (`model_info`, `providers`,
+  `policies`, `schema_version`) all default, so 1.x construction is unchanged.
+- `TierTable.fingerprint()` and `TierTable.require(role, *caps)`, which proves at import that a
+  role's tier and every fallback tier state the capabilities it needs.
+- The capability pre-check in `call.generate`: a request whose model does not state `vision`,
+  `web` or structured output (`json_schema`, or `json_object` in its place) ends `request_fault`
+  with an `unsupported: ...` reason and no wire request. A schema 1 table is not checked, and one
+  `llm_call_warning` per process says so; a role that overrides its tier's model id is named once.
+- On a schema 2 tier, `Role.model_settings()` sends a provider-neutral `thinking: bool`.
+- `call.providers`: `ProviderFactory`, `ProviderRegistry` (a duplicate kind raises naming both
+  plugins; frozen after load), `build(table, urls=, secrets=, deps=, factories=)`, which raises at
+  boot for an unknown kind, an unresolved URL key or a secret that resolves to nothing, and returns
+  `Backends` (`generator_for`, `chat_for`, `embedder_for`, `reranker_for`, `probe_for`, `aclose`).
+  `build` emits `llm_backends_built` with the fingerprint and the plugin origins; no secret value
+  is logged. `BuildDeps` and `Built` hold typed placeholders (`policy`, `limiter`, `pricer`,
+  `chat`) for the resilience, result-contract and chat rows.
+- `adapters.pydantic_ai.OpenAICompatibleFactory`, the `openai_compatible` kind (generator,
+  embedder per model that states `embed`, probe), and `translate_settings`, which spells
+  `thinking` per `ThinkingStyle` (`unified`, `chat_template`, `none`; `none` warns once per model
+  as `llm_call_warning` when a role asked to think).
+- `ports.Probe`, `ports.Health`, `ports.HealthState`; `adapters.http.HttpProbe` (`GET` one URL
+  under a 5 s deadline: `up` with the listed model ids, `down` when unreachable or an error
+  status, `unknown` when the probe itself failed or the endpoint is missing; never raises).
+- `adapters.pluggy`: `load_providers` for the second entry-point group `llm_ports.providers`
+  (hook `register_providers(register)`, marker `provider_hookimpl`, `builtin(name, *factories)`),
+  on the same loader as packs; `load_packs(builtins=, pin=, strict=)`; `PluginLoadError`,
+  `PackLoadError`, `PluginStage`; `PackLoad.origin`; `packs_loaded(loads)` returning a
+  `call.providers.Loaded`; the event `plugins_loaded` (group, names, origins); the conventional
+  pin setting names `PACKS_PIN_ENV` and `PROVIDERS_PIN_ENV` (the library reads no environment).
+- `market`: `DuplicateAction`, `ActionRegistry(sources=...)` (a `source` id outside it is refused),
+  `ActionRegistry.freeze()`, `.frozen`, `.origin(feature, action)`, `add(..., origin=)` and
+  `include(..., origin=)`; `KillSwitch(..., registry=)` checks the paused set against the
+  registry on every parse; `GATE_UNREAD`; `LastKnown.known`.
+- `tests/contract/api_surface.json`: the public `__all__` of every module, snapshotted; a name
+  that disappears fails the suite.
+
 ## [1.22.0] - 2026-11-11
 
 ### Added

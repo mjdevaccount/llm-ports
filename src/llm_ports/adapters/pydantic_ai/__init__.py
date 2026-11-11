@@ -1,5 +1,7 @@
-"""Adapters on pydantic-ai: `PydanticAIGenerator`, `PydanticAIEmbedder`, output schemas, `replay`, and the
-`openai_compatible` provider kind (`OpenAICompatibleFactory`).
+"""Adapters on pydantic-ai: generator, embedder, output schemas, replay, the `openai_compatible` kind.
+
+`PydanticAIGenerator`, `PydanticAIEmbedder`, `replay`, and `OpenAICompatibleFactory`, the
+`openai_compatible` provider kind.
 
 Needs the `pydantic-ai` extra (``pip install 'llm-ports[pydantic-ai]'``).
 """

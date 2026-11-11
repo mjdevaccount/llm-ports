@@ -141,7 +141,9 @@ PROVIDER_GROUP = Group(
 GROUPS = pytest.mark.parametrize("g", [PACK_GROUP, PROVIDER_GROUP], ids=lambda g: g.id)
 
 
-def _fails(g: Group, eps: EPs, *, builtins: Sequence[tuple[str, object]] = (), pin: str | None = None) -> PluginLoadError:
+def _fails(
+    g: Group, eps: EPs, *, builtins: Sequence[tuple[str, object]] = (), pin: str | None = None
+) -> PluginLoadError:
     with pytest.raises(g.error) as caught:
         g.load(eps, builtins, pin)
     err = caught.value

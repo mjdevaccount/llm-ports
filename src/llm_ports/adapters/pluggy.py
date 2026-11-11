@@ -174,6 +174,11 @@ def _origin(ep: importlib.metadata.EntryPoint) -> tuple[str | None, str]:
     return dist.name, f"{dist.name}=={version}" if version else dist.name
 
 
+def _given(obj: object) -> Callable[[], object]:
+    """A loader for a built-in: it is already an object."""
+    return lambda: obj
+
+
 def _select(
     builtins: Sequence[tuple[str, object]], eps: EntryPoints | None, group: str, pin: str | None
 ) -> tuple[list[_Candidate], list[tuple[str, _Fail]]]:
@@ -184,7 +189,7 @@ def _select(
         if any(c.name == name for c in out):
             problems.append((name, _Fail("duplicate", "join", "two built-ins share the name")))
             continue
-        out.append(_Candidate(name, None, "builtin", lambda obj=obj: obj))
+        out.append(_Candidate(name, None, "builtin", _given(obj)))
     found = importlib.metadata.entry_points(group=group) if eps is None else (eps() if callable(eps) else eps)
     available: dict[str, importlib.metadata.EntryPoint] = {}
     for ep in found:
@@ -231,7 +236,8 @@ def _impl(pm: pluggy.PluginManager, hook: str, name: str) -> Callable[..., objec
     if not impls:
         pm.unregister(name=name)
         raise _Fail("pending", "validate", f"implements no {hook} hook")
-    return impls[0].function
+    fn: Callable[..., object] = impls[0].function
+    return fn
 
 
 def _join(pm: pluggy.PluginManager, cand: _Candidate, registry: ActionRegistry) -> tuple[str, ...]:
@@ -298,7 +304,11 @@ def load_packs(
 
     def record(name: str, dist: str | None, origin: str | None, fail: _Fail) -> None:
         load = PackLoad(name, dist, "failed", stage=fail.pack_stage, reason=str(fail)[:300], origin=origin)
-        emit(logging.WARNING, "market_pack_failed", {"pack": name, "dist": dist, "stage": fail.stage, "reason": load.reason})
+        emit(
+            logging.WARNING,
+            "market_pack_failed",
+            {"pack": name, "dist": dist, "stage": fail.stage, "reason": load.reason},
+        )
         if strict:
             raise PackLoadError(str(fail), group=group, plugin=name, stage=fail.stage) from fail.__cause__
         loads.append(load)

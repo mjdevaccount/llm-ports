@@ -32,17 +32,22 @@ async def weekly(session, work_key): ...
 `cadence` or `max_silence_h` cannot be judged stale by a freshness check, so it would read as
 unknown forever; `action(...)` raises `ValueError` naming it, and emits `market_action_refused`
 first. A malformed interval literal, an unknown clock, a negative lane or a non-positive weight or
-cost is refused the same way.
+cost is refused the same way. So is a `desired_ttl` without both `cache_table` and `age_col` (the
+output row whose age the TTL is measured against), and, on a registry built with
+`ActionRegistry(sources=...)`, a `source` id that is not among them.
 
-An equal re-declaration (one module imported twice) replaces the held spec, so the newest
-callables run. A different spec under a known key raises: an action is never silently swapped.
+A key is declared once. Re-adding the identical spec object is a no-op; any other spec under a
+held key raises `DuplicateAction`, naming both origins, even when its metadata is equal: an equal
+spec with a different handler would otherwise swap the handler in silently. The composition root
+calls `registry.freeze()` once everything is loaded; a later declaration raises.
 
 ## Pause without a rebuild
 
 `KillSwitch(read, default=...)` is the operator's paused set: comma-separated `feature.action`
 names from a setting whose name you choose. Unset means `default`; set, even to the empty string,
 overrides it. The set is parsed once and emitted once as `market_actions_disabled`;
-`unknown(registry)` names a paused entry that matches no action (a typo pauses nothing).
+`unknown(registry)` names a paused entry that matches no action (a typo pauses nothing). Pass
+`KillSwitch(..., registry=registry)` and every parse checks it, emitting `market_kill_unknown`.
 
 ## Gate a call by its category
 
@@ -53,8 +58,14 @@ still waits one TTL. `GateCache.admit` is a `call.Hooks.admit`, so a switched-of
 
 ```{.python test="skip"}
 gates = GateCache(read_gates, window="daily")
+await gates.refresh()  # at boot: a gate never read refuses every category
 hooks = call.Hooks(admit=gates.admit, trace=call.tracer_trace(tracer))
 ```
+
+**A gate that was never read is not a gate.** Until the first successful read, `check` refuses
+every category with `gate_unread` (`GATE_UNREAD`), so a boot that forgot `refresh()` fails closed
+and says why. `GateCache(read, fail_open=True)` admits instead and emits `market_gate_unread` on
+each such call, for a caller that would rather run ungated than stop.
 
 `LastKnown(read, initial)` is the same cache for one value, such as a global work switch.
 
@@ -86,10 +97,18 @@ def market_actions() -> ActionRegistry:
 reports = "reports_pkg.market"
 ```
 
-The scheduler's process calls `adapters.pluggy.load_packs(registry)` once at boot. Each entry
-point ends as a `PackLoad`: `ok`, `failed` with its stage (`import`, `validate`, `pack`, `join`) or
-`blocked`, and a pack joins all or nothing. `load_packs` never raises; stop the boot on
-`failed(loads)` if a missing producer must not go unnoticed.
+The scheduler's process calls `adapters.pluggy.load_packs(registry, builtins=..., pin=...)` once
+at boot, then `registry.freeze()`. Built-ins register first by name; entry points follow, sorted by
+name. `pin` is the value of your pin setting (`PACKS_PIN_ENV`, `LLM_PORTS_PLUGINS`, by
+convention; the library reads no environment): None loads everything installed, `""` the
+built-ins only, `"a,b"` exactly those, and a pinned name that is not installed raises.
+
+`load_packs` raises `PackLoadError` on the first pack that fails, naming the group, the pack and
+the stage (`import`, `register`, `hook`, `duplicate`, `pin`, `pending`), so a missing producer
+stops the boot. `load_packs(..., strict=False)` records each pack as a `PackLoad` instead (`ok`,
+`failed` with its stage, or `blocked`) for a diagnostic. Every load emits `plugins_loaded` with
+the names and their origins (`builtin` or `<distribution>==<version>`); `packs_loaded(loads)` is
+the same record as a `Loaded`.
 
 ## The whole declaration side
 

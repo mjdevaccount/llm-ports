@@ -70,7 +70,9 @@ def test_a_registry_can_accept_its_own_clocks() -> None:
 
 def test_spec_values_parse_and_name_themselves() -> None:
     reg = ActionRegistry()
-    reg.action(feature="f", action="a", desired_ttl="90m", **CACHE, cadence="2d", source="src", stale_fn=_stale)(_handler)
+    reg.action(feature="f", action="a", desired_ttl="90m", **CACHE, cadence="2d", source="src", stale_fn=_stale)(
+        _handler
+    )
     spec = reg[("f", "a")]
     assert (spec.key, spec.name, spec.source) == (("f", "a"), "f.a", ("src",))
     assert spec.ttl == timedelta(minutes=90)

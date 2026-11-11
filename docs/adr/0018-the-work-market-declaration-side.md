@@ -5,7 +5,8 @@ date: 2026-11-11
 
 # The work market's declaration side is a core subpackage; packs from other distributions load through pluggy entry points
 
-Decided in 1.22.0.
+Decided in 1.22.0. Amended by ADR-0022: an equal re-declaration with a different spec object now
+raises `DuplicateAction`, `load_packs` raises by default, and a never-read `GateCache` refuses.
 
 ## Context and problem statement
 

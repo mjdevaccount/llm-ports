@@ -301,14 +301,16 @@ class Backends:
         return built.probe
 
     async def aclose(self) -> None:
-        """Close every built client that holds a resource. Idempotent."""
+        """Close every built client that holds a resource, each once (a kind may share one). Idempotent."""
         if self._closed:
             return
         self._closed = True
+        seen: set[int] = set()
         for built in self._built.values():
             for client in (built.generator, built.chat, built.probe):
                 close = getattr(client, "aclose", None)
-                if callable(close):
+                if callable(close) and id(client) not in seen:
+                    seen.add(id(client))
                     await close()
 
 

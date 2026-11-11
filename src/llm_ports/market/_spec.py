@@ -153,10 +153,7 @@ def refusal(
             except ValueError as exc:
                 return f"{label}: {exc}"
     if spec.desired_ttl is not None and not (spec.cache_table and spec.age_col):
-        return (
-            "desired_ttl needs cache_table and age_col: a TTL with no output to date can never be "
-            "judged stale"
-        )
+        return "desired_ttl needs cache_table and age_col: a TTL with no output to date can never be judged stale"
     if spec.max_silence_h is not None and not spec.max_silence_h > 0:
         return f"max_silence_h must be > 0, not {spec.max_silence_h!r}"
     if spec.silence_clock not in clocks:

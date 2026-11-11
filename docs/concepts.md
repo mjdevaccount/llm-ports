@@ -61,6 +61,45 @@ CATEGORIZE = AppRole("categorize.batch", tier="gateway", temperature=0.0, grader
 the `check_ladder` hook then name the source `<mapping>`. The pre-1.0 key `box` still loads, with
 a `DeprecationWarning`; a tier that sets both `box` and `self_hosted` is refused.
 
+### Schema 2: what each model can do, and who serves it
+
+`schema_version = 2` adds `[providers.<name>]` (a registered `kind`, and by name only the URL key
+and the secret it needs), `[models.<key>]` (the wire id, its provider, and `supports` from a closed
+capability vocabulary), `[policies.<name>]`, and per tier ordered `fallback` tiers and the
+`fallback_on` failure kinds (ADR-0022). A refusal is `TableInvalid`, naming the path:
+
+```toml
+schema_version = 2
+
+[ladder]
+gateway_s = 60.0
+
+[providers.gateway]
+kind = "openai_compatible"
+base_url = "gateway"      # a key your code resolves to a URL
+secret = "gateway_key"    # a name your code resolves to a key
+
+[models.cheap]
+id = "gpt-5-nano"
+provider = "gateway"
+supports = ["json_schema", "vision"]
+thinking = "unified"
+self_hosted = false
+
+[tiers.gateway]
+model = "cheap"
+timeout = "gateway_s"
+```
+
+`call.generate` refuses a request the tier's model does not state (images without `vision`, a
+schema without `json_schema` or `json_object`, `web=True` without `web`) as `request_fault`
+before anything is sent, and stamps every result with the table's `fingerprint()` as
+`stamp["tiers"]`. `TABLE.require(ROLE, "vision")` at import proves the role's tier, and every
+tier it can fall back to, can take what the role sends. `call.providers.build(TABLE, urls=...,
+secrets=..., deps=BuildDeps(), factories=...)` builds the clients once at boot and raises there for
+an unknown kind, an unresolved URL key or a secret that resolves to nothing;
+`backends.generator_for(tier)` is the `generator=` for a call.
+
 ## Hooks: the consumer's platform, plugged in
 
 `Hooks(admit=, trace=, graders=, on_scores=, on_ok=, on_event=)`, all optional:

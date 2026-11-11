@@ -69,3 +69,22 @@ def test_unknown_names_a_paused_name_no_action_carries() -> None:
 def test_parse_names_drops_blanks() -> None:
     assert parse_names("x.y,, z.w ,") == {"x.y", "z.w"}
     assert parse_names("") == frozenset()
+
+
+def test_a_switch_given_its_registry_names_a_stray_name_on_every_parse() -> None:
+    reg, events = ActionRegistry("main"), Events()
+
+    async def handler(_session: object, work_key: str) -> None: ...
+
+    reg.action(feature="a", action="slow", cadence="1h")(handler)
+    setting = Setting("a.slow,a.typo")
+    switch = KillSwitch(setting, on_event=events, registry=reg)
+    assert switch.is_disabled("a", "slow") and switch.is_disabled("a", "slow")
+    stray = [f for _, e, f in events.seen if e == "market_kill_unknown"]
+    assert stray == [{"registry": "main", "names": ["a.typo"]}], "checked once per parse, not per lookup"
+    switch.reset()
+    switch.names()
+    assert len([e for _, e, _ in events.seen if e == "market_kill_unknown"]) == 2
+    events.seen.clear()
+    KillSwitch(Setting("a.slow"), on_event=events, registry=reg).names()
+    assert [e for _, e, _ in events.seen if e == "market_kill_unknown"] == [], "a real name is not stray"

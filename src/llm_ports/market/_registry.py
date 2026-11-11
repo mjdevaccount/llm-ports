@@ -90,7 +90,9 @@ class ActionRegistry(MutableMapping[Key, ActionSpec]):
 
     # -- the guard -----------------------------------------------------------------------------
     def _refuse(self, spec: ActionSpec, reason: str) -> None:
-        self._emit(logging.WARNING, "market_action_refused", {"registry": self.name, "action": spec.name, "reason": reason})
+        self._emit(
+            logging.WARNING, "market_action_refused", {"registry": self.name, "action": spec.name, "reason": reason}
+        )
 
     def _open(self) -> None:
         if self._frozen:
