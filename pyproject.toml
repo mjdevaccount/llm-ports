@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "1.21.0"
+version = "1.22.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -77,9 +77,12 @@ gepa = ["gepa>=0.1.4"]
 # skinny client is enough against a tracking server; SQLAlchemy and Alembic let it open a local
 # `sqlite:///` store with no server (MLflow 3 refuses its old file store by default). Not in `all`.
 mlflow = ["mlflow-skinny>=3.18,<4", "sqlalchemy>=2.0", "alembic>=1.13"]
+# `adapters.pluggy` (action packs from other distributions, found by entry point). `llm_ports.market`
+# itself is core and needs no extra.
+market = ["pluggy>=1.5"]
 # Every extra but `lettucedetect` (its model weighs hundreds of MB) and the `forecast` four (the
 # numpy/scipy/pandas stack, which a caller that only calls models never needs).
-all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql,gepa]"]
+all = ["llm-ports[pydantic-ai,http,evals,langfuse,otel,sql,gepa,market]"]
 
 [build-system]
 requires = ["hatchling"]
@@ -120,6 +123,7 @@ dev = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",
     "mlflow>=3.18,<4",
+    "pluggy>=1.5",
 ]
 docs = [
     "mkdocs-material>=9.8.0",
@@ -164,12 +168,12 @@ include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "layers"
-name = "layers: adapters | testing > evals | rag | provenance > call > grounding | prompts | observability > ports | learn | forecast"
+name = "layers: adapters | testing > evals | rag | provenance | market > call > grounding | prompts | observability > ports | learn | forecast"
 type = "layers"
 containers = ["llm_ports"]
 layers = [
     "adapters | testing",
-    "evals | rag | provenance",
+    "evals | rag | provenance | market",
     "call",
     "grounding | prompts | observability",
     "ports | learn | forecast",
@@ -226,6 +230,7 @@ modules = [
     "llm_ports.adapters.mlflow",
     "llm_ports.adapters.optuna",
     "llm_ports.adapters.otel",
+    "llm_ports.adapters.pluggy",
     "llm_ports.adapters.pydantic_ai",
     "llm_ports.adapters.pydantic_evals",
     "llm_ports.adapters.river",
@@ -245,6 +250,7 @@ source_modules = [
     "llm_ports.forecast",
     "llm_ports.learn",
     "llm_ports.grounding",
+    "llm_ports.market",
     "llm_ports.observability",
     "llm_ports.ports",
     "llm_ports.prompts",
@@ -263,6 +269,7 @@ forbidden_modules = [
     "optuna",
     "optuna_dashboard",
     "pandas",
+    "pluggy",
     "pydantic_ai",
     "pydantic_evals",
     "river",

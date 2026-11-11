@@ -16,7 +16,8 @@ pip install "llm-ports[pydantic-ai]"
 The core needs only pydantic, jinja2 and pyyaml. Each integration is an extra: `pydantic-ai`
 (generator, embedder, replay) · `http` (reranker, grounder client) · `langfuse` (tracer, prompt
 source, test rig) · `otel` (GenAI spans) · `evals` (pydantic-evals judge) · `sql` (SQL guard) ·
-`lettucedetect` (span grounder; large, pulls torch) · `all` (everything but `lettucedetect`).
+`market` (work-market packs from other distributions, pluggy) · `lettucedetect` (span grounder;
+large, pulls torch) · `all` (everything but `lettucedetect`).
 Importing an adapter without its extra fails with the line that installs it.
 
 ## Quickstart
@@ -110,7 +111,7 @@ already do the work (structured output, retries and validation come from pydanti
 
 ```
 adapters | testing                      vendor SDKs live only here, one extra each
-evals | rag | provenance
+evals | rag | provenance | market       market: background actions a scheduler claims
 call                                    generate(): the one call path
 grounding | prompts | observability
 ports                                   Protocols and value types, zero I/O

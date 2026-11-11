@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-11
+
+### Added
+
+- `llm_ports.market`, the declaration side of a capacity-driven work market (ADR-0018):
+  `ActionRegistry` with the `action(...)` decorator and `ActionSpec`, which refuse at import an
+  action with none of `desired_ttl`, `cadence` or `max_silence_h` (and a malformed interval, an
+  unknown silence clock, a negative lane, a non-positive weight or cost); `KillSwitch`, the
+  operator's paused `feature.action` set read from a setting the caller names; `GateCache` and
+  `LastKnown`, cached control reads that serve the last known value on a failed read, with
+  `GateCache.admit` usable as `call.Hooks.admit`; `ActionMirror` and `sync_all`, the store copy an
+  operator tunes. Every component reports through an injected `on_event` hook.
+- `adapters.pluggy.load_packs` (extra `[market]`): action packs from other distributions, listed
+  under the `llm_ports.market` entry-point group, validated by pluggy and joined all or nothing;
+  each entry point ends `ok`, `failed` (with its stage) or `blocked`.
+
 ## [1.21.0] - 2026-11-09
 
 ### Fixed

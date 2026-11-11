@@ -33,7 +33,7 @@ core and no vendor module.
 
 ## Layering (enforced, `[tool.importlinter]` in `pyproject.toml`)
 
-- Bottom-up: `ports` < `grounding | prompts | observability` < `call` < `evals | rag | provenance`
+- Bottom-up: `ports` < `grounding | prompts | observability` < `call` < `evals | rag | provenance | market`
   < `adapters | testing`. A lower layer never imports a higher one.
 - **Only `adapters/` and `testing/` import a vendor library** (`pydantic_ai`, `httpx`, `langfuse`,
   `opentelemetry`, `sqlglot`, ...). Core code depends on a port; the adapter implements it.

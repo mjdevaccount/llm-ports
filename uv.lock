@@ -2132,7 +2132,7 @@ wheels = [
 
 [[package]]
 name = "llm-ports"
-version = "1.21.0"
+version = "1.22.0"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
@@ -2148,6 +2148,7 @@ all = [
     { name = "langfuse" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-semantic-conventions" },
+    { name = "pluggy" },
     { name = "pydantic-ai-slim", extra = ["openai"] },
     { name = "pydantic-evals" },
     { name = "sqlglot" },
@@ -2174,6 +2175,9 @@ langfuse = [
 ]
 lettucedetect = [
     { name = "lettucedetect" },
+]
+market = [
+    { name = "pluggy" },
 ]
 mlflow = [
     { name = "alembic" },
@@ -2228,6 +2232,7 @@ dev = [
     { name = "opentelemetry-semantic-conventions" },
     { name = "optuna" },
     { name = "optuna-dashboard" },
+    { name = "pluggy" },
     { name = "pre-commit" },
     { name = "pydantic-ai-slim", extra = ["openai"] },
     { name = "pydantic-evals" },
@@ -2270,7 +2275,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=5.0.2,<6" },
     { name = "lettucedetect", marker = "extra == 'lettucedetect'", specifier = ">=0.1.6" },
-    { name = "llm-ports", extras = ["pydantic-ai", "http", "evals", "langfuse", "otel", "sql", "gepa"], marker = "extra == 'all'" },
+    { name = "llm-ports", extras = ["pydantic-ai", "http", "evals", "langfuse", "otel", "sql", "gepa", "market"], marker = "extra == 'all'" },
     { name = "llm-ports", extras = ["scoringrules", "sklearn", "venn-abers", "river", "optuna"], marker = "extra == 'forecast'" },
     { name = "mlflow-skinny", marker = "extra == 'mlflow'", specifier = ">=3.18,<4" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.30" },
@@ -2278,6 +2283,7 @@ requires-dist = [
     { name = "optuna", marker = "extra == 'optuna'", specifier = ">=4.0" },
     { name = "optuna", marker = "extra == 'optuna-dashboard'", specifier = ">=4.0" },
     { name = "optuna-dashboard", marker = "extra == 'optuna-dashboard'", specifier = ">=0.17" },
+    { name = "pluggy", marker = "extra == 'market'", specifier = ">=1.5" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-ai-slim", extras = ["openai"], marker = "extra == 'pydantic-ai'", specifier = ">=2.57,<3" },
     { name = "pydantic-evals", marker = "extra == 'evals'", specifier = ">=2.57,<3" },
@@ -2291,7 +2297,7 @@ requires-dist = [
     { name = "tenacity", marker = "extra == 'pydantic-ai'", specifier = ">=8.2" },
     { name = "venn-abers", marker = "extra == 'venn-abers'", specifier = ">=1.5.4" },
 ]
-provides-extras = ["pydantic-ai", "http", "evals", "lettucedetect", "langfuse", "otel", "sql", "scoringrules", "sklearn", "venn-abers", "river", "optuna", "forecast", "optuna-dashboard", "gepa", "mlflow", "all"]
+provides-extras = ["pydantic-ai", "http", "evals", "lettucedetect", "langfuse", "otel", "sql", "scoringrules", "sklearn", "venn-abers", "river", "optuna", "forecast", "optuna-dashboard", "gepa", "mlflow", "market", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2307,6 +2313,7 @@ dev = [
     { name = "opentelemetry-semantic-conventions", specifier = ">=0.58b0" },
     { name = "optuna", specifier = ">=4.0" },
     { name = "optuna-dashboard", specifier = ">=0.17" },
+    { name = "pluggy", specifier = ">=1.5" },
     { name = "pre-commit", specifier = ">=4.7" },
     { name = "pydantic-ai-slim", extras = ["openai"], specifier = ">=2.57,<3" },
     { name = "pydantic-evals", specifier = ">=2.57,<3" },
