@@ -8,10 +8,7 @@ without `__all__` has no declared surface at all.
 from __future__ import annotations
 
 import importlib
-import importlib.util
-import json
 import pkgutil
-from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -67,62 +64,3 @@ def test_a_private_module_is_reexported_by_its_package(name: str) -> None:
     homes = [_import(m) for m in MODULES if (m == parent or m.startswith(parent + ".")) and _is_public(m)]
     unexported = [n for n in _import(name).__all__ if not any(n in getattr(h, "__all__", ()) for h in homes)]
     assert not unexported, f"{name} defines {unexported}, which no public module of {parent} exports"
-
-
-# ── the snapshot: a change to the public surface is a deliberate diff of public_api.json ─────────
-
-SNAPSHOT = Path(__file__).with_name("public_api.json")
-
-
-def surface() -> dict[str, list[str]]:
-    """Every public module's `__all__`, sorted; a module whose extra is absent is skipped."""
-    out: dict[str, list[str]] = {}
-    for name in MODULES:
-        if not _is_public(name):
-            continue
-        try:
-            out[name] = sorted(_import(name).__all__)
-        except ModuleNotFoundError:
-            continue
-    return out
-
-
-def surface_drift(want: dict[str, list[str]], got: dict[str, list[str]]) -> list[str]:
-    """Every difference between the snapshot `want` and the live `got`, as one line each.
-
-    A snapshot module that no longer exists is drift; one that exists but whose extra is absent
-    (so `surface()` skipped it) is not.
-    """
-    out: list[str] = []
-    for name, names in want.items():
-        if name in got:
-            if got[name] != names:
-                out.append(f"{name}: names changed")
-        elif importlib.util.find_spec(name) is None:
-            out.append(f"{name}: a public module was removed")
-    out += [f"{name}: a public module was added" for name in got if name not in want]
-    return out
-
-
-def test_the_public_surface_matches_the_snapshot() -> None:
-    # Regenerate on a deliberate change: `python -m tests.contract.test_public_api`.
-    want = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
-    drift = surface_drift(want, surface())
-    assert not drift, f"the public surface changed; regenerate the snapshot on purpose: {drift}"
-
-
-def test_a_deleted_module_an_added_one_and_a_renamed_name_are_each_drift() -> None:
-    got = surface()
-    want = {k: list(v) for k, v in got.items()}  # a snapshot taken of the live tree
-    want_gone = {**want, "llm_ports.ports_deleted_since": ["X"]}
-    assert surface_drift(want_gone, got) == ["llm_ports.ports_deleted_since: a public module was removed"]
-    skipped = {k: v for k, v in got.items() if k != "llm_ports.ports"}  # present, its extra absent
-    assert surface_drift(want, skipped) == []
-    assert surface_drift(want, {**got, "llm_ports.brand_new": []}) == ["llm_ports.brand_new: a public module was added"]
-    renamed = {**got, "llm_ports.ports": [*got["llm_ports.ports"][:-1], "renamed"]}
-    assert surface_drift(want, renamed) == ["llm_ports.ports: names changed"]
-    assert surface_drift(want, got) == []
-
-
-if __name__ == "__main__":
-    SNAPSHOT.write_text(json.dumps(surface(), indent=1, sort_keys=True) + chr(10), encoding="utf-8")

@@ -26,13 +26,28 @@ def surface() -> dict[str, list[str]]:
     return {m: sorted(importlib.import_module(m).__all__) for m in MODULES if _public(m)}
 
 
+def removed(snap: dict[str, list[str]], now: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Every snapshot name the live surface no longer has, by module; a deleted module loses all."""
+    gone = {m: sorted(set(names) - set(now.get(m, []))) for m, names in snap.items()}
+    return {m: n for m, n in gone.items() if n}
+
+
 def test_the_public_surface_matches_the_snapshot() -> None:
     snap: dict[str, list[str]] = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     now = surface()
-    removed = {m: sorted(set(names) - set(now.get(m, []))) for m, names in snap.items()}
-    removed = {m: n for m, n in removed.items() if n}
-    assert not removed, f"1.x is additive; these public names disappeared: {removed}"
+    assert not removed(snap, now), f"1.x is additive; these public names disappeared: {removed(snap, now)}"
     assert now == snap, "the public surface changed: regenerate the snapshot deliberately (see the module docstring)"
+
+
+def test_a_deleted_module_and_a_dropped_name_are_each_removed() -> None:
+    now = surface()
+    snap = {k: list(v) for k, v in now.items()}  # a snapshot taken of the live tree
+    assert removed(snap, now) == {}
+    without_ports = {k: v for k, v in now.items() if k != "llm_ports.ports"}
+    assert removed(snap, without_ports) == {"llm_ports.ports": sorted(now["llm_ports.ports"])}
+    dropped = {**now, "llm_ports.ports": now["llm_ports.ports"][1:]}
+    assert removed(snap, dropped) == {"llm_ports.ports": [now["llm_ports.ports"][0]]}
+    assert removed(snap, {**now, "llm_ports.brand_new": ["X"]}) == {}  # an addition is not a removal
 
 
 if __name__ == "__main__":
