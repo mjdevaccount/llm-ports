@@ -123,16 +123,19 @@ class _Records(logging.Handler):
 
 
 async def test_without_a_hook_the_prune_logs_each_row() -> None:
-    # A handler on the logger itself: another test may have turned propagation (and caplog) off.
+    # A handler on the logger itself, enabled for the test: a library imported earlier in the suite
+    # may have configured logging with `disable_existing_loggers` (caplog then reads empty).
     log, records = logging.getLogger("llm_ports.market"), _Records()
-    was = log.level
+    was = (log.level, log.disabled)
     log.addHandler(records)
     log.setLevel(logging.INFO)
+    log.disabled = False
     try:
         await prune_mirror(_registry("live"), Mirror([MirrorRow("f.gone", True)]))
     finally:
         log.removeHandler(records)
-        log.setLevel(was)
+        log.setLevel(was[0])
+        log.disabled = was[1]
     assert any("market_action_pruned" in line and "f.gone" in line for line in records.lines)
 
 
