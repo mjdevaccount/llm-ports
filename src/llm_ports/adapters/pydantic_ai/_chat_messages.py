@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from xml.sax.saxutils import quoteattr
 
 from llm_ports._extras import extra
@@ -25,6 +25,7 @@ from llm_ports.ports import Message, Part, ToolOutput
 
 with extra("pydantic-ai"):
     from pydantic_ai import BinaryContent, CachePoint
+    from pydantic_ai import messages as _messages
     from pydantic_ai.messages import (
         ModelMessage,
         ModelRequest,
@@ -37,6 +38,18 @@ with extra("pydantic-ai"):
         ToolCallPart,
         ToolReturnPart,
         UserPromptPart,
+    )
+
+
+#: pydantic-ai's output re-ask part (`RetryFeedbackPart`, newer releases), alongside the deprecated
+#: `RetryPromptPart`; an empty tuple on a release that predates it.
+FEEDBACK_PARTS: tuple[type, ...] = tuple(t for t in (getattr(_messages, "RetryFeedbackPart", None),) if t is not None)
+
+
+def is_retry(p: Any) -> bool:
+    """True for a part that re-asks the model: an output re-ask, or a tool call returned for a retry."""
+    return isinstance(p, (RetryPromptPart, *FEEDBACK_PARTS)) or (
+        isinstance(p, ToolReturnPart) and getattr(p, "outcome", None) == "retried"
     )
 
 
@@ -151,6 +164,8 @@ def _from_request(r: ModelRequest, records: Mapping[str, ToolRecord]) -> list[Me
                 tool.append(Part("tool_result", text=p.model_response(), call_id=p.tool_call_id, name=p.tool_name))
             else:
                 user.append(Part("text", text=p.model_response()))
+        elif FEEDBACK_PARTS and isinstance(p, FEEDBACK_PARTS):
+            user.append(Part("text", text=str(cast("Any", p).model_response())))
         elif isinstance(p, UserPromptPart) and isinstance(p.content, str):
             user.append(Part("text", text=p.content))
     out = [Message("tool", tuple(tool))] if tool else []

@@ -77,13 +77,22 @@ def translate_settings(settings: Mapping[str, Any], info: ModelInfo | None) -> t
 
 
 class _Translating:
-    """Translates a request's settings for its model, warning once per dropped setting and model."""
+    """Translates a request's settings for its model, warning once per dropped setting and model.
+
+    `aclose` closes the wrapped port's client, so `Backends.aclose` reaches it through the wrapper.
+    """
 
     def __init__(self, models: Sequence[ModelInfo], *, provider: str, on_event: EventHook | None) -> None:
         self._models = {m.id: m for m in models}
         self._provider = provider
         self._emit = on_event or _log_event
         self._warned: set[tuple[str, str]] = set()
+
+    async def aclose(self) -> None:
+        """Close the wrapped port's client. Idempotent."""
+        close = getattr(getattr(self, "_inner", None), "aclose", None)
+        if callable(close):
+            await close()
 
     def _settings(self, model: str, settings: Mapping[str, Any]) -> dict[str, Any]:
         out, dropped = translate_settings(settings, self._models.get(model))

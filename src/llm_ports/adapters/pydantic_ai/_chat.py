@@ -50,6 +50,7 @@ from llm_ports.adapters.pydantic_ai._chat_messages import (
     ToolRecord,
     from_model_messages,
     from_response,
+    is_retry,
     to_model_messages,
     wrap_untrusted,
 )
@@ -202,7 +203,7 @@ def _retries(messages: Sequence[ModelMessage]) -> int:
     n = 0
     for m in messages:
         for p in getattr(m, "parts", ()):
-            if isinstance(p, RetryPromptPart) or (isinstance(p, ToolReturnPart) and p.outcome == "retried"):
+            if is_retry(p):
                 n += 1
     return n
 

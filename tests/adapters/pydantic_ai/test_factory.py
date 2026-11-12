@@ -157,3 +157,87 @@ async def test_a_request_for_a_model_the_table_does_not_know_passes_through() ->
     res = await built.generator.generate(GenRequest(model="other", prompt="p", settings={"seed": 1}), str)
     assert res.outcome == "ok" and wire.bodies[-1]["seed"] == 1
     assert OpenAICompatibleFactory.kind == "openai_compatible"
+
+
+class ChatWire(Wire):
+    """The mock server, streaming: a chat request asks for `stream`, and a count request is answered."""
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/utils/token_counter"):
+            self.paths.append(req.url.path)
+            return httpx.Response(200, json={"total_tokens": 42, "tokenizer_type": "huggingface_tokenizer"})
+        body = json.loads(req.content)
+        if not body.get("stream"):
+            return super().__call__(req)
+        self.paths.append(req.url.path)
+        self.bodies.append(body)
+        chunk = {"id": "x", "object": "chat.completion.chunk", "created": 0, "model": "small-chat"}
+        lines = [
+            {**chunk, "choices": [{"index": 0, "delta": {"role": "assistant", "content": "fi"}}]},
+            {**chunk, "choices": [{"index": 0, "delta": {"content": "ne"}, "finish_reason": "stop"}]},
+            {**chunk, "choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}},
+        ]
+        sse = "".join(f"data: {json.dumps(x)}\n\n" for x in lines) + "data: [DONE]\n\n"
+        return httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
+
+
+async def test_the_factory_builds_a_chat_that_translates_settings_and_streams_over_the_wire() -> None:
+    from llm_ports.ports import Message, Part
+
+    wire, events = ChatWire(), Events()
+    backends = _backends(wire, events)
+    role = V2Role("t.chat", tier="local", thinking=True)
+    hi = [Message("user", (Part("text", text="hi"),))]
+    res = await call.chat(role, messages=hi, chat=backends.chat_for("local"))
+    assert res.outcome == "ok" and res.value == "fine", res.reason
+    assert wire.bodies[-1]["chat_template_kwargs"] == {"enable_thinking": True} and not wire.bodies[-1].get("stream")
+    assert any(w.setting == "stream" for w in res.warnings), "the fixture's model states no stream"
+
+    providers = load_providers(builtins=[builtin("core", OpenAICompatibleFactory())], entry_points=(), on_event=events)
+    streams = build(
+        roles.load_tiers(_with_count()),
+        urls=URLS,
+        secrets=SECRETS.get,
+        deps=BuildDeps(transport=httpx.MockTransport(wire)),
+        factories=providers,
+    )
+
+    class Streamed(roles.Role):
+        TIERS: ClassVar = streams.table.tiers
+
+    res = await call.chat(Streamed("t.s", tier="local"), messages=hi, chat=streams.chat_for("local"))
+    assert res.outcome == "ok" and res.value == "fine" and wire.bodies[-1]["stream"] is True, res.reason
+    assert res.usage_v2 is not None and res.usage_v2.input == 3
+    await backends.aclose()
+    await streams.aclose()
+
+
+async def test_the_factory_builds_a_counter_only_for_models_that_state_count_tokens() -> None:
+    from llm_ports.adapters.pydantic_ai import count_url
+    from llm_ports.ports import Message, Part
+
+    assert count_url("http://gw:4000/v1/") == "http://gw:4000/utils/token_counter"
+    assert count_url("http://gw:4000") == "http://gw:4000/utils/token_counter"
+    wire, events = ChatWire(), Events()
+    backends = _backends(wire, events)
+    assert backends.counter_for("local") is None, "no fixture model states count_tokens"
+    providers = load_providers(builtins=[builtin("core", OpenAICompatibleFactory())], entry_points=(), on_event=events)
+    table = roles.load_tiers(_with_count())
+    counted = build(
+        table, urls=URLS, secrets=SECRETS.get, deps=BuildDeps(transport=httpx.MockTransport(wire)), factories=providers
+    )
+    counter = counted.counter_for("local")
+    assert counter is not None
+    got = await counter.count("small-chat", system="", messages=[Message("user", (Part("text", text="hi"),))])
+    assert (got.tokens, got.method) == (42, "tokenizer") and wire.paths[-1] == "/utils/token_counter"
+    assert await counter.count("other", system="", messages=[]) == type(got)(None, "unsupported")
+
+
+def _with_count() -> dict[str, Any]:
+    import tomllib
+
+    from tests.call.test_table_v2 import V2_PATH
+
+    raw = tomllib.loads(V2_PATH.read_text(encoding="utf-8"))
+    raw["models"]["chat"]["supports"] = [*raw["models"]["chat"]["supports"], "count_tokens", "stream"]
+    return raw

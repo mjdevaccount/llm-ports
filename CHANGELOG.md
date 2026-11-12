@@ -7,6 +7,43 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Behaviour changes (read first)
+
+- **The wire capture no longer reads a streamed (`text/event-stream`) 2xx body.** Reading it
+  buffered the whole stream before the first event reached the caller. A streamed call's usage
+  and finish come from pydantic-ai's own parse of the stream. A JSON body is captured as before.
+- **`Backends.aclose()` now closes the `openai_compatible` provider's client.** The factory's
+  settings-translating wrapper had no `aclose`, so the close never reached the client it wraps.
+- **`generate(counter=...)` and `Role.context`.** A role with `context="check"` or `"trim"` now
+  counts its prompt before the wire and can return `request_fault` / `context_overflow` with
+  `provider_code="preflight"` and zero generation requests. The default `context="off"` changes
+  nothing.
+
+### Added
+
+- **The `Chat` port (ADR-0023).** `ports.Chat` with `chat` and `stream`; `ChatRequest`, `Message`,
+  `Part`, `Tool`, `ToolOutput`, and the stream events `TextDelta`, `ReasoningDelta`,
+  `ToolCallStarted`, `ToolCallFinished`, `StepFinished`, `Finished`. `Generated` gains `messages`
+  and `steps`.
+- **`call.chat` / `call.stream` / `call.chat_request_for`**: capability check (`tools`,
+  `json_schema`, `vision`), admit gate, cache plan, pre-flight, one trace observation with a child
+  span per tool, graders. Events `llm_tool_failed`, `llm_tool_truncated`, `llm_max_steps`.
+- **`adapters.pydantic_ai.PydanticAIChat`** on pydantic-ai's agent loop, sharing the generator's
+  wire policy, deadline, limiter, classification and result contract (`AdapterCore`). The
+  `openai_compatible` factory builds one per provider (`Backends.chat_for`).
+- **Context is measured (ADR-0024).** `ports.TokenCounter` / `Counted`;
+  `adapters.http.HttpTokenCounter` (LiteLLM's `/utils/token_counter` shape), built by the factory
+  for a model stating `count_tokens` (`Backends.counter_for`). `call.context`: `Budget`, `fit`,
+  `TrimPolicy`, `trim`, `cut_middle`, `cache_plan`, `volatile_system`. `Role` gains `context`,
+  `trim`, `max_steps`, `tool_output_chars`, `cache_prefix`; `GenRequest` gains `cache_prefix`.
+  Events `llm_count_failed`, `llm_trimmed`, `llm_context_overflow`, `llm_count_optimistic`;
+  `stamp["count_requests"]` and `stamp["trimmed"]`.
+- **Tool spans.** `observability.record_tool` and `PortObservation.tool`; `OtelTracer` opens an
+  INTERNAL `execute_tool {name}` child span per tool; `TeeTracer` fans it out;
+  `RecordingTracer` records it.
+- **Testing.** `testing.StubChat` (plays `Turn`s, really runs the tools), `testing.run_tool`;
+  `testing.conformance.check_chat` (eleven cases) and `check_token_counter`, both in `CHECKS`.
+
 ## [1.24.0] - 2026-11-12
 
 ### Behaviour changes (read first)
