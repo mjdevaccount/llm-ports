@@ -72,6 +72,7 @@ class RecordedGeneration:
         scores: Every `(name, value, comment)` passed to `score`, in call order.
         score_metadata: The `metadata` of each of those scores, in the same order (None where none).
         ends: How many times `end` was called (a generation is ended exactly once).
+        tools: Every tool execution handed to `tool`, as its keyword arguments, in order.
     """
 
     opened: dict[str, Any]
@@ -79,6 +80,11 @@ class RecordedGeneration:
     ends: int = 0
     scores: list[tuple[str, float, str | None]] = field(default_factory=list)
     score_metadata: list[Mapping[str, Any] | None] = field(default_factory=list)
+    tools: list[dict[str, Any]] = field(default_factory=list)
+
+    def tool(self, *, name: str, call_id: str, duration_s: float, is_error: bool) -> None:
+        """Record one tool execution of a chat call."""
+        self.tools.append({"name": name, "call_id": call_id, "duration_s": duration_s, "is_error": is_error})
 
     def end(self, **fields: Unpack[EndFields]) -> None:
         """Record how the generation ended, replacing any earlier end, and count the ends.

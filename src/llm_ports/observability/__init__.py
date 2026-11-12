@@ -15,6 +15,7 @@ from llm_ports.observability._observation import (
     observe,
     opt_int,
     record,
+    record_tool,
 )
 from llm_ports.observability._tee import SINK_FAILED, TeeGeneration, TeeTracer
 
@@ -38,4 +39,5 @@ __all__ = [
     "observe",
     "opt_int",
     "record",
+    "record_tool",
 ]

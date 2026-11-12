@@ -16,12 +16,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from llm_ports.ports._failure import Failure
 from llm_ports.ports._resilience import Deadline, WirePolicy
 from llm_ports.ports._usage import Answered, Attempt, CallWarning, Cost, Finish, Usage
 from llm_ports.ports.outcomes import Outcome
+
+if TYPE_CHECKING:
+    from llm_ports.ports._chat import Message
 
 
 @dataclass(frozen=True)
@@ -216,8 +219,10 @@ class GenRequest:
         policy: How the adapter retries a wire request; None means the adapter's own default.
         stream_internally: Request a stream and assemble it, so a cancelled or timed-out call
             closes a connection the server can act on. Off by default.
+        cache_prefix: Ask for a prompt-cache breakpoint after the system text, the call's stable
+            prefix (ADR-0024). A request, not a guarantee: `Usage.cache_read` says if it was served.
 
-    Rationale: ADR-0021.
+    Rationale: ADR-0021, ADR-0024.
     """
 
     model: str
@@ -234,6 +239,7 @@ class GenRequest:
     concurrency_group: str | None = None
     policy: WirePolicy | None = None
     stream_internally: bool = False
+    cache_prefix: bool = False
 
     @property
     def clocks(self) -> Deadline:
@@ -269,6 +275,9 @@ class Generated[T]:
         attempts: Every wire request or fallback step that did not answer, in order.
         warnings: Settings dropped or altered on the way to the model.
         failure: The failure's kind and detail; None exactly when `outcome == "ok"`.
+        messages: The new messages a `Chat` call produced (assistant turns and tool results, in
+            order), ready to append to the history; `()` for a `Generator` call.
+        steps: The model requests a `Chat` call made; None for a `Generator` call.
 
     Invariants:
         - When left None, `usage` is `usage_v2.as_mapping()`, `finish_reason` is `finish.raw`
@@ -294,6 +303,8 @@ class Generated[T]:
     attempts: tuple[Attempt, ...] = ()
     warnings: tuple[CallWarning, ...] = ()
     failure: Failure | None = None
+    messages: tuple[Message, ...] = ()
+    steps: int | None = None
 
     def __post_init__(self) -> None:
         """Derive the 1.x fields a caller left None from the fields that carry them now."""

@@ -11,6 +11,9 @@ response, 2xx or not, becomes the call's latest `WireFacts`.
 Invariants:
     - The hook never raises; an unreadable body is skipped.
     - With no capture open, the hook does nothing.
+    - A 2xx `text/event-stream` response is not read: reading it would buffer the whole stream
+      before its first event reached the caller. Its usage and finish come from pydantic-ai's
+      own parse of the stream.
     - Usage keeps unknown as None: an absent usage block is one unmeasured request, an absent
       count is None, a reported 0 is 0.
 
@@ -205,6 +208,8 @@ async def record_response(response: httpx2.Response) -> None:
     cap = _active.get()
     if cap is None:
         return
+    if response.status_code < 400 and _is_stream(response):
+        return  # reading it here would buffer the whole stream before the caller saw one event
     try:
         await response.aread()
         headers = {k.lower(): v for k, v in response.headers.items()}
@@ -226,6 +231,11 @@ async def record_response(response: httpx2.Response) -> None:
         )
     except Exception:  # telemetry must not break the call it describes
         return
+
+
+def _is_stream(response: httpx2.Response) -> bool:
+    """True for a server-sent-event body: its usage and finish arrive in pydantic-ai's own stream parse."""
+    return response.headers.get("content-type", "").split(";")[0].strip().lower() == "text/event-stream"
 
 
 def _record_1x(cap: _Capture, reply: WireReply, body: dict[str, Any]) -> None:
