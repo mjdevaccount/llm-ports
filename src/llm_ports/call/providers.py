@@ -38,7 +38,7 @@ from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid
 from llm_ports.call.roles import TierTable
 from llm_ports.observability import EventHook, log_events
-from llm_ports.ports import Embedder, Generator, Limiter, Pricer, Probe, Reranker, WirePolicy
+from llm_ports.ports import Chat, Embedder, Generator, Limiter, Pricer, Probe, Reranker, TokenCounter, WirePolicy
 
 #: The entry-point group a distribution lists its provider kinds under.
 ENTRY_POINT_GROUP = "llm_ports.providers"
@@ -89,14 +89,16 @@ class Built:
 
     Attributes:
         generator: The `Generator` for every model of the provider (the model id is on the request).
-        chat: The chat port; None until the chat row of the work list defines it.
+        chat: The `Chat` port for every model of the provider.
+        counter_for: Model id to a `TokenCounter`, or None for a model that cannot be counted.
         embedder_for: Model id to an `Embedder`.
         reranker_for: Model id to a `Reranker`.
         probe: The provider's health probe.
     """
 
     generator: Generator | None = None
-    chat: object | None = None
+    chat: Chat | None = None
+    counter_for: Callable[[str], TokenCounter | None] | None = None
     embedder_for: Callable[[str], Embedder] | None = None
     reranker_for: Callable[[str], Reranker] | None = None
     probe: Probe | None = None
@@ -243,18 +245,32 @@ class Backends:
             raise LookupError(f"provider {provider!r} builds no Generator")
         return built.generator
 
-    def chat_for(self, tier: str) -> object:
-        """The chat port that serves `tier`'s model.
+    def chat_for(self, tier: str) -> Chat:
+        """The `Chat` port that serves `tier`'s model.
 
         Raises:
             TableInvalid: The tier is unknown.
-            LookupError: The provider's kind builds no chat port (none does until the chat row of
-                the work list).
+            LookupError: The provider's kind builds no chat port.
         """
         provider, built = self._for_tier(tier)
         if built.chat is None:
             raise LookupError(f"provider {provider!r} builds no chat port")
         return built.chat
+
+    def counter_for(self, tier: str) -> TokenCounter | None:
+        """The `TokenCounter` for `tier`'s model; None when the model does not state `count_tokens`.
+
+        A None is the pre-flight's `unknown`: the call is sent unchecked, never refused.
+
+        Raises:
+            TableInvalid: The tier is unknown.
+        """
+        _, built = self._for_tier(tier)
+        info = self.table.tiers[tier].info
+        assert info is not None  # build refuses a schema 1 table
+        if built.counter_for is None or "count_tokens" not in info.supports:
+            return None
+        return built.counter_for(info.id)
 
     def embedder_for(self, model_key: str) -> Embedder:
         """The `Embedder` for the model under `model_key`.

@@ -414,7 +414,9 @@ class PydanticAIChat(AdapterCore):
             if budget is not None:
                 text, removed = cut_middle(out.content, budget)
                 out = replace(out, content=text) if removed else out
-            run.tools[ctx.tool_call_id or tool.name] = ToolRecord(out, removed > 0, loop.time() - started, tool.untrusted_output)
+            run.tools[ctx.tool_call_id or tool.name] = ToolRecord(
+                out, removed > 0, loop.time() - started, tool.untrusted_output
+            )
             if removed:
                 run.warnings.append(
                     CallWarning(

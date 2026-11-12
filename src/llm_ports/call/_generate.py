@@ -51,6 +51,7 @@ from typing import Any
 
 from llm_ports import ports
 from llm_ports.call._fallback import Route, chain_of, timed_out
+from llm_ports.call._preflight import finished, prepared
 from llm_ports.call.graders import CallGrader, CallScore, graders_for_inputs, score_all
 from llm_ports.call.models import missing, needs
 from llm_ports.call.roles import Role
@@ -63,7 +64,7 @@ from llm_ports.observability import (
     log_events,
     observe,
 )
-from llm_ports.ports import Deadline, Generated, Generator, GenRequest, Tracer
+from llm_ports.ports import Deadline, Generated, Generator, GenRequest, TokenCounter, Tracer
 from llm_ports.ports.outcomes import REASON_MAX, GenerationFailed
 
 #: The longest output text written on a trace observation, in characters.
@@ -323,7 +324,9 @@ def _result_metadata(res: Generated[Any]) -> dict[str, Any]:
     }
 
 
-def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T]:
+def _observed[T](
+    role: Role, res: Generated[T], obs: Observation, extra: Mapping[str, Any] | None = None
+) -> Generated[T]:
     """Write the reply on its observation and stamp the observation on the reply.
 
     The tier answering is stamped on `answered` here, before the observation ends, so the trace
@@ -342,6 +345,7 @@ def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T
             "finish_reason": res.finish_reason,
             "problems": len(res.problems),
             **_result_metadata(res),
+            **(extra or {}),
         },
     )
     if isinstance(obs, PortObservation):
@@ -371,12 +375,15 @@ async def generate[T](
     settings: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
     web: bool = False,
+    counter: TokenCounter | None = None,
 ) -> Generated[T]:
     """Run one generation for `role` through `generator`.
 
     The path and the hooks are described in the module docstring. `web=True` says the role's tier
     fetches pages the prompt never rendered: like an image, an input no text grader sees, so
     `call.graders.TEXT_ONLY_GRADERS` are dropped for this call. The role itself is unchanged.
+    `counter` counts the prompt for the role's pre-flight (`Role.context`, ADR-0024); the role's
+    `cache_prefix` is translated by the tier's `cache` capability.
 
     Returns:
         The result, with a named outcome. A model, wire or gate failure is an outcome, never an
@@ -400,8 +407,11 @@ async def generate[T](
                     break
                 req = request_for(tier_role, prompt=prompt, system=system, images=images, settings=settings)
                 req = replace(req, deadline=clocks)
-                gen = h.generator_for(tier_role.tier) if h.generator_for is not None else generator
-                res = await _one(tier_role, req, prompt, output, gen, h, validate, retry_message, metadata, web)
+                req, pre, res = await prepared(tier_role, req, counter, h.on_event or _log_event)
+                if res is None:
+                    gen = h.generator_for(tier_role.tier) if h.generator_for is not None else generator
+                    res = await _one(tier_role, req, prompt, output, gen, h, validate, retry_message, metadata, web)
+                    res = finished(res, pre, h.on_event or _log_event, tier_role.name)
                 if not route.settle(tier_role, res):
                     break
     except TimeoutError:

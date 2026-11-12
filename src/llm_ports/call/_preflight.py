@@ -24,13 +24,24 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from llm_ports.call.context import Budget, Fit, TrimPolicy, Trimmed, fit, trim
+from llm_ports.call.context import Budget, Fit, Trimmed, TrimPolicy, cache_plan, fit, trim
 from llm_ports.call.roles import Role
 from llm_ports.observability import EventHook
-from llm_ports.ports import CallWarning, Counted, Failure, Message, TokenCounter, Tool, failure
+from llm_ports.ports import (
+    CallWarning,
+    Counted,
+    Failure,
+    Generated,
+    GenRequest,
+    Message,
+    Part,
+    TokenCounter,
+    Tool,
+    failure,
+)
 
 #: Models already warned about in this process for an unknown fit (`llm_call_warning`, once each).
 _UNKNOWN_SEEN: set[str] = set()
@@ -121,7 +132,11 @@ async def preflight(
     if verdict.verdict == "fits":
         return Preflight(msgs, count_requests=n, fit=verdict)
     if role.context == "check":
-        emit(logging.WARNING, "llm_context_overflow", {"role": role.name, "where": "preflight", "tokens": verdict.tokens, "limit": verdict.limit})
+        emit(
+            logging.WARNING,
+            "llm_context_overflow",
+            {"role": role.name, "where": "preflight", "tokens": verdict.tokens, "limit": verdict.limit},
+        )
         return Preflight(msgs, refused=_overflow(verdict, model), count_requests=n, fit=verdict)
     policy = role.trim or TrimPolicy()
     cut = trim(msgs, policy, over_by_tokens=verdict.over_by)
@@ -136,13 +151,25 @@ async def preflight(
     if cut.changed:
         emit(logging.INFO, "llm_trimmed", {"role": role.name, **cut.as_stamp()})
     warns = (
-        (CallWarning("clamped", "messages", f"history trimmed: {cut.dropped_messages} messages dropped, {cut.cut_tool_outputs} tool outputs cut"),)
+        (
+            CallWarning(
+                "clamped",
+                "messages",
+                f"history trimmed: {cut.dropped_messages} messages dropped, {cut.cut_tool_outputs} tool outputs cut",
+            ),
+        )
         if cut.changed
         else ()
     )
     if verdict.verdict == "over":
-        emit(logging.WARNING, "llm_context_overflow", {"role": role.name, "where": "preflight", "tokens": verdict.tokens, "limit": verdict.limit})
-        return Preflight(msgs, refused=_overflow(verdict, model), count_requests=n, trimmed=cut, fit=verdict, warnings=warns)
+        emit(
+            logging.WARNING,
+            "llm_context_overflow",
+            {"role": role.name, "where": "preflight", "tokens": verdict.tokens, "limit": verdict.limit},
+        )
+        return Preflight(
+            msgs, refused=_overflow(verdict, model), count_requests=n, trimmed=cut, fit=verdict, warnings=warns
+        )
     return Preflight(cut.messages, count_requests=n, trimmed=cut if cut.changed else None, fit=verdict, warnings=warns)
 
 
@@ -153,6 +180,42 @@ def optimistic(pre: Preflight, res_failure: Failure | None, emit: EventHook, rol
     emit(logging.WARNING, "llm_context_overflow", {"role": role, "where": "wire"})
     if pre.fit is not None and pre.fit.verdict == "fits":
         emit(logging.WARNING, "llm_count_optimistic", {"role": role, "tokens": pre.fit.tokens, "limit": pre.fit.limit})
+
+
+async def prepared(
+    role: Role, req: GenRequest, counter: TokenCounter | None, emit: EventHook
+) -> tuple[GenRequest, Preflight, Generated[Any] | None]:
+    """`generate`'s pre-wire step for one tier: the cache plan, then the pre-flight on the one prompt.
+
+    Returns the request to send, the pre-flight, and the refusal result when it overflowed (a
+    `context_overflow`, so a fallback chain that lists it moves on to a larger tier).
+    """
+    hint, settings, warns = cache_plan(role.resolved_tier.info, wanted=role.cache_prefix, settings=req.settings)
+    req = replace(req, cache_prefix=hint, settings=settings)
+    turn = (Message("user", (Part("text", text=req.prompt),)),)
+    pre = await preflight(role, counter, system=req.system, messages=turn, emit=emit)
+    pre = replace(pre, warnings=(*warns, *pre.warnings))
+    if pre.refused is None:
+        return req, pre, None
+    f = pre.refused
+    refusal: Generated[Any] = Generated(
+        value=None,
+        outcome=f.outcome,
+        model=req.model,
+        failure=f,
+        reason=f.reason,
+        warnings=pre.warnings,
+        stamp=pre.stamp(),
+    )
+    return req, pre, refusal
+
+
+def finished[T](res: Generated[T], pre: Preflight, emit: EventHook, role: str) -> Generated[T]:
+    """Carry the pre-flight's warnings and stamp on `generate`'s result, and report an optimistic count."""
+    optimistic(pre, res.failure, emit, role)
+    if not pre.warnings and pre.fit is None:
+        return res
+    return replace(res, warnings=(*pre.warnings, *res.warnings), stamp={**res.stamp, **pre.stamp()})
 
 
 __all__: list[str] = []

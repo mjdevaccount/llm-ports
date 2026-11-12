@@ -1,6 +1,6 @@
-"""Adapters on pydantic-ai: generator, embedder, output schemas, replay, the `openai_compatible` kind.
+"""Adapters on pydantic-ai: generator, chat, embedder, output schemas, replay, the `openai_compatible` kind.
 
-`PydanticAIGenerator`, `PydanticAIEmbedder`, `replay`, and `OpenAICompatibleFactory`, the
+`PydanticAIGenerator`, `PydanticAIChat`, `PydanticAIEmbedder`, `replay`, and `OpenAICompatibleFactory`, the
 `openai_compatible` provider kind.
 
 The failure-classification table every adapter shares (`classify_core`, `WireFacts`) and the
@@ -33,6 +33,7 @@ from llm_ports.adapters._classify import (
 )
 from llm_ports.adapters.pydantic_ai import replay
 from llm_ports.adapters.pydantic_ai._capture import CaptureLike, WireReply, parse_usage
+from llm_ports.adapters.pydantic_ai._chat import ChatModelFor, PydanticAIChat
 from llm_ports.adapters.pydantic_ai._classify import OPENAI_FINISH, classify, classify_failure, openai_finish
 from llm_ports.adapters.pydantic_ai._client import OpenAICompatible
 from llm_ports.adapters.pydantic_ai._embedder import (
@@ -61,12 +62,14 @@ __all__ = [
     "TRACEBACK_MAX",
     "CaptureLike",
     "Categorize",
+    "ChatModelFor",
     "Classifier",
     "EmbedModelFor",
     "IndexOrderedTransport",
     "ModelFor",
     "OpenAICompatible",
     "OpenAICompatibleFactory",
+    "PydanticAIChat",
     "PydanticAIEmbedder",
     "PydanticAIGenerator",
     "WireFacts",

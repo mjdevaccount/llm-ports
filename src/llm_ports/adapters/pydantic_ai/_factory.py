@@ -5,6 +5,9 @@ endpoint (a LiteLLM gateway, vLLM, llama.cpp's server, OpenAI). For one provider
 
 - a `Generator` (`PydanticAIGenerator` over `openai_compatible`) that spells each request's
   provider-neutral settings the way the request's model needs (`translate_settings`);
+- a `Chat` (`PydanticAIChat` on the same client) with the same settings translation;
+- a `TokenCounter` per model id that states `count_tokens` (`HttpTokenCounter` on the gateway's
+  `/utils/token_counter`, LiteLLM's count route, at the base URL's root);
 - an `Embedder` per model id, when one of its models states `embed`;
 - a `Probe` (`GET <base_url>/models`, 5 s).
 
@@ -24,7 +27,7 @@ Rationale: ADR-0022.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -33,12 +36,14 @@ from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid
 from llm_ports.call.providers import BuildDeps, Built
 from llm_ports.observability import EventHook, log_events
-from llm_ports.ports import Embedder, Generated, Generator, GenRequest
+from llm_ports.ports import Chat, ChatRequest, Embedder, Generated, Generator, GenRequest, StreamEvent, TokenCounter
 
 with extra("pydantic-ai"):
     import httpx
 
     from llm_ports.adapters._probe import HttpProbe
+    from llm_ports.adapters._token_count import HttpTokenCounter
+    from llm_ports.adapters.pydantic_ai._chat import PydanticAIChat
     from llm_ports.adapters.pydantic_ai._embedder import PydanticAIEmbedder, openai_compatible_embeddings
     from llm_ports.adapters.pydantic_ai._generator import PydanticAIGenerator, openai_compatible
 
@@ -71,19 +76,40 @@ def translate_settings(settings: Mapping[str, Any], info: ModelInfo | None) -> t
     return out, ("thinking",) if want else ()
 
 
-class _TableGenerator:
-    """A `Generator` that translates each request's settings for its model, then delegates."""
+class _Translating:
+    """Translates a request's settings for its model, warning once per dropped setting and model."""
 
-    __slots__ = ("_emit", "_inner", "_models", "_provider", "_warned")
-
-    def __init__(
-        self, inner: Generator, models: Sequence[ModelInfo], *, provider: str, on_event: EventHook | None
-    ) -> None:
-        self._inner = inner
+    def __init__(self, models: Sequence[ModelInfo], *, provider: str, on_event: EventHook | None) -> None:
         self._models = {m.id: m for m in models}
         self._provider = provider
         self._emit = on_event or _log_event
         self._warned: set[tuple[str, str]] = set()
+
+    def _settings(self, model: str, settings: Mapping[str, Any]) -> dict[str, Any]:
+        out, dropped = translate_settings(settings, self._models.get(model))
+        for name in dropped:
+            if (model, name) not in self._warned:
+                self._warned.add((model, name))
+                self._emit(
+                    logging.WARNING,
+                    "llm_call_warning",
+                    {
+                        "kind": "unsupported",
+                        "setting": name,
+                        "detail": f"model {model!r} on provider {self._provider!r} has no {name} switch; not sent",
+                    },
+                )
+        return out
+
+
+class _TableGenerator(_Translating):
+    """A `Generator` that translates each request's settings for its model, then delegates."""
+
+    def __init__(
+        self, inner: Generator, models: Sequence[ModelInfo], *, provider: str, on_event: EventHook | None
+    ) -> None:
+        super().__init__(models, provider=provider, on_event=on_event)
+        self._inner = inner
 
     async def generate[T](
         self,
@@ -93,22 +119,52 @@ class _TableGenerator:
         validate: Callable[[T], Sequence[Any]] | None = None,
         retry_message: Callable[[Sequence[Any]], str] | None = None,
     ) -> Generated[T]:
-        settings, dropped = translate_settings(req.settings, self._models.get(req.model))
-        for name in dropped:
-            if (req.model, name) not in self._warned:
-                self._warned.add((req.model, name))
-                self._emit(
-                    logging.WARNING,
-                    "llm_call_warning",
-                    {
-                        "kind": "unsupported",
-                        "setting": name,
-                        "detail": f"model {req.model!r} on provider {self._provider!r} has no {name} switch; not sent",
-                    },
-                )
-        return await self._inner.generate(
-            replace(req, settings=settings), output, validate=validate, retry_message=retry_message
-        )
+        req = replace(req, settings=self._settings(req.model, req.settings))
+        return await self._inner.generate(req, output, validate=validate, retry_message=retry_message)
+
+
+class _TableChat(_Translating):
+    """A `Chat` that translates each request's settings for its model, then delegates."""
+
+    def __init__(self, inner: Chat, models: Sequence[ModelInfo], *, provider: str, on_event: EventHook | None) -> None:
+        super().__init__(models, provider=provider, on_event=on_event)
+        self._inner = inner
+
+    async def chat[T](
+        self,
+        req: ChatRequest,
+        output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
+        *,
+        validate: Callable[[T], Sequence[Any]] | None = None,
+        retry_message: Callable[[Sequence[Any]], str] | None = None,
+    ) -> Generated[T]:
+        req = replace(req, settings=self._settings(req.model, req.settings))
+        return await self._inner.chat(req, output, validate=validate, retry_message=retry_message)
+
+    async def stream[T](
+        self,
+        req: ChatRequest,
+        output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
+        *,
+        validate: Callable[[T], Sequence[Any]] | None = None,
+        retry_message: Callable[[Sequence[Any]], str] | None = None,
+    ) -> AsyncGenerator[StreamEvent]:
+        req = replace(req, settings=self._settings(req.model, req.settings))
+        events = self._inner.stream(req, output, validate=validate, retry_message=retry_message)
+        try:
+            async for ev in events:
+                yield ev
+        finally:
+            close = getattr(events, "aclose", None)
+            if close is not None:
+                await close()
+
+
+def count_url(base_url: str) -> str:
+    """The gateway's count route for an OpenAI-wire base URL: `/utils/token_counter` at its root. Pure."""
+    root = base_url.rstrip("/")
+    root = root.removesuffix("/v1")
+    return f"{root}/utils/token_counter"
 
 
 class OpenAICompatibleFactory:
@@ -146,9 +202,10 @@ class OpenAICompatibleFactory:
         if secret is not None and not header_value_ok(secret):
             raise TableInvalid(f"{path}.secret", f"secret {spec.secret!r} {HEADER_VALUE_RULE}")
         transport = deps.transport
+        model_for = openai_compatible(url, secret, transport=transport)
         generator = _TableGenerator(
             PydanticAIGenerator(
-                model_for=openai_compatible(url, secret, transport=transport),
+                model_for=model_for,
                 gated=self._gated,
                 pricer=deps.pricer,
                 on_event=deps.on_event,
@@ -177,8 +234,38 @@ class OpenAICompatibleFactory:
             deadline_s=self._probe_deadline_s,
             transport=transport if isinstance(transport, httpx.AsyncBaseTransport) else None,
         )
+        chat = _TableChat(
+            PydanticAIChat(
+                model_for=model_for,
+                gated=self._gated,
+                pricer=deps.pricer,
+                on_event=deps.on_event,
+                policy=deps.policy,
+                limiter=deps.limiter,
+            ),
+            models,
+            provider=spec.name,
+            on_event=deps.on_event,
+        )
+        countable = frozenset(m.id for m in models if "count_tokens" in m.supports)
+        counter = HttpTokenCounter(
+            count_url(url),
+            api_key=secret,
+            models=countable,
+            transport=transport if isinstance(transport, httpx.AsyncBaseTransport) else None,
+        )
+
+        def counter_for(model_id: str) -> TokenCounter | None:
+            return counter if model_id in countable else None
+
         embeds = any("embed" in m.supports for m in models)
-        return Built(generator=generator, embedder_for=embedder_for if embeds else None, probe=probe)
+        return Built(
+            generator=generator,
+            chat=chat,
+            counter_for=counter_for if countable else None,
+            embedder_for=embedder_for if embeds else None,
+            probe=probe,
+        )
 
 
-__all__ = ["OpenAICompatibleFactory", "translate_settings"]
+__all__ = ["OpenAICompatibleFactory", "count_url", "translate_settings"]
