@@ -45,6 +45,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **`market.prune_mirror`** (with `PrunableMirror`, `MirrorRow`, `PruneReport`): after
+  `sync_all`, retires each enabled mirror row whose action the registry no longer declares, via
+  the consumer's `retire_action`. A registered row is never retired; a pack that failed to load
+  keeps its rows (`market_prune_held`); each retired row is a `market_action_pruned` event and
+  `PruneReport.count` is the gauge. Never raises.
 - **Wire policy** (ADR-0021): `WirePolicy` (kind to `RetryRule`, plus `max_total_attempts`) and
   `RetryRule`, exported from `llm_ports`, `llm_ports.ports` and `llm_ports.call.resilience`. One
   retry loop (`adapters._retry`, tenacity underneath) is shared by the generator, the embedder
