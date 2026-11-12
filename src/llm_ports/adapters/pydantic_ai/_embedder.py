@@ -10,11 +10,12 @@ store needs and the framework does not promise:
   the whole call is `invalid`.
 - Batching (`batch_size` inputs per request) and an asymmetric query prefix (`query_instruct`,
   sent as an `Instruct: {task}` line before `Query: {text}`); documents embed plain.
-- Per-request retry (`retry=RetryPolicy(...)`, tenacity underneath): a request whose failure is
-  retryable (`Failure.retryable`: rate limited, overloaded, a server error, timed out, a transport
-  error) is re-sent after a backoff, and only that request, so a call of many batches does not redo
-  the ones that landed. Any other failure (a refused key, an unknown model, a spent quota, a bad
-  request, a bug) is never retried. `Embedded.retries` counts the re-sends.
+- Per-request retry (`policy=WirePolicy(...)`, the loop every adapter shares,
+  `adapters._retry`): a request whose failure kind the policy retries is re-sent after a backoff,
+  and only that request, so a call of many batches does not redo the ones that landed. A spent
+  quota, a refused key, an unknown model, a bad request or a bug is never retried. The 1.x
+  `retry=RetryPolicy(...)` is the same thing (`RetryPolicy.wire()`). `Embedded.retries` counts
+  the re-sends. Without either, each request is sent once (the 1.x default).
 - The result contract (ADR-0019): `usage_v2` summed over every batch, `answered`, and `cost`
   (the gateway's report, else the `pricer=`). Over `openai_compatible_embeddings` the wire capture
   reads each reply's usage exactly; over a fixed `model=` pydantic-ai's usage cannot tell an
@@ -38,7 +39,7 @@ Invariants:
     - A model, wire or gate failure never raises; `classify_failure` names the `Failure`, with one
       table for the generator, the embedder and the reranker.
 
-Rationale: ADR-0001, ADR-0019, ADR-0020; the httpx2 client, ADR-0009.
+Rationale: ADR-0001, ADR-0019, ADR-0020, ADR-0021; the httpx2 client, ADR-0009.
 """
 
 from __future__ import annotations
@@ -51,21 +52,32 @@ from typing import Any
 from llm_ports._extras import extra
 from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.adapters._classify import WireFacts
+from llm_ports.adapters._retry import WireRetry
 from llm_ports.adapters.pydantic_ai._capture import capture, record_response
 from llm_ports.adapters.pydantic_ai._classify import classify_failure
 from llm_ports.adapters.pydantic_ai._result import gateway_cost, gateway_deployment, price
 from llm_ports.call.resilience import RetryPolicy
 from llm_ports.observability import EventHook, log_events
-from llm_ports.ports import Answered, Embedded, EmbedInput, Failure, GatewayReader, Pricer, Usage, failure
+from llm_ports.ports import (
+    Answered,
+    Embedded,
+    EmbedInput,
+    Failure,
+    GatewayReader,
+    Pricer,
+    Usage,
+    WirePolicy,
+    failure,
+)
 from llm_ports.ports.outcomes import exception_chain, failure_reason
 
 with extra("pydantic-ai"):
     import httpx
     import httpx2
-    import tenacity
     from pydantic_ai.embeddings import EmbeddingModel
 
     from llm_ports.adapters._index_order import IndexOrderedTransport
+    from llm_ports.adapters.pydantic_ai._resilient import judge_for
     from llm_ports.adapters.pydantic_ai._wire import IndexOrdered, as_httpx2
 
 EmbedModelFor = Callable[[], AbstractAsyncContextManager[EmbeddingModel]]
@@ -137,16 +149,18 @@ class PydanticAIEmbedder:
         query_instruct: The task line prefixed to `input_type="query"` inputs; empty sends queries
             plain.
         gated: Exception types that classify as `gated`.
-        retry: Re-send a request whose failure is retryable; None sends each request once.
+        retry: Deprecated: `policy=retry.wire()` is the same. Pass at most one of the two.
+        policy: Which failed requests are re-sent, and how; None (and no `retry`) sends each
+            request once.
         pricer: Prices a call the gateway did not price; None leaves `cost` None unless a gateway
             reported one.
         gateway: Reads a gateway's response headers (e.g. the module `adapters.litellm_proxy`).
-        on_event: Receives `llm_pricer_failed` and `llm_gateway_header_invalid`; without one they go
-            to the stdlib logger `llm_ports.adapters.pydantic_ai`.
+        on_event: Receives `llm_pricer_failed`, `llm_gateway_header_invalid` and `llm_wire_retry`;
+            without one they go to the stdlib logger `llm_ports.adapters.pydantic_ai`.
 
     Raises:
-        ValueError: When neither or both of `model` and `model_for` are given, `stamp` is empty,
-            or `batch_size` is below 1.
+        ValueError: When neither or both of `model` and `model_for` are given, both `retry` and
+            `policy` are given, `stamp` is empty, or `batch_size` is below 1.
     """
 
     def __init__(
@@ -163,9 +177,12 @@ class PydanticAIEmbedder:
         pricer: Pricer | None = None,
         gateway: GatewayReader | None = None,
         on_event: EventHook | None = None,
+        policy: WirePolicy | None = None,
     ) -> None:
         if (model is None) == (model_for is None):
             raise ValueError("PydanticAIEmbedder: pass exactly one of model= or model_for=")
+        if retry is not None and policy is not None:
+            raise ValueError("PydanticAIEmbedder: pass at most one of retry= (deprecated) or policy=")
         if not stamp:
             raise ValueError("PydanticAIEmbedder: a stamp is required -- an unnamed space cannot be stored")
         if batch_size < 1:
@@ -177,7 +194,7 @@ class PydanticAIEmbedder:
         self._batch = batch_size
         self._instruct = query_instruct
         self._gated = gated
-        self._retry = retry
+        self._policy = policy if policy is not None else (retry.wire() if retry is not None else WirePolicy.none())
         self._pricer = pricer
         self._gateway = gateway
         self._emit: EventHook = on_event or log_events("llm_ports.adapters.pydantic_ai")
@@ -214,29 +231,19 @@ class PydanticAIEmbedder:
                 out.append(tuple(float(x) for x in vec))
         return out
 
-    def _transient(self, exc: BaseException) -> bool:
-        if not isinstance(exc, Exception):
-            return False
-        got = classify_failure(exc, WireFacts(), gated=self._gated)
-        return got is not None and got.retryable
-
     async def _send(self, embedder: Any, batch: list[str], input_type: EmbedInput, tally: _Tally) -> Any:
-        """One request, re-sent per `self._retry` while it fails `unavailable`."""
-        if self._retry is None or self._retry.attempts == 1:
+        """One request, re-sent while the policy retries its failure (the shared loop)."""
+        wire = WireRetry(self._policy, model=tally.requested, deadline_at=None, emit=self._emit, label=self._stamp)
+        cap = tally.cap
+
+        async def send() -> Any:
+            cap.last = None  # this try's facts only
             return await embedder.embed(batch, input_type=input_type)
-        p = self._retry
-        retrying = tenacity.AsyncRetrying(
-            stop=tenacity.stop_after_attempt(p.attempts),
-            wait=tenacity.wait_exponential(multiplier=p.wait_initial_s, max=p.wait_max_s),
-            retry=tenacity.retry_if_exception(self._transient),
-            reraise=True,
-        )
-        async for attempt in retrying:
-            if attempt.retry_state.attempt_number > 1:
-                tally.retries += 1
-            with attempt:
-                return await embedder.embed(batch, input_type=input_type)
-        raise AssertionError("unreachable: tenacity re-raises the last failure")  # pragma: no cover
+
+        try:
+            return await wire.run(send, judge_for(cap, extra=(), gated=self._gated))
+        finally:
+            tally.retries += len(wire.attempts)
 
     async def embed(self, texts: Sequence[str], *, input_type: EmbedInput = "document") -> Embedded:
         """Embed `texts` in order; a model, wire or gate failure returns a named outcome, never raises.
@@ -259,6 +266,7 @@ class PydanticAIEmbedder:
         inputs = self._inputs(texts, input_type)
         tally = _Tally()
         with capture() as cap:
+            tally.cap = cap
             try:
                 if self._model is not None:
                     vecs = await self._embed_on(self._model, inputs, input_type, tally)
@@ -342,9 +350,10 @@ class _Invalid(Exception):
 class _Tally:
     """One `embed` call's re-sends and what each batch reported (per call, never shared)."""
 
-    __slots__ = ("framework", "model", "requested", "response_id", "retries")
+    __slots__ = ("cap", "framework", "model", "requested", "response_id", "retries")
 
     def __init__(self) -> None:
+        self.cap: Any = None
         self.retries = 0
         self.framework: list[Usage] = []
         self.requested: str = ""

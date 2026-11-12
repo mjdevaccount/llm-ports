@@ -61,6 +61,7 @@ from llm_ports.call.models import (
     parse_providers,
 )
 from llm_ports.observability import log_events
+from llm_ports.ports import WirePolicy
 
 #: The table versions `load_tiers` reads.
 SCHEMA_VERSIONS: tuple[int, ...] = (1, 2)
@@ -79,8 +80,8 @@ class Tier:
         self_hosted: True when the model group is self-hosted.
         info: What the model is and can do; None for a schema 1 table, where nothing is checked.
         policy: The tier's wire policy as declared (`[policies.<name>]`, read-only and hashable:
-            nested tables read as mappings, arrays as tuples); None for none.
-            The resilience row of the work list types it as `WirePolicy`.
+            nested tables read as mappings, arrays as tuples); None for none. `wire_policy` is
+            the same policy as a `WirePolicy`.
         fallback: Tier names tried in order when this tier fails with a kind in `fallback_on`.
         fallback_on: The failure kinds that move a call to the next fallback tier.
         table_fingerprint: The fingerprint of the table the tier was loaded from; None for a tier
@@ -96,6 +97,22 @@ class Tier:
     fallback: tuple[str, ...] = ()
     fallback_on: frozenset[str] = DEFAULT_FALLBACK_ON
     table_fingerprint: str | None = field(default=None, compare=False)
+
+    @property
+    def wire_policy(self) -> WirePolicy | None:
+        """The declared `policy` as a `WirePolicy`; None when the tier declares none.
+
+        Raises:
+            ValueError: The declared policy is not a valid `WirePolicy` (`load_tiers` refuses such
+                a table at load, so only a hand-built tier can raise here).
+        """
+        return None if self.policy is None else WirePolicy.from_mapping(_mapping(self.policy))
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"a policy is a table of rules, not {type(value).__name__}")
+    return value
 
 
 @dataclass(frozen=True)
@@ -296,6 +313,11 @@ def _load_v2(raw: Mapping[str, Any], ladder: dict[str, float], path: Path) -> Ti
     for name, section in raw.get("policies", {}).items():
         if not isinstance(section, Mapping):
             raise TableInvalid(f"policies.{name}", f"must be a table, not {type(section).__name__}")
+        try:
+            WirePolicy.from_mapping(section, path=f"policies.{name}")
+        except ValueError as exc:
+            where, _, why = str(exc).partition(": ")
+            raise TableInvalid(where, why) from None
         policies[name] = freeze(section)
     tiers = {name: _tier_v2(name, t, info, ladder, policies) for name, t in raw["tiers"].items()}
     for name, tier in tiers.items():
@@ -424,6 +446,10 @@ class Role:
         settings: Per-role sampling the tier does not decide (seed, top_p, temperature).
         accept_truncated: A reply the token ceiling cut is `ok` (with a `CallWarning`) instead of
             `truncated`: the 1.x behaviour, for a role whose consumer reads a partial reply.
+        policy: How the role's wire requests are retried; None takes the tier's declared policy,
+            else the generator's default.
+        stream_internally: The adapter requests a stream and assembles it, so a cancelled or
+            timed-out call closes a connection the server can stop on. Off by default.
 
     Raises:
         ValueError: `tier` is not in `TIERS`.
@@ -444,6 +470,8 @@ class Role:
     graders: tuple[str, ...] = ()
     settings: Mapping[str, Any] = field(default_factory=dict)
     accept_truncated: bool = False
+    policy: WirePolicy | None = None
+    stream_internally: bool = False
 
     def __post_init__(self) -> None:
         if self.tier not in self.TIERS:

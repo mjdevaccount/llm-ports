@@ -47,7 +47,7 @@ thinking = "unified"
 self_hosted = false
 
 [policies.local]
-rate_limited = { attempts = 45, wait_initial_s = 2.0 }
+rate_limited = { attempts = 45, wait_initial_s = 2.0, wait_max_s = 20.0, multiplier = 1.6 }
 
 [tiers.local]
 model = "chat"

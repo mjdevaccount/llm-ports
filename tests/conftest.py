@@ -9,6 +9,11 @@ import pytest
 
 from llm_ports.call import _generate, roles
 
+try:
+    from llm_ports.adapters import _retry
+except ImportError:  # a core-only install has no wire-retry loop to put on a fake clock
+    _retry = None  # type: ignore[assignment]
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PACKS = FIXTURES / "packs"
 TABLE = roles.load_tiers(FIXTURES / "llm_tiers.toml")
@@ -28,3 +33,19 @@ def _schema_1_warning_already_seen() -> Iterator[None]:
     _generate._WARNED.add("capabilities")
     yield
     _generate._WARNED.clear()
+
+
+@pytest.fixture(autouse=True)
+def _backoff_does_not_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The wire-retry loop's backoff waits are recorded, not slept, so a 30 s policy runs at once.
+
+    A test that needs real waits (the deadline tests) patches `_retry._sleep` itself.
+    """
+    waits: list[float] = []
+
+    async def record(seconds: float) -> None:
+        waits.append(seconds)
+
+    if _retry is not None:
+        monkeypatch.setattr(_retry, "_sleep", record)
+    return waits

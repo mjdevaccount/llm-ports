@@ -147,7 +147,14 @@ class OpenAICompatibleFactory:
             raise TableInvalid(f"{path}.secret", f"secret {spec.secret!r} {HEADER_VALUE_RULE}")
         transport = deps.transport
         generator = _TableGenerator(
-            PydanticAIGenerator(model_for=openai_compatible(url, secret, transport=transport), gated=self._gated),
+            PydanticAIGenerator(
+                model_for=openai_compatible(url, secret, transport=transport),
+                gated=self._gated,
+                pricer=deps.pricer,
+                on_event=deps.on_event,
+                policy=deps.policy,
+                limiter=deps.limiter,
+            ),
             models,
             provider=spec.name,
             on_event=deps.on_event,
@@ -155,7 +162,14 @@ class OpenAICompatibleFactory:
 
         def embedder_for(model_id: str) -> Embedder:
             model_for = openai_compatible_embeddings(url, model_id, secret, transport=transport)
-            return PydanticAIEmbedder(model_for=model_for, stamp=model_id, gated=self._gated)
+            return PydanticAIEmbedder(
+                model_for=model_for,
+                stamp=model_id,
+                gated=self._gated,
+                pricer=deps.pricer,
+                on_event=deps.on_event,
+                policy=deps.policy,
+            )
 
         probe = HttpProbe(
             f"{url.rstrip('/')}/models",

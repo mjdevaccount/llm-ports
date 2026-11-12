@@ -7,6 +7,67 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Behaviour changes (read first)
+
+- **`PydanticAIGenerator` now retries a failed wire request by default.** Its default policy is
+  `WirePolicy.default()`: `rate_limited` 3 tries (0.5 s doubling to 8 s, with jitter, honouring
+  the server's `retry-after-ms` / `Retry-After` up to 120 s), and `overloaded`, `server`,
+  `timeout` and `transport` 2 tries. `quota`, `auth` and a request-side kind are never retried.
+  1.x sent one request; `PydanticAIGenerator(policy=WirePolicy.none())` keeps that. Every
+  retried request is an `Attempt` on the result (ADR-0021).
+- **A call's timeout is now a wall-clock bound on the WHOLE call.** `generate` starts a
+  `Deadline` from the role's timeout and ends the call at it, across the slot wait, every wire
+  request, every backoff and every fallback tier; an expiry is `unavailable` with kind
+  `timeout` and `phase="total"`. 1.x's timeout bounded each HTTP phase, which a slow trickle
+  never tripped.
+- **A tier table's `[policies.<name>]` is now validated at load.** A value a `RetryRule` cannot
+  hold (an unknown kind such as `quota`, a missing `wait_max_s`, a negative wait) is
+  `TableInvalid` naming its path. 1.23.0 stored any table.
+
+### Added
+
+- **Wire policy** (ADR-0021): `WirePolicy` (kind to `RetryRule`, plus `max_total_attempts`) and
+  `RetryRule`, exported from `llm_ports`, `llm_ports.ports` and `llm_ports.call.resilience`. One
+  retry loop (`adapters._retry`, tenacity underneath) is shared by the generator, the embedder
+  and the reranker; the provider SDK's retries stay 0. A `Role.policy`, else the tier's declared
+  `policy` (`Tier.wire_policy`), else the generator's default applies. `x-should-retry: false`
+  ends the retry; a server hint above `retry_after_max_s` stops it with the hint kept.
+- **Deadline**: `Deadline(total_s, attempt_s=None, first_event_s=None)` on
+  `GenRequest.deadline`; `GenRequest.clocks` reads it (or `Deadline(total_s=timeout_s)`).
+  `attempt_s` bounds one request (a retried `timeout`), `first_event_s` the wait for a stream's
+  first event. `call.DEADLINE_GRACE_S` is how long after its deadline the facade cuts off a
+  generator that ignores it.
+- **Fallback**: `generate` walks a role's tier and its `fallback` chain; a failure whose kind is
+  in the tier's `fallback_on` hands the call to the next tier with what is left of the deadline.
+  `answered.tier` names who answered, `attempts` carries every earlier tier's failure (each
+  `Attempt.tier` set), `stamp["fallback_depth"]` how far it went. `Hooks.generator_for` serves a
+  fallback tier from another provider's generator. Events `llm_fallback`, `llm_deadline_expired`.
+- **Limiter**: the `Limiter` port (`slot(group)`, yields the seconds waited) and the in-process
+  `call.resilience.LocalLimiter(slots, default=None, max_wait_s=None)` with
+  `LocalLimiter.for_models`. The slot is taken inside the deadline and kept across retries;
+  `stamp["limiter_wait_s"]` reports the wait. A wait past `max_wait_s` is `rate_limited` with
+  `provider_code="local_limiter"`. `GenRequest.concurrency_group` (the model's `group`, else its
+  key) names the slot.
+- `PydanticAIGenerator(policy=, limiter=)`, `.stats()` (`clients_built`, `clients_open`,
+  `requests_sent`, `calls_in_flight`) and `.aclose()`. `openai_compatible(..., client=)` takes a
+  caller's `httpx2.AsyncClient`; without one it builds ONE per event loop and reuses it (1.x
+  opened a client per call). It now returns an `OpenAICompatible` (still a `model_for`).
+- `Role.stream_internally` / `GenRequest.stream_internally`: the adapter requests a stream and
+  assembles it, so a cancelled or timed-out call closes a connection the server can stop on.
+- `PydanticAIEmbedder(policy=)`; `HttpReranker(policy=, on_event=)`; `Reranked.attempts`.
+- `BuildDeps.policy`, `.limiter` and `.pricer` are typed (`WirePolicy`, `Limiter`, `Pricer`) and
+  `OpenAICompatibleFactory` passes them, with `on_event`, to every generator and embedder it
+  builds.
+- `RetryPolicy.wire()`: the 1.x policy as a `WirePolicy`.
+
+### Changed
+
+- `PydanticAIEmbedder(retry=RetryPolicy(...))` runs through the shared loop (`RetryPolicy.wire()`);
+  a server's `Retry-After` is now honoured up to `wait_max_s`. `RetryPolicy` is deprecated in
+  favour of `WirePolicy`; passing both `retry=` and `policy=` is a `ValueError`.
+- The `pydantic-ai` floor is 2.64 (`first_event_timeout`); the `http` extra now carries
+  `tenacity>=9` (the reranker's retry loop).
+
 ## [1.23.0] - 2026-11-12
 
 ### Behaviour fixes (read first)

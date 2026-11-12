@@ -18,19 +18,30 @@ The hooks are where a consumer's own planes plug in: a category switchboard, a t
 metrics sink, an LLM-judge sampler. Every hook is optional. With none, the path is role,
 `Generator`, graders, and the outcome is still named and a grader failure still recorded as a score.
 
+Deadline and fallback (ADR-0021, ADR-0022): the call's `Deadline` (the role's timeout as
+`total_s`) starts when `generate` is entered and bounds everything: admit, the slot wait, every wire
+request, re-ask and backoff, every fallback tier, and grading. A tier that fails with a kind in its
+`fallback_on` hands the call to the next tier of its `fallback` chain with the REMAINING deadline;
+the result says which tier answered (`answered.tier`) and carries every earlier tier's failure in
+`attempts`. A `Generator` that does not honour `GenRequest.deadline` is cut off `DEADLINE_GRACE_S`
+after it, as a `timeout` with `phase="total"`.
+
 Invariants:
     - `generate` never raises for a model, wire or gate failure; the outcome names it.
+    - A deadline expiry is a `timeout` result; a caller's cancellation propagates.
+    - Fallback starts only after the tier's own wire policy gave up, and only for a listed kind.
     - A non-`ok`, non-`gated` outcome ends the observation in error and emits `llm_call_failed`.
       `_NotOk` is raised inside the trace block only and never escapes.
     - A caller whose ledger is an `except` uses `require_ok`.
     - The observation's metadata carries the failure kind, the cost and its source, who answered,
       the unified finish, the attempt count and every usage bucket; an unknown stays None.
 
-Rationale: ADR-0001, ADR-0019, ADR-0020.
+Rationale: ADR-0001, ADR-0019, ADR-0020, ADR-0021, ADR-0022.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -39,17 +50,21 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from llm_ports import ports
+from llm_ports.call._fallback import Route, chain_of, timed_out
 from llm_ports.call.graders import CallGrader, CallScore, graders_for_inputs, score_all
 from llm_ports.call.models import missing, needs
 from llm_ports.call.roles import Role
 from llm_ports.observability import EventHook, NoopTracer, Observation, llm_feature, log_events, observe
-from llm_ports.ports import Generated, Generator, GenRequest, Tracer
+from llm_ports.ports import Deadline, Generated, Generator, GenRequest, Tracer
 from llm_ports.ports.outcomes import REASON_MAX, GenerationFailed
 
 #: The longest output text written on a trace observation, in characters.
 OUTPUT_TRACE_MAX = 4000
 #: Where events go when `Hooks.on_event` is None.
 _log_event = log_events("llm_ports.call")
+#: How long after its deadline a `Generator` that does not honour `GenRequest.deadline` is cut off,
+#: in seconds. A generator that honours it (the pydantic-ai adapter) ends the call AT the deadline.
+DEADLINE_GRACE_S = 0.1
 
 
 #: Trace hook: `(role, request, prompt, metadata)` to an async context manager yielding an
@@ -70,8 +85,12 @@ class Hooks:
         graders: The grader table by name; None means `call.graders.GRADERS`.
         on_scores: Awaited with the role and its scores whenever a reply was graded.
         on_ok: Called with the role, prompt and result after an `ok` reply.
-        on_event: Receives `llm_call_failed` and `llm_call_graded`; without one, they go to the
-            stdlib logger `llm_ports.call`.
+        on_event: Receives `llm_call_failed`, `llm_call_graded`, `llm_fallback` and
+            `llm_deadline_expired`; without one, they go to the stdlib logger `llm_ports.call`.
+        generator_for: Tier name to the `Generator` that serves it (e.g.
+            `call.providers.Backends.generator_for`), for a fallback tier on another provider.
+            None runs every tier on the `generator` passed to `generate` (the model id is on the
+            request).
     """
 
     admit: AdmitHook | None = None
@@ -80,6 +99,7 @@ class Hooks:
     on_scores: Callable[[Role, tuple[CallScore, ...]], Awaitable[Any]] | None = None
     on_ok: Callable[[Role, str, Generated[Any]], Any] | None = None
     on_event: EventHook | None = None
+    generator_for: Callable[[str], Generator] | None = None
 
 
 def tracer_trace(tracer: Tracer, *, provider: str = "openai") -> TraceHook:
@@ -128,6 +148,7 @@ def request_for(
     `max_tokens`); the role stays the default.
     """
     tier = role.resolved_tier
+    info = tier.info
     return GenRequest(
         model=role.resolved_model,
         prompt=prompt,
@@ -139,6 +160,9 @@ def request_for(
         output_retries=role.output_retries,
         label=role.name,
         accept_truncated=role.accept_truncated,
+        concurrency_group=None if info is None else (info.group or info.key),
+        policy=role.policy if role.policy is not None else tier.wire_policy,
+        stream_internally=role.stream_internally,
     )
 
 
@@ -271,6 +295,9 @@ def _result_metadata(res: Generated[Any]) -> dict[str, Any]:
         "answered_deployment": who.deployment if who is not None else None,
         "finish": res.finish.unified if res.finish is not None else None,
         "attempts": len(res.attempts),
+        "answered_tier": who.tier if who is not None else None,
+        "limiter_wait_s": res.stamp.get("limiter_wait_s"),
+        "wire_requests": res.stamp.get("wire_requests"),
         "usage_input": u.input if u is not None else None,
         "usage_output": u.output if u is not None else None,
         "usage_cache_read": u.cache_read if u is not None else None,
@@ -329,16 +356,66 @@ async def generate[T](
 
     Returns:
         The result, with a named outcome. A model, wire or gate failure is an outcome, never an
-        exception.
+        exception; so is the deadline running out (`timeout`, `phase="total"`).
 
     Raises:
         RuntimeError: Only when a trace hook swallowed a generator exception, leaving no result.
+        asyncio.CancelledError: The caller cancelled the call.
     """
     h = hooks or Hooks()
     seen = graders_for_inputs(tuple(role.graders), has_images=bool(images), has_web=web)
     if seen != tuple(role.graders):
         role = replace(role, graders=seen)
-    req = request_for(role, prompt=prompt, system=system, images=images, settings=settings)
+    loop = asyncio.get_running_loop()
+    clocks = Deadline(total_s=role.resolved_timeout_s).start(loop.time())
+    route = Route(role, clocks)
+    try:
+        async with asyncio.timeout_at(clocks.at + DEADLINE_GRACE_S):
+            for tier_role in chain_of(role):
+                if not route.next_tier(tier_role, loop.time(), h.on_event or _log_event):
+                    break
+                req = request_for(tier_role, prompt=prompt, system=system, images=images, settings=settings)
+                req = replace(req, deadline=clocks)
+                gen = h.generator_for(tier_role.tier) if h.generator_for is not None else generator
+                res = await _one(tier_role, req, prompt, output, gen, h, validate, retry_message, metadata, web)
+                if not route.settle(tier_role, res):
+                    break
+    except TimeoutError:
+        route.expire(loop.time(), h.on_event or _log_event)
+    return await _finish(role, prompt, route, h)
+
+
+async def _finish(role: Role, prompt: str, route: Route, h: Hooks) -> Generated[Any]:
+    """Stamp, report and return the route's result; an expiry with no result is a `timeout`."""
+    res = route.result if route.result is not None else timed_out(role, route)
+    res = _stamped(role, res)
+    if route.result is None:
+        _event(
+            h,
+            logging.WARNING,
+            "llm_call_failed",
+            role=role.name,
+            outcome=res.outcome,
+            kind="timeout",
+            reason=res.reason,
+        )
+    await _report(role, prompt, res, h)
+    return res
+
+
+async def _one[T](
+    role: Role,
+    req: GenRequest,
+    prompt: str,
+    output: type[T],
+    generator: Generator,
+    h: Hooks,
+    validate: Callable[[T], Sequence[Any]] | None,
+    retry_message: Callable[[Sequence[Any]], str] | None,
+    metadata: Mapping[str, Any] | None,
+    web: bool,
+) -> Generated[T]:
+    """One tier's call: the capability check, the gate, the trace, the generator, the graders."""
     with llm_feature(role.category):
         refused = _unsupported(role, req, output, web, h) or _gated(role, req, h)
         if refused is not None:
@@ -365,12 +442,11 @@ async def generate[T](
             )
         if res is None:  # reachable only when a trace hook swallowed a generator exception
             raise RuntimeError(f"llm_call {role.name}: the generator returned nothing")
-        res = _stamped(role, res)
-        await _report(role, prompt, res, h)
         return res
 
 
 __all__ = [
+    "DEADLINE_GRACE_S",
     "OUTPUT_TRACE_MAX",
     "AdmitHook",
     "Hooks",

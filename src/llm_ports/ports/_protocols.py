@@ -39,6 +39,7 @@ Rationale: ADR-0001.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import date
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
@@ -386,6 +387,27 @@ class GatewayReader(Protocol):
         ...
 
 
+@runtime_checkable
+class Limiter(Protocol):
+    """In-process concurrency: at most N calls at once to one group of models.
+
+    A call takes a slot INSIDE its deadline and OUTSIDE its retry loop: waiting spends the caller's
+    deadline, and a retry keeps the slot it holds. Cross-process limits stay with whatever is in
+    front of the model (a gateway answers 429 and the wire policy waits).
+
+    Rationale: ADR-0021.
+    """
+
+    def slot(self, group: str) -> AbstractAsyncContextManager[float]:
+        """Hold one slot of `group` for the block; the value is the seconds waited for it.
+
+        Raises:
+            SlotWaitExceeded: The wait passed the limiter's bound; the adapter reports
+                `rate_limited` / `local_limiter`.
+        """
+        ...
+
+
 __all__ = [
     "Citer",
     "Embedder",
@@ -396,6 +418,7 @@ __all__ = [
     "Grader",
     "Grounder",
     "Judge",
+    "Limiter",
     "Pricer",
     "PromptSource",
     "Reranker",

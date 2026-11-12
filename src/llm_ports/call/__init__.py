@@ -6,6 +6,7 @@ Submodules: `roles`, `models` (what a model can do, who serves it), `providers` 
 
 from llm_ports.call import graders, models, providers, resilience, roles, schema
 from llm_ports.call._generate import (
+    DEADLINE_GRACE_S,
     OUTPUT_TRACE_MAX,
     AdmitHook,
     Hooks,
@@ -18,6 +19,7 @@ from llm_ports.call._generate import (
 )
 
 __all__ = [
+    "DEADLINE_GRACE_S",
     "OUTPUT_TRACE_MAX",
     "AdmitHook",
     "Hooks",

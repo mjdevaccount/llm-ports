@@ -34,6 +34,7 @@ from llm_ports.adapters._classify import (
 from llm_ports.adapters.pydantic_ai import replay
 from llm_ports.adapters.pydantic_ai._capture import CaptureLike, WireReply, parse_usage
 from llm_ports.adapters.pydantic_ai._classify import OPENAI_FINISH, classify, classify_failure, openai_finish
+from llm_ports.adapters.pydantic_ai._client import OpenAICompatible
 from llm_ports.adapters.pydantic_ai._embedder import (
     EmbedModelFor,
     PydanticAIEmbedder,
@@ -64,6 +65,7 @@ __all__ = [
     "EmbedModelFor",
     "IndexOrderedTransport",
     "ModelFor",
+    "OpenAICompatible",
     "OpenAICompatibleFactory",
     "PydanticAIEmbedder",
     "PydanticAIGenerator",

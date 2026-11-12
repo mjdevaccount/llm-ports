@@ -10,6 +10,8 @@ The package root exports:
   `kind` names what happened;
 - the result contract: `Usage` summed over every request, `Cost` with its source, `Answered`
   (who answered), `Finish`, `CallWarning`, `Attempt`, and the `Pricer` and `GatewayReader` seams;
+- resilience as values: `WirePolicy` / `RetryRule` (which failed wire requests are re-sent),
+  `Deadline` (the call's total bound), and the `Limiter` seam (`call.resilience.LocalLimiter`);
 - the data-rights gate `print_gate` (`llm_ports.provenance`) and `GenerationFailed`.
 
 Prompt packs named by their content sha are `llm_ports.prompts`; the number law and grounded
@@ -23,7 +25,7 @@ Invariants:
     - The package root imports no framework: it needs only pydantic, jinja2 and pyyaml.
     - A `Generator` never raises for a model, wire or gate failure.
 
-Rationale: ADR-0001, ADR-0019, ADR-0020.
+Rationale: ADR-0001, ADR-0019, ADR-0020, ADR-0021.
 """
 
 from importlib.metadata import version
@@ -38,6 +40,7 @@ from llm_ports.ports import (
     CitedAnswer,
     Claim,
     Cost,
+    Deadline,
     Embedded,
     Embedder,
     EmbedInput,
@@ -51,15 +54,18 @@ from llm_ports.ports import (
     GenRequest,
     Judge,
     JudgeVerdict,
+    Limiter,
     Outcome,
     Pricer,
     Prompt,
     PromptSource,
     Reranked,
     Reranker,
+    RetryRule,
     Seed,
     Tracer,
     Usage,
+    WirePolicy,
     failure,
 )
 from llm_ports.ports.outcomes import GenerationFailed
@@ -78,6 +84,7 @@ __all__ = [
     "ContentItem",
     "Cost",
     "DataClass",
+    "Deadline",
     "EmbedInput",
     "Embedded",
     "Embedder",
@@ -94,18 +101,21 @@ __all__ = [
     "Hooks",
     "Judge",
     "JudgeVerdict",
+    "Limiter",
     "Outcome",
     "Pricer",
     "Prompt",
     "PromptSource",
     "Reranked",
     "Reranker",
+    "RetryRule",
     "Role",
     "Seed",
     "Tier",
     "TierTable",
     "Tracer",
     "Usage",
+    "WirePolicy",
     "__version__",
     "failure",
     "generate",
