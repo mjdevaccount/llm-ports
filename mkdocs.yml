@@ -118,6 +118,7 @@ nav:
       - adr/0020-a-failure-has-a-kind.md
       - adr/0021-one-retry-owner-and-a-total-deadline.md
       - adr/0022-the-model-table.md
+      - adr/0025-otel-is-a-tracer-names-are-pinned.md
       - adr/0026-a-pack-has-an-identity-beside-its-content-sha.md
   - Design:
       - design/LEARNING-LOOP-CORE.md

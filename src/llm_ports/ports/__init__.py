@@ -18,6 +18,7 @@ from llm_ports.ports._health import Health, HealthState, Probe
 from llm_ports.ports._protocols import (
     Citer,
     Embedder,
+    EndFields,
     Evaluator,
     GatewayReader,
     Generation,
@@ -79,6 +80,7 @@ __all__ = [
     "EmbedInput",
     "Embedded",
     "Embedder",
+    "EndFields",
     "Evaluator",
     "Failure",
     "FailureKind",

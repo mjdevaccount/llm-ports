@@ -1,4 +1,4 @@
-"""Conformance suites: the contracts any `RunLedger`, `ExampleStore` or `ModelRegistry` must keep.
+"""Conformance suites for the learning-loop ports: `RunLedger`, `ExampleStore`, `ModelRegistry`.
 
 A backend (a database table, a tracker, a feature store) that passes its suite can stand in for
 the standard-library implementations without a consumer noticing. Each `check_*` coroutine runs
@@ -23,7 +23,6 @@ Rationale: ADR-0016.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,42 +39,10 @@ from llm_ports.learn import (
     VersionRead,
     WritableExampleStore,
 )
-
-
-class ContractViolation(AssertionError):
-    """A backend broke one invariant of its port's contract.
-
-    Attributes:
-        invariant: The invariant's name (`round_trip`, `decision_filter`, ...).
-    """
-
-    def __init__(self, invariant: str, detail: str) -> None:
-        """Name the broken invariant and what was seen."""
-        super().__init__(f"{invariant}: {detail}")
-        self.invariant: str = invariant
-
-
-async def _call[T](invariant: str, what: str, pending: Awaitable[T]) -> T:
-    """Await one backend call; an exception is a never-raise violation."""
-    try:
-        return await pending
-    except Exception as exc:
-        raise ContractViolation(invariant, f"{what} raised {type(exc).__name__}: {exc}") from exc
-
-
-def _expect(invariant: str, ok: bool, detail: str) -> None:
-    if not ok:
-        raise ContractViolation(invariant, detail)
-
-
-def _present[T](invariant: str, value: T | None, detail: str) -> T:
-    if value is None:
-        raise ContractViolation(invariant, detail)
-    return value
-
-
-def _tag() -> str:
-    return uuid.uuid4().hex[:12]
+from llm_ports.testing.conformance._core import call as _call
+from llm_ports.testing.conformance._core import expect as _expect
+from llm_ports.testing.conformance._core import present as _present
+from llm_ports.testing.conformance._core import tag as _tag
 
 
 def _verdict(decision: Decision) -> dict[str, Any]:
@@ -321,7 +288,6 @@ async def check_unavailable_model_registry(registry: ModelRegistry) -> tuple[str
 
 
 __all__ = [
-    "ContractViolation",
     "check_example_store",
     "check_model_registry",
     "check_run_ledger",

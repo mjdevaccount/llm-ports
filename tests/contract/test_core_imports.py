@@ -42,8 +42,8 @@ VENDORS = (
     "transformers",
     "venn_abers",
 )
-#: Modules that need an extra, by path prefix.
-NEEDS_AN_EXTRA = ("llm_ports.adapters", "llm_ports.testing.langfuse")
+#: Modules that need an extra, by path prefix. The pytest plugin loads only inside pytest.
+NEEDS_AN_EXTRA = ("llm_ports.adapters", "llm_ports.testing.langfuse", "llm_ports.testing.pytest_plugin")
 #: Each adapter, the extra that installs it, and the vendor module its import needs first.
 ADAPTERS = {
     "llm_ports.adapters.genai_prices": ("prices", "genai_prices"),

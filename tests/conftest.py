@@ -14,6 +14,10 @@ try:
 except ImportError:  # a core-only install has no wire-retry loop to put on a fake clock
     _retry = None  # type: ignore[assignment]
 
+# `pytester` runs the library's own pytest plugin in an inner session (tests/testing/test_plugin.py).
+# The plugin itself loads here, after coverage starts (pyproject's `-p no:llm_ports` says why).
+pytest_plugins = ["pytester", "llm_ports.testing.pytest_plugin"]
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PACKS = FIXTURES / "packs"
 TABLE = roles.load_tiers(FIXTURES / "llm_tiers.toml")

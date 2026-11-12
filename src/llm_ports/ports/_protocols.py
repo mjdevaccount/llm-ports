@@ -42,8 +42,9 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import date
 from decimal import Decimal
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
+from llm_ports.ports._failure import Failure
 from llm_ports.ports._types import (
     Chunk,
     CitedAnswer,
@@ -57,7 +58,7 @@ from llm_ports.ports._types import (
     Prompt,
     Reranked,
 )
-from llm_ports.ports._usage import Answered, Cost, Usage
+from llm_ports.ports._usage import Answered, Cost, Finish, Usage
 
 
 @runtime_checkable
@@ -177,6 +178,25 @@ class PromptSource(Protocol):
         ...
 
 
+class EndFields(TypedDict, total=False):
+    """Every keyword of `Generation.end`, for an implementation that takes `**fields`.
+
+    An implementation may spell the keywords out or take `**fields: Unpack[EndFields]`. An absent
+    key is the port's default: `level` `"DEFAULT"`, every other key None (ADR-0025).
+    """
+
+    output: Any
+    usage: Mapping[str, int | None] | None
+    level: str
+    status_message: str | None
+    metadata: Mapping[str, Any] | None
+    usage_v2: Usage | None
+    cost: Cost | None
+    finish: Finish | None
+    answered: Answered | None
+    failure: Failure | None
+
+
 @runtime_checkable
 class Generation(Protocol):
     """One open generation observation.
@@ -195,6 +215,11 @@ class Generation(Protocol):
         level: str = "DEFAULT",
         status_message: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        usage_v2: Usage | None = None,
+        cost: Cost | None = None,
+        finish: Finish | None = None,
+        answered: Answered | None = None,
+        failure: Failure | None = None,
     ) -> None:
         """Close the observation.
 
@@ -203,12 +228,22 @@ class Generation(Protocol):
             usage: The raw pair `{"input": int | None, "output": int | None}` as the provider
                 reported it, or None when it reported neither. The caller decides what unmeasured
                 means; the adapter decides the sink's key names.
-            level: "DEFAULT", or "ERROR" for a failed call.
-            status_message: The error line carried with `level == "ERROR"`.
+            level: "DEFAULT"; "ERROR" for a failed call; "CANCELLED" for a call its caller
+                cancelled (or interrupted).
+            status_message: The error line carried with a level other than "DEFAULT".
             metadata: Extra fields for the sink.
+            usage_v2: The call's usage summed over every request (ADR-0019); None when unknown.
+            cost: What the call cost, with its source; None when not priced.
+            finish: How the last reply ended.
+            answered: Who answered.
+            failure: The failure's kind and detail; None for a call that succeeded.
+
+        A 1.x implementation without the five keyword-only arguments added in 1.24 keeps
+        working: `observability` passes them only to an `end` that accepts them.
 
         Invariants:
             - A None field is omitted from what the sink receives, never sent as null.
+            - An unmeasured count is never written as 0.
         """
         ...
 

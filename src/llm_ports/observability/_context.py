@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-_feature_var: ContextVar[str | None] = ContextVar("langfuse_feature", default=None)
+_feature_var: ContextVar[str | None] = ContextVar("llm_feature", default=None)
 
 
 @contextmanager
