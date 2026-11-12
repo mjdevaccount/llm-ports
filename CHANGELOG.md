@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-11-12
+
 ### Behaviour changes (read first)
 
 - **`PydanticAIGenerator` now retries a failed wire request by default.** Its default policy is
