@@ -1,10 +1,11 @@
-"""The one call path: `generate`, its hooks, roles, per-call graders, output schemas, retry and skip.
+"""The call paths: `generate`, `chat` and `stream`, their hooks, roles, per-call graders, output schemas, retry and skip.
 
-Submodules: `roles`, `models` (what a model can do, who serves it), `providers` (providers by name,
+Submodules: `context` (budgets, trimming, the cache plan), `roles`, `models` (what a model can do, who serves it), `providers` (providers by name,
 `build`), `graders`, `schema`, and `resilience` (the retry and skip mechanics of a long run).
 """
 
-from llm_ports.call import graders, models, providers, resilience, roles, schema
+from llm_ports.call import context, graders, models, providers, resilience, roles, schema
+from llm_ports.call._chat import TurnOptions, chat, chat_request_for, stream
 from llm_ports.call._generate import (
     DEADLINE_GRACE_S,
     OUTPUT_TRACE_MAX,
@@ -24,6 +25,10 @@ __all__ = [
     "AdmitHook",
     "Hooks",
     "TraceHook",
+    "TurnOptions",
+    "chat",
+    "chat_request_for",
+    "context",
     "generate",
     "graders",
     "json_output",
@@ -34,5 +39,6 @@ __all__ = [
     "resilience",
     "roles",
     "schema",
+    "stream",
     "tracer_trace",
 ]

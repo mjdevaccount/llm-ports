@@ -53,74 +53,51 @@ Rationale: ADR-0001, ADR-0019, ADR-0020, ADR-0021; the httpx2 client, ADR-0009.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import logging
-import traceback
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
-from contextvars import ContextVar
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any
 
 from llm_ports._extras import extra
 from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
-from llm_ports.adapters._classify import Classifier, WireFacts
-from llm_ports.adapters._retry import WireRetry
-from llm_ports.adapters.pydantic_ai._capture import CaptureLike, WireReply, capture, record_response
+from llm_ports.adapters._classify import WireFacts
+from llm_ports.adapters.pydantic_ai._capture import CaptureLike, capture, record_response
 from llm_ports.adapters.pydantic_ai._classify import classify, classify_failure
-from llm_ports.adapters.pydantic_ai._result import (
-    answered_of,
-    finish_of,
-    gateway_cost,
-    gateway_deployment,
-    price,
-    refused_in,
-    responses,
-    unsupported,
-    usage_1x,
-    usage_of,
+from llm_ports.adapters.pydantic_ai._core import (
+    TRACEBACK_MAX,
+    WIRE,
+    AdapterCore,
+    build_agent,
+    call_settings,
+    settled,
 )
-from llm_ports.adapters.pydantic_ai._schema import framework_output
-from llm_ports.observability import EventHook, log_events
+from llm_ports.adapters.pydantic_ai._result import responses, unsupported, usage_1x
 from llm_ports.ports import (
     Answered,
     CallWarning,
-    Cost,
-    Failure,
-    Finish,
-    GatewayReader,
     Generated,
     GenRequest,
-    Limiter,
-    Pricer,
+    RetryMessage,
     SlotWaitExceeded,
-    Usage,
-    WirePolicy,
+    Validator,
     failure,
 )
 
 with extra("pydantic-ai"):
     import httpx
     import httpx2
-    from pydantic_ai import Agent, BinaryContent, ModelRetry, NativeOutput, RunContext, capture_run_messages
+    from pydantic_ai import BinaryContent, RunContext, capture_run_messages
     from pydantic_ai.models import Model
     from pydantic_ai.profiles import ModelProfileSpec
     from pydantic_ai.settings import ModelSettings
 
     from llm_ports.adapters.pydantic_ai._client import OpenAICompatible
-    from llm_ports.adapters.pydantic_ai._resilient import ResilientModel, judge_for
 
 ModelFor = Callable[[GenRequest], AbstractAsyncContextManager[Model]]
 
 #: The 1.x names of the capture and its hook, kept for callers that reached for them.
 _capture = capture
 _record_response = record_response
-#: Models already reported as `llm_cost_unknown` in this process.
-_COST_UNKNOWN_SEEN: set[str] = set()
-#: The longest traceback an `llm_call_internal_error` event carries, in characters.
-TRACEBACK_MAX = 4000
-#: The running call's wire-retry state, so `run` (which a subclass may call) shares it.
-_WIRE: ContextVar[WireRetry | None] = ContextVar("llm_ports_wire", default=None)
 
 
 def openai_compatible(
@@ -186,7 +163,7 @@ def _prompt(req: GenRequest) -> Any:
     return [req.prompt, *(BinaryContent(data=b, media_type=m) for b, m in req.images)]
 
 
-class PydanticAIGenerator:
+class PydanticAIGenerator(AdapterCore[GenRequest]):
     """The `Generator` port on pydantic-ai; the module docstring states the contract.
 
     Args:
@@ -215,54 +192,13 @@ class PydanticAIGenerator:
         ValueError: When neither or both of `model` and `model_for` are given.
     """
 
-    def __init__(
-        self,
-        model: Model | None = None,
-        *,
-        model_for: ModelFor | None = None,
-        capture: Callable[[], AbstractContextManager[CaptureLike]] = _capture,
-        gated: tuple[type[BaseException], ...] = (),
-        wrap: Callable[[Model], Model] | None = None,
-        pricer: Pricer | None = None,
-        gateway: GatewayReader | None = None,
-        extra: Sequence[Classifier] = (),
-        on_event: EventHook | None = None,
-        policy: WirePolicy | None = None,
-        limiter: Limiter | None = None,
-    ) -> None:
-        if (model is None) == (model_for is None):
-            raise ValueError("PydanticAIGenerator needs exactly one of model= / model_for=")
-        self._model = model
-        self._model_for = model_for
-        self._capture = capture
-        self._gated = gated
-        self._wrap = wrap
-        self._pricer = pricer
-        self._gateway = gateway
-        self._extra = tuple(extra)
-        self._emit: EventHook = on_event or log_events("llm_ports.adapters.pydantic_ai")
-        self._policy = policy if policy is not None else WirePolicy.default()
-        self._limiter = limiter
-        self._in_flight = 0
-
-    def stats(self) -> Mapping[str, int]:
-        """`calls_in_flight`, and the client's counts when `model_for` reports them (`openai_compatible`)."""
-        inner = getattr(self._model_for, "stats", None)
-        return {"calls_in_flight": self._in_flight, **(inner() if callable(inner) else {})}
-
-    async def aclose(self) -> None:
-        """Close the client `model_for` holds, when it holds one. Idempotent."""
-        close = getattr(self._model_for, "aclose", None)
-        if callable(close):
-            await close()
-
     async def generate[T](
         self,
         req: GenRequest,
         output: type[T],
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         """Run one generation; a model, wire or gate failure returns a named outcome, never raises.
 
@@ -286,15 +222,13 @@ class PydanticAIGenerator:
         loop = asyncio.get_running_loop()
         clocks = req.clocks.start(loop.time())
         req = replace(req, deadline=clocks)
-        wire = WireRetry(
-            req.policy or self._policy, model=req.model, deadline_at=clocks.at, emit=self._emit, label=req.label
-        )
-        token = _WIRE.set(wire)
+        wire = self._wire(req.policy, req.model, clocks.at, req.label)
+        token = WIRE.set(wire)
         self._in_flight += 1
         waited: float | None = None
         try:
             async with asyncio.timeout_at(clocks.at):
-                async with self._slot(req) as waited_s:
+                async with self._slot(req.concurrency_group or req.model) as waited_s:
                     waited = waited_s
                     res = await self._generate(req, output, validate, retry_message)
         except TimeoutError:
@@ -306,21 +240,16 @@ class PydanticAIGenerator:
                 value=None, outcome=got.outcome, model=req.model, answered=Answered(requested=req.model), failure=got
             )
         finally:
-            _WIRE.reset(token)
+            WIRE.reset(token)
             self._in_flight -= 1
-        return _settled(res, wire, clocks.total_s, waited if self._limiter is not None else None)
-
-    def _slot(self, req: GenRequest) -> AbstractAsyncContextManager[float]:
-        if self._limiter is None:
-            return contextlib.nullcontext(0.0)
-        return self._limiter.slot(req.concurrency_group or req.model)
+        return settled(res, wire, clocks.total_s, waited if self._limiter is not None else None)
 
     async def _generate[T](
         self,
         req: GenRequest,
         output: type[T],
-        validate: Callable[[T], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
+        validate: Validator[T] | None,
+        retry_message: RetryMessage | None,
     ) -> Generated[T]:
         if self._model is not None:
             return await self.run(self._model, req, output, validate, retry_message)
@@ -333,7 +262,7 @@ class PydanticAIGenerator:
         except Exception as exc:  # building the wire failed (bad URL, a refusing transport)
             got = classify_failure(exc, WireFacts(), extra=self._extra, gated=self._gated)
             assert got is not None  # an exception always classifies
-            self._report_internal(req, exc, got)
+            self._report_internal(req.label, req.model, exc, got)
             return Generated(
                 value=None,
                 outcome=got.outcome,
@@ -348,27 +277,37 @@ class PydanticAIGenerator:
         model: Model,
         req: GenRequest,
         output: type[T],
-        validate: Callable[[T], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
+        validate: Validator[T] | None,
+        retry_message: RetryMessage | None,
     ) -> Generated[T]:
         """Run one agent on `model` and classify the result; the arguments are as for `generate`.
 
         A subclass that supplies `model` on its own transport calls this to share the run, the
         validator and the classification.
         """
-        agent, kept = self._agent(model, req, output, validate, retry_message)
+        settings = call_settings(req.settings, req.clocks, streamed=req.stream_internally, cache=req.cache_prefix)
+        agent, kept = build_agent(
+            model,
+            output,
+            settings=settings,
+            output_retries=req.output_retries,
+            validate=validate,
+            retry_message=retry_message,
+            system=req.system,
+        )
         warns = unsupported(model, {**(model.settings or {}), **req.settings})
         with self._capture() as cap, capture_run_messages() as messages:
             try:
-                res = await agent.run(_prompt(req), model=self._resilient(model, req, cap), **_streamed(req))
+                resilient = self._resilient(model, req.policy, req.model, req.clocks, cap)
+                res = await agent.run(_prompt(req), model=resilient, **_streamed(req))
             except Exception as exc:
                 facts = self._facts(cap, messages)
                 got = classify_failure(exc, facts.wire, extra=self._extra, gated=self._gated)
                 assert got is not None  # an exception always classifies
-                self._report_internal(req, exc, got)
+                self._report_internal(req.label, req.model, exc, got)
                 # 1.x `usage` on a failed run was the last reply's; it stays so (usage_v2 sums them all).
                 last_1x = dict(cap.usage) or None
-                return self._result(req, None, got, None, facts, cap, warns, (), usage_1x=last_1x)
+                return self._result(req.model, None, got, None, facts, cap, warns, (), usage_1x=last_1x)
         facts = self._facts(cap, messages)
         retries = max(0, len(responses(res.all_messages())) - 1)
         got = classify_failure(None, facts.wire, extra=self._extra, gated=self._gated)
@@ -382,138 +321,7 @@ class PydanticAIGenerator:
         elif got is not None and got.kind != "truncated":
             value = None
         u1 = usage_1x(facts.usage, cap.usage)
-        return self._result(req, value, got, retries, facts, cap, warns, kept["problems"], usage_1x=u1)
-
-    def _resilient(self, model: Model, req: GenRequest, cap: CaptureLike) -> Model:
-        """`model` behind the call's wire retry: the running call's, else a fresh one for this run."""
-        wire = _WIRE.get() or WireRetry(req.policy or self._policy, model=req.model, deadline_at=None, emit=self._emit)
-        clocks = req.clocks
-
-        def bound() -> float | None:
-            # The call's own bound is enforced around the whole call; only a tighter one is set here.
-            return clocks.attempt_s if clocks.attempt_s is not None and clocks.attempt_s < clocks.total_s else None
-
-        def reset() -> None:
-            if hasattr(cap, "last"):
-                cap.last = None
-
-        return ResilientModel(
-            model, wire, judge_for(cap, extra=self._extra, gated=self._gated), bound=bound, reset=reset
-        )
-
-    def _facts(self, cap: CaptureLike, messages: Sequence[Any]) -> _Facts:
-        """Read what the call showed, preferring the wire's replies over pydantic-ai's messages."""
-        replies: tuple[WireReply, ...] = tuple(getattr(cap, "replies", None) or ())
-        last: WireFacts | None = getattr(cap, "last", None)
-        resps = responses(messages)
-        if last is None and cap.finish_reason is not None:  # a 1.x capture: finish only
-            last = WireFacts(finish_raw=cap.finish_reason)
-        finish = finish_of(last, resps)
-        wire = replace(
-            last or WireFacts(),
-            finish_raw=finish.raw if finish is not None else None,
-            refusal=(last is not None and last.refusal) or refused_in(resps),
-        )
-        usage = usage_of(replies, resps)
-        return _Facts(replies, wire, finish, usage, resps)
-
-    def _result(
-        self,
-        req: GenRequest,
-        value: Any,
-        got: Failure | None,
-        retries: int | None,
-        facts: _Facts,
-        cap: CaptureLike,
-        warns: tuple[CallWarning, ...],
-        problems: tuple[Any, ...],
-        *,
-        usage_1x: Mapping[str, int | None] | None = None,
-    ) -> Generated[Any]:
-        """Assemble the result contract for one finished run, and emit its usage and cost events."""
-        deployment = gateway_deployment(self._gateway, facts.replies, self._emit)
-        answered = answered_of(req.model, facts.replies, facts.resps, deployment)
-        gw = gateway_cost(self._gateway, facts.replies, self._emit)
-        cost = price(facts.usage, answered, gateway_usd=gw, pricer=self._pricer, emit=self._emit)
-        self._report_usage(answered, facts.usage, cost)
-        res = Generated(
-            value=value,
-            outcome=got.outcome if got is not None else "ok",
-            model=req.model,
-            retries=retries,
-            problems=problems,
-            sources=cap.sources,
-            usage=usage_1x,
-            usage_v2=facts.usage,
-            cost=cost,
-            finish=facts.finish,
-            answered=answered,
-            warnings=warns,
-            failure=got,
-        )
-        if usage_1x is None and res.usage is not None:
-            # 1.x reported None here (a capture that recorded no usage); `usage_v2` keeps the counts.
-            object.__setattr__(res, "usage", None)
-        return res
-
-    def _report_usage(self, answered: Answered, usage: Usage | None, cost: Cost | None) -> None:
-        model = answered.model or answered.requested
-        if usage is not None and usage.unmeasured:
-            self._emit(
-                logging.INFO,
-                "llm_usage_unmeasured",
-                {"model": model, "requests": usage.requests, "unmeasured": usage.unmeasured},
-            )
-        if cost is not None and cost.reason == "unknown_model" and model not in _COST_UNKNOWN_SEEN:
-            _COST_UNKNOWN_SEEN.add(model)
-            self._emit(logging.WARNING, "llm_cost_unknown", {"model": model, "priced_model": cost.priced_model})
-
-    def _report_internal(self, req: GenRequest, exc: BaseException, got: Failure) -> None:
-        if got.kind != "internal":
-            return
-        tb = "".join(traceback.format_exception(exc))[-TRACEBACK_MAX:]
-        self._emit(
-            logging.ERROR,
-            "llm_call_internal_error",
-            {"label": req.label, "model": req.model, "reason": got.reason, "traceback": tb},
-        )
-
-    @staticmethod
-    def _agent[T](
-        model: Model,
-        req: GenRequest,
-        output: type[T],
-        validate: Callable[[T], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
-    ) -> tuple[Agent[None, Any], dict[str, tuple[Any, ...]]]:
-        """Build the call's agent, and the slot its validator leaves the last problems in."""
-        out_spec: Any = str if output is str else NativeOutput(framework_output(output))
-        settings = dict(req.settings)
-        clocks = req.clocks
-        # The provider client's own per-attempt timeout; the deadline itself is enforced by the call.
-        settings.setdefault("timeout", clocks.attempt_s or clocks.total_s)
-        if req.stream_internally and clocks.first_event_s is not None:
-            settings.setdefault("first_event_timeout", clocks.first_event_s)
-        agent: Agent[None, Any] = Agent(
-            model,
-            output_type=out_spec,
-            system_prompt=req.system or (),
-            retries={"output": req.output_retries},
-            model_settings=cast(ModelSettings, settings),
-        )
-        kept: dict[str, tuple[Any, ...]] = {"problems": ()}
-        if validate is None:
-            return agent, kept
-
-        @agent.output_validator
-        def _check(ctx: RunContext[None], out: Any) -> Any:
-            probs = list(validate(out))
-            if probs and ctx.retry < req.output_retries:
-                raise ModelRetry(retry_message(probs) if retry_message else "; ".join(map(str, probs)))
-            kept["problems"] = tuple(probs)
-            return out
-
-        return agent, kept
+        return self._result(req.model, value, got, retries, facts, cap, warns, kept["problems"], usage_1x=u1)
 
 
 async def _drain(_ctx: RunContext[None], events: Any) -> None:
@@ -525,44 +333,6 @@ async def _drain(_ctx: RunContext[None], events: Any) -> None:
 def _streamed(req: GenRequest) -> dict[str, Any]:
     """`agent.run` keywords: an event handler when the request streams internally, else none."""
     return {"event_stream_handler": _drain} if req.stream_internally else {}
-
-
-def _settled[T](res: Generated[T], wire: WireRetry, total_s: float, waited: float | None) -> Generated[T]:
-    """Stamp the call's wire facts on its result; a deadline that ended the call makes it `timeout`."""
-    attempts = (*wire.attempts, *res.attempts)
-    if wire.expired and res.outcome != "ok":
-        last = res.failure.reason if res.failure is not None else "no reply"
-        got = failure(
-            "timeout",
-            phase="total",
-            status=res.failure.status if res.failure is not None else None,
-            reason=f"deadline: the call's {total_s:g} s ran out ({last})",
-        )
-        res = replace(res, outcome="unavailable", value=None, failure=got, reason=got.reason)
-    out = replace(res, attempts=attempts, stamp={**res.stamp, "limiter_wait_s": waited, "wire_requests": wire.sent})
-    if res.usage is None and out.usage is not None:
-        object.__setattr__(out, "usage", None)  # 1.x left `usage` None here; `replace` re-derives it
-    return out
-
-
-class _Facts:
-    """What one run showed: the wire's replies, the latest facts, the finish, the usage, the responses."""
-
-    __slots__ = ("finish", "replies", "resps", "usage", "wire")
-
-    def __init__(
-        self,
-        replies: tuple[WireReply, ...],
-        wire: WireFacts,
-        finish: Finish | None,
-        usage: Usage | None,
-        resps: Sequence[Any],
-    ) -> None:
-        self.replies = replies
-        self.wire = wire
-        self.finish = finish
-        self.usage = usage
-        self.resps = resps
 
 
 __all__ = [

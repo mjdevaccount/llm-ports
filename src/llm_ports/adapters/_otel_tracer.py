@@ -18,6 +18,8 @@ Invariants:
     - Unmeasured is absent, never zero: a usage side nobody reported has no attribute and no
       counter increment; with no side reported, `llm_ports.usage_unmeasured` is True.
     - A failure sets `error.type` to its `kind` and the span status to ERROR.
+    - A tool execution of a chat call is an INTERNAL child span `execute_tool {name}` with
+      `gen_ai.tool.name` and `gen_ai.tool.call.id`, timed by the tool's own duration.
     - Never raises; each generation ends its span once.
 
 Rationale: ADR-0007, ADR-0025.
@@ -120,14 +122,23 @@ class OtelTracer:
         except Exception:
             return NoopGeneration()
         base = {k: attrs[k] for k in (semconv.OPERATION_NAME, semconv.PROVIDER_NAME, semconv.REQUEST_MODEL)}
-        return OtelGeneration(span, self._meters, base, self._clock)
+        return OtelGeneration(span, self._meters, base, self._clock, tracer=self._tracer)
 
 
 class OtelGeneration:
     """The `Generation` an `OtelTracer` opens; ends its span once and never raises."""
 
-    def __init__(self, span: Any, meters: _Meters | None, base: Mapping[str, Any], clock: Callable[[], float]) -> None:
+    def __init__(
+        self,
+        span: Any,
+        meters: _Meters | None,
+        base: Mapping[str, Any],
+        clock: Callable[[], float],
+        *,
+        tracer: Any | None = None,
+    ) -> None:
         self._span = span
+        self._tracer = tracer if tracer is not None else trace.get_tracer(_SCOPE)
         self._meters = meters
         self._base = dict(base)
         self._clock = clock
@@ -163,6 +174,29 @@ class OtelGeneration:
                 self._span.set_status(Status(StatusCode.ERROR, why[:_STATUS_MAX]))
             self._record(attrs, error)
             self._span.end()
+
+    def tool(self, *, name: str, call_id: str, duration_s: float, is_error: bool) -> None:
+        """Write one tool execution as an INTERNAL child span `execute_tool {name}`; never raises."""
+        with contextlib.suppress(Exception):  # telemetry never breaks the call
+            end_ns = time.time_ns()
+            start_ns = end_ns - max(0, int(duration_s * 1e9))
+            attrs: dict[str, Any] = {
+                semconv.OPERATION_NAME: "execute_tool",
+                semconv.TOOL_NAME: name,
+                semconv.TOOL_CALL_ID: call_id,
+            }
+            if is_error:
+                attrs[semconv.ERROR_TYPE] = "tool_error"
+            span = self._tracer.start_span(
+                f"execute_tool {name}",
+                context=trace.set_span_in_context(self._span),
+                kind=SpanKind.INTERNAL,
+                attributes=attrs,
+                start_time=start_ns,
+            )
+            if is_error:
+                span.set_status(Status(StatusCode.ERROR, "tool_error"))
+            span.end(end_time=end_ns)
 
     def _record(self, attrs: Mapping[str, Any], error: str | None) -> None:
         if self._meters is None:

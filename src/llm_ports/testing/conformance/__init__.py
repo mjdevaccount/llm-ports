@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from llm_ports.testing._violation import ContractViolation
+from llm_ports.testing.conformance._chat import TOOLS, check_chat, check_token_counter
 from llm_ports.testing.conformance._generator import CHECK_MODEL, check_generator
 from llm_ports.testing.conformance._learning import (
     check_example_store,
@@ -41,6 +42,7 @@ from llm_ports.testing.conformance._ports import (
 
 #: Port name to its conformance check.
 CHECKS: Mapping[str, Callable[..., Any]] = {
+    "Chat": check_chat,
     "Citer": check_citer,
     "Embedder": check_embedder,
     "Evaluator": check_evaluator,
@@ -58,13 +60,16 @@ CHECKS: Mapping[str, Callable[..., Any]] = {
     "Reranker": check_reranker,
     "Retriever": check_retriever,
     "RunLedger": check_run_ledger,
+    "TokenCounter": check_token_counter,
     "Tracer": check_tracer,
 }
 
 __all__ = [
     "CHECKS",
     "CHECK_MODEL",
+    "TOOLS",
     "ContractViolation",
+    "check_chat",
     "check_citer",
     "check_embedder",
     "check_evaluator",
@@ -82,6 +87,7 @@ __all__ = [
     "check_reranker",
     "check_retriever",
     "check_run_ledger",
+    "check_token_counter",
     "check_tracer",
     "check_unavailable_model_registry",
     "check_unavailable_run_ledger",

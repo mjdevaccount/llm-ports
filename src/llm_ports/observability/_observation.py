@@ -161,6 +161,10 @@ class PortObservation:
             ),
         )
 
+    def tool(self, *, name: str, call_id: str, duration_s: float, is_error: bool) -> None:
+        """Record one tool execution under this generation (`record_tool`). Never raises."""
+        record_tool(self._gen, name=name, call_id=call_id, duration_s=duration_s, is_error=is_error)
+
     def flush(self) -> None:
         """End the generation with what was held (the clean exit)."""
         self._end(metadata=self._meta, level="DEFAULT", status=None)
@@ -185,6 +189,26 @@ class PortObservation:
             level="CANCELLED",
             status=f"{type(exc).__name__}: {exc}".rstrip(": ")[:STATUS_MAX],
         )
+
+
+def record_tool(gen: Generation, *, name: str, call_id: str, duration_s: float, is_error: bool) -> None:
+    """Hand one finished tool execution to `gen`, when its sink records tools. Never raises.
+
+    The seam is optional and duck-typed, so a 1.x `Generation` keeps working: a generation with a
+    `tool(name=, call_id=, duration_s=, is_error=)` method receives it (`OtelTracer`'s opens an
+    INTERNAL child span `execute_tool {name}`; `RecordingTracer`'s records it); any other ignores
+    it, and the call's observation still carries the tool names, durations and error count in its
+    metadata.
+
+    Rationale: ADR-0023, ADR-0025.
+    """
+    rec = getattr(gen, "tool", None)
+    if not callable(rec):
+        return
+    try:
+        rec(name=name, call_id=call_id, duration_s=duration_s, is_error=is_error)
+    except Exception:  # telemetry never breaks the call
+        return
 
 
 @asynccontextmanager

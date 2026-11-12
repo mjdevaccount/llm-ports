@@ -15,7 +15,7 @@ Invariants:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
@@ -26,7 +26,9 @@ from llm_ports.ports import (
     Finish,
     Generated,
     GenRequest,
+    RetryMessage,
     Usage,
+    Validator,
     failure,
 )
 from llm_ports.ports._usage import UnifiedFinish
@@ -177,8 +179,8 @@ class StubGenerator:
         req: GenRequest,
         output: type[T],
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         """Answer `req`, re-asking while problems remain and re-asks are left; `retry_message` is unused."""
         del retry_message

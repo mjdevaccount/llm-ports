@@ -51,6 +51,7 @@ from typing import Any
 
 from llm_ports import ports
 from llm_ports.call._fallback import Route, chain_of, timed_out
+from llm_ports.call._preflight import finished, prepared
 from llm_ports.call.graders import CallGrader, CallScore, graders_for_inputs, score_all
 from llm_ports.call.models import missing, needs
 from llm_ports.call.roles import Role
@@ -63,7 +64,7 @@ from llm_ports.observability import (
     log_events,
     observe,
 )
-from llm_ports.ports import Deadline, Generated, Generator, GenRequest, Tracer
+from llm_ports.ports import Deadline, Generated, Generator, GenRequest, RetryMessage, TokenCounter, Tracer, Validator
 from llm_ports.ports.outcomes import REASON_MAX, GenerationFailed
 
 #: The longest output text written on a trace observation, in characters.
@@ -323,7 +324,43 @@ def _result_metadata(res: Generated[Any]) -> dict[str, Any]:
     }
 
 
-def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T]:
+def _settled[T](
+    role: Role,
+    prompt: str,
+    res: Generated[T],
+    obs: Observation,
+    h: Hooks,
+    extra: Mapping[str, Any] | None = None,
+) -> Generated[T]:
+    """The reply written on its observation, then graded when it is `ok` and the role has graders."""
+    res = _observed(role, res, obs, extra)
+    if res.outcome == "ok" and role.graders:
+        res = _grade(role, prompt, res, obs, h)
+    return res
+
+
+def _raise_unless_ok(res: Generated[Any]) -> None:
+    """End the observation in error for any outcome but `ok` / `gated` (inside the trace block only)."""
+    if res.outcome not in ("ok", "gated"):
+        raise _NotOk(f"{res.outcome}: {res.reason}")
+
+
+def _call_failed(h: Hooks, role: Role, res: Generated[Any] | None) -> None:
+    """Emit `llm_call_failed` for a call whose observation ended in error."""
+    _event(
+        h,
+        logging.WARNING,
+        "llm_call_failed",
+        role=role.name,
+        outcome=res.outcome if res else None,
+        kind=res.failure.kind if res and res.failure else None,
+        reason=res.reason if res else None,
+    )
+
+
+def _observed[T](
+    role: Role, res: Generated[T], obs: Observation, extra: Mapping[str, Any] | None = None
+) -> Generated[T]:
     """Write the reply on its observation and stamp the observation on the reply.
 
     The tier answering is stamped on `answered` here, before the observation ends, so the trace
@@ -342,6 +379,7 @@ def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T
             "finish_reason": res.finish_reason,
             "problems": len(res.problems),
             **_result_metadata(res),
+            **(extra or {}),
         },
     )
     if isinstance(obs, PortObservation):
@@ -366,17 +404,20 @@ async def generate[T](
     hooks: Hooks | None = None,
     system: str = "",
     images: Sequence[tuple[bytes, str]] = (),
-    validate: Callable[[T], Sequence[Any]] | None = None,
-    retry_message: Callable[[Sequence[Any]], str] | None = None,
+    validate: Validator[T] | None = None,
+    retry_message: RetryMessage | None = None,
     settings: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
     web: bool = False,
+    counter: TokenCounter | None = None,
 ) -> Generated[T]:
     """Run one generation for `role` through `generator`.
 
     The path and the hooks are described in the module docstring. `web=True` says the role's tier
     fetches pages the prompt never rendered: like an image, an input no text grader sees, so
     `call.graders.TEXT_ONLY_GRADERS` are dropped for this call. The role itself is unchanged.
+    `counter` counts the prompt for the role's pre-flight (`Role.context`, ADR-0024); the role's
+    `cache_prefix` is translated by the tier's `cache` capability.
 
     Returns:
         The result, with a named outcome. A model, wire or gate failure is an outcome, never an
@@ -400,8 +441,11 @@ async def generate[T](
                     break
                 req = request_for(tier_role, prompt=prompt, system=system, images=images, settings=settings)
                 req = replace(req, deadline=clocks)
-                gen = h.generator_for(tier_role.tier) if h.generator_for is not None else generator
-                res = await _one(tier_role, req, prompt, output, gen, h, validate, retry_message, metadata, web)
+                req, pre, res = await prepared(tier_role, req, counter, h.on_event or _log_event)
+                if res is None:
+                    gen = h.generator_for(tier_role.tier) if h.generator_for is not None else generator
+                    res = await _one(tier_role, req, prompt, output, gen, h, validate, retry_message, metadata, web)
+                    res = finished(res, pre, h.on_event or _log_event, tier_role.name)
                 if not route.settle(tier_role, res):
                     break
     except TimeoutError:
@@ -434,8 +478,8 @@ async def _one[T](
     output: type[T],
     generator: Generator,
     h: Hooks,
-    validate: Callable[[T], Sequence[Any]] | None,
-    retry_message: Callable[[Sequence[Any]], str] | None,
+    validate: Validator[T] | None,
+    retry_message: RetryMessage | None,
     metadata: Mapping[str, Any] | None,
     web: bool,
 ) -> Generated[T]:
@@ -449,21 +493,10 @@ async def _one[T](
         try:
             async with trace(role, req, prompt, {"role": role.name, **(metadata or {})}) as obs:
                 res = await generator.generate(req, output, validate=validate, retry_message=retry_message)
-                res = _observed(role, res, obs)
-                if res.outcome == "ok" and role.graders:
-                    res = _grade(role, prompt, res, obs, h)
-                if res.outcome not in ("ok", "gated"):
-                    raise _NotOk(f"{res.outcome}: {res.reason}")
+                res = _settled(role, prompt, res, obs, h)
+                _raise_unless_ok(res)
         except _NotOk:
-            _event(
-                h,
-                logging.WARNING,
-                "llm_call_failed",
-                role=role.name,
-                outcome=res.outcome if res else None,
-                kind=res.failure.kind if res and res.failure else None,
-                reason=res.reason if res else None,
-            )
+            _call_failed(h, role, res)
         if res is None:  # reachable only when a trace hook swallowed a generator exception
             raise RuntimeError(f"llm_call {role.name}: the generator returned nothing")
         return res

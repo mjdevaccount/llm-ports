@@ -24,6 +24,7 @@ from typing import Any
 
 from llm_ports.observability._events import EventHook, log_events
 from llm_ports.observability._noop import NoopGeneration
+from llm_ports.observability._observation import record_tool
 from llm_ports.observability._payload import deliver_or_raise
 from llm_ports.ports import Generation, Tracer
 
@@ -139,6 +140,11 @@ class TeeGeneration:
                 self._tee._failed(sink, "end", exc)
             else:
                 sink.ended += 1
+
+    def tool(self, *, name: str, call_id: str, duration_s: float, is_error: bool) -> None:
+        """Hand one tool execution to every sink's generation that records tools; never raises."""
+        for _sink, gen in self._opened:
+            record_tool(gen, name=name, call_id=call_id, duration_s=duration_s, is_error=is_error)
 
     def score(
         self, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None

@@ -5,6 +5,7 @@
 `import llm_ports`); `testing.langfuse` (the `langfuse` extra) is imported by path.
 """
 
+from llm_ports.testing._chat import STUB_CHAT_MODEL, StubChat, ToolCall, Turn, run_tool
 from llm_ports.testing._clock import FakeClock
 from llm_ports.testing._generator import STUB_MODEL, Reply, ScriptedReply, StubGenerator
 from llm_ports.testing._live import LiveRequestBlocked, block_live_requests, is_loopback
@@ -20,6 +21,7 @@ from llm_ports.testing._stubs import (
 from llm_ports.testing._violation import ContractViolation
 
 __all__ = [
+    "STUB_CHAT_MODEL",
     "STUB_MODEL",
     "ContractViolation",
     "FakeClock",
@@ -28,12 +30,16 @@ __all__ = [
     "RecordingTracer",
     "Reply",
     "ScriptedReply",
+    "StubChat",
     "StubCiter",
     "StubDetector",
     "StubEmbedder",
     "StubGenerator",
     "StubPromptSource",
     "StubReranker",
+    "ToolCall",
+    "Turn",
     "block_live_requests",
     "is_loopback",
+    "run_tool",
 ]

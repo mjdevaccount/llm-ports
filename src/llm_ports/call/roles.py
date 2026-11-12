@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from llm_ports.call._frozen import freeze
+from llm_ports.call.context import ContextMode, TrimPolicy
 from llm_ports.call.models import (
     DEFAULT_FALLBACK_ON,
     FAILURE_KINDS,
@@ -450,6 +451,17 @@ class Role:
             else the generator's default.
         stream_internally: The adapter requests a stream and assembles it, so a cancelled or
             timed-out call closes a connection the server can stop on. Off by default.
+        max_steps: The most model requests in one `call.chat`, tool rounds included; None takes
+            `ChatRequest`'s default (8).
+        tool_output_chars: The one tool-output budget of the role's chat calls, in characters; None
+            for no cut. A `Tool.max_output_chars` overrides it for that tool.
+        context: Before a call is sent, `off` (the default, costs nothing), `check` (count it and
+            refuse an overflow as `context_overflow` with `provider_code="preflight"`), or `trim`
+            (cut the history by `trim` to fit, then refuse what still does not). ADR-0024.
+        trim: The trimming policy for `context="trim"`; None is `TrimPolicy()`.
+        cache_prefix: Ask for a prompt-cache breakpoint after the stable prefix: the system text
+            (and, in a chat, the tool definitions). Dropped with a warning on a model that does not
+            state `cache`.
 
     Raises:
         ValueError: `tier` is not in `TIERS`.
@@ -472,6 +484,11 @@ class Role:
     accept_truncated: bool = False
     policy: WirePolicy | None = None
     stream_internally: bool = False
+    max_steps: int | None = None
+    tool_output_chars: int | None = None
+    context: ContextMode = "off"
+    trim: TrimPolicy | None = None
+    cache_prefix: bool = False
 
     def __post_init__(self) -> None:
         if self.tier not in self.TIERS:

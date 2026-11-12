@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 
 from llm_ports._extras import extra
-from llm_ports.ports import GenRequest
+from llm_ports.ports import ChatRequest, GenRequest
 
 with extra("pydantic-ai"):
     import httpx
@@ -148,7 +148,7 @@ class OpenAICompatible:
         return provider
 
     @asynccontextmanager
-    async def __call__(self, req: GenRequest) -> AsyncIterator[Model]:
+    async def __call__(self, req: GenRequest | ChatRequest) -> AsyncIterator[Model]:
         """Yield an `OpenAIChatModel` for `req.model` on the running loop's provider."""
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider

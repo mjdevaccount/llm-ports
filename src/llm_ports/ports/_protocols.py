@@ -21,6 +21,8 @@ Ten ports, each named for the pattern it stands for:
 - `Reranker`: cross-encoder reranking. A query and documents become one order-only score per
   document.
 - `Judge`: LLM-as-a-judge. A prompt, the reply it drew and a rubric become a graded verdict.
+- `Chat`: a multi-turn, tool-using, streamed conversation beside `Generator` (ADR-0023).
+- `TokenCounter`: an exact input-token count before a call is sent, or none (ADR-0024).
 
 Two smaller seams sit beside them: `Pricer` turns a call's usage into a `Cost`, and
 `GatewayReader` reads what a gateway in front of the model reported in its response headers.
@@ -38,12 +40,14 @@ Rationale: ADR-0001.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any, Protocol, TypedDict, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, cast, runtime_checkable
 
+from llm_ports.ports._chat import ChatRequest, Finished, Message, StreamEvent, Tool
 from llm_ports.ports._failure import Failure
 from llm_ports.ports._types import (
     Chunk,
@@ -57,6 +61,8 @@ from llm_ports.ports._types import (
     JudgeVerdict,
     Prompt,
     Reranked,
+    RetryMessage,
+    Validator,
 )
 from llm_ports.ports._usage import Answered, Cost, Finish, Usage
 
@@ -306,8 +312,8 @@ class Generator(Protocol):
         req: GenRequest,
         output: type[T],
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         """Run one call and parse the reply into `output`.
 
@@ -443,8 +449,125 @@ class Limiter(Protocol):
         ...
 
 
+#: How a `Counted` was measured: the provider's count endpoint, a local tokenizer, or not at all.
+CountMethod = Literal["provider", "tokenizer", "unsupported"]
+
+
+@dataclass(frozen=True, slots=True)
+class Counted:
+    """An input-token count: exact, or absent.
+
+    Attributes:
+        tokens: The count; None when this model cannot be counted or the count failed. Never an
+            estimate.
+        method: How it was measured.
+        failure: Why the count request itself failed; None when it did not.
+
+    Rationale: ADR-0024.
+    """
+
+    tokens: int | None
+    method: CountMethod
+    failure: Failure | None = None
+
+
+@runtime_checkable
+class TokenCounter(Protocol):
+    """Counts a request's input tokens before it is sent.
+
+    Rationale: ADR-0024.
+    """
+
+    async def count(
+        self, model: str, *, system: str, messages: Sequence[Message], tools: Sequence[Tool] = ()
+    ) -> Counted:
+        """Count what `model` would read for this request.
+
+        Never raises: a model that cannot be counted is `Counted(None, "unsupported")`, a count
+        request that failed is `Counted(None, method, failure=...)`.
+
+        Args:
+            model: The model id.
+            system: The system prompt.
+            messages: The history that would be sent.
+            tools: The tools that would be offered.
+        """
+        ...
+
+
+async def _drained(events: AsyncIterator[StreamEvent]) -> Generated[Any]:
+    """`Finished.result` of `events` run to its end; the iterator is closed on every exit."""
+    result: Generated[Any] | None = None
+    try:
+        async for ev in events:
+            if isinstance(ev, Finished):
+                result = ev.result
+    finally:
+        close = getattr(events, "aclose", None)
+        if close is not None:
+            await close()
+    assert result is not None  # `stream` always ends with `Finished`
+    return result
+
+
+@runtime_checkable
+class Chat(Protocol):
+    """A multi-turn, tool-using, streamed conversation: messages in, events and new messages out.
+
+    Invariants:
+        - `stream` yields `Finished` exactly once, last, in every case, and never raises for a
+          model, wire or gate failure (ADR-0001 holds for streams). Closing the iterator or
+          cancelling the task stops the call; `asyncio.CancelledError` propagates.
+        - `chat` is `stream` drained: it returns `Finished.result`. An implementation that
+          subclasses `Chat` inherits that `chat` and writes only `stream`.
+        - The port is stateless: the caller appends `Generated.messages` to its own history.
+
+    Rationale: ADR-0023.
+    """
+
+    async def chat[T](
+        self,
+        req: ChatRequest,
+        output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
+        *,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
+    ) -> Generated[T]:
+        """Run one call to its end and return the result `Finished` carries.
+
+        Args:
+            req: The resolved call.
+            output: `str` for prose, a pydantic model, or a `JsonOutput` subclass.
+            validate: Lists the problems with a parsed value, as for `Generator.generate`.
+            retry_message: Builds a re-ask's message from the problems.
+        """
+        events = self.stream(req, output, validate=validate, retry_message=retry_message)
+        return cast("Generated[T]", await _drained(events))
+
+    def stream[T](
+        self,
+        req: ChatRequest,
+        output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
+        *,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Run one call, yielding its events as they happen and `Finished` last.
+
+        Args:
+            req: The resolved call.
+            output: `str` for prose, a pydantic model, or a `JsonOutput` subclass.
+            validate: Lists the problems with a parsed value, as for `Generator.generate`.
+            retry_message: Builds a re-ask's message from the problems.
+        """
+        ...
+
+
 __all__ = [
+    "Chat",
     "Citer",
+    "CountMethod",
+    "Counted",
     "Embedder",
     "Evaluator",
     "GatewayReader",
@@ -458,5 +581,6 @@ __all__ = [
     "PromptSource",
     "Reranker",
     "Retriever",
+    "TokenCounter",
     "Tracer",
 ]
