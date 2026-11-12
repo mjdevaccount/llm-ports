@@ -118,7 +118,8 @@ async def preflight(
         return Preflight(msgs)
     model = role.resolved_model
     info = role.resolved_tier.info
-    reserve = role.max_tokens or (info.max_output if info is not None else None) or 0
+    stated = role.max_tokens or (info.max_output if info is not None else None)
+    reserve = stated or 0  # zero-ok: no stated reply ceiling reserves none; the margin still applies
     budget = Budget(info.context_window if info is not None else None, reserve_output=reserve)
     counted, n = await _count(counter, model, system, msgs, tools, emit, role.name)
     verdict = fit(counted, budget)

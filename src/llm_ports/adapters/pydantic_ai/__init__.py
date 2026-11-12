@@ -41,7 +41,7 @@ from llm_ports.adapters.pydantic_ai._embedder import (
     PydanticAIEmbedder,
     openai_compatible_embeddings,
 )
-from llm_ports.adapters.pydantic_ai._factory import OpenAICompatibleFactory, translate_settings
+from llm_ports.adapters.pydantic_ai._factory import OpenAICompatibleFactory, count_url, translate_settings
 from llm_ports.adapters.pydantic_ai._generator import (
     TRACEBACK_MAX,
     ModelFor,
@@ -77,6 +77,7 @@ __all__ = [
     "classify",
     "classify_core",
     "classify_failure",
+    "count_url",
     "framework_output",
     "is_context_overflow",
     "kind_for_status",
