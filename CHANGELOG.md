@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-11-12
+
 ### Behaviour changes (read first)
 
 - **The wire capture no longer reads a streamed (`text/event-stream`) 2xx body.** Reading it
