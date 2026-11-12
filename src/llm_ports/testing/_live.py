@@ -37,11 +37,19 @@ class LiveRequestBlocked(RuntimeError):
         self.host = host
 
 
-def _host(request: Any) -> str:
+def _blocked_host(request: Any) -> str | None:
+    """The host a request would reach on the network, or None when it is not a live one.
+
+    Only an `http`/`https` request with a host is judged: the transport itself refuses any other
+    URL (an `ftp://` or schemeless one is its `UnsupportedProtocol`), and that error is the test's.
+    """
     try:
-        return str(request.url.host)
+        scheme, host = str(request.url.scheme), str(request.url.host)
     except AttributeError:
         return "<unknown>"
+    if scheme not in ("http", "https") or not host or is_loopback(host):
+        return None
+    return host
 
 
 def is_loopback(host: str) -> bool:
@@ -56,8 +64,7 @@ def is_loopback(host: str) -> bool:
 
 def _guard_async(original: Any) -> Any:
     async def guarded(self: Any, request: Any) -> Any:
-        host = _host(request)
-        if not is_loopback(host):
+        if (host := _blocked_host(request)) is not None:
             raise LiveRequestBlocked(host)
         return await original(self, request)
 
@@ -66,8 +73,7 @@ def _guard_async(original: Any) -> Any:
 
 def _guard_sync(original: Any) -> Any:
     def guarded(self: Any, request: Any) -> Any:
-        host = _host(request)
-        if not is_loopback(host):
+        if (host := _blocked_host(request)) is not None:
             raise LiveRequestBlocked(host)
         return original(self, request)
 

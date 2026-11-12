@@ -179,12 +179,17 @@ class PromptSource(Protocol):
 
 
 class EndFields(TypedDict, total=False):
-    """The 1.24 keyword-only fields of `Generation.end`, for an implementation's `**fields`.
+    """Every keyword of `Generation.end`, for an implementation that takes `**fields`.
 
-    An implementation may spell them out or take `**fields: Unpack[EndFields]`; each key is
-    absent or None when the call did not measure it (ADR-0025).
+    An implementation may spell the keywords out or take `**fields: Unpack[EndFields]`. An absent
+    key is the port's default: `level` `"DEFAULT"`, every other key None (ADR-0025).
     """
 
+    output: Any
+    usage: Mapping[str, int | None] | None
+    level: str
+    status_message: str | None
+    metadata: Mapping[str, Any] | None
     usage_v2: Usage | None
     cost: Cost | None
     finish: Finish | None

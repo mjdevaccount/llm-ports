@@ -8,6 +8,7 @@ import sys
 
 import httpx
 import httpx2
+import pydantic_ai.messages  # noqa: F401  # loaded once here: pytester's in-process runs would re-import it
 import pytest
 
 from llm_ports.testing._live import LiveRequestBlocked, block_live_requests, is_loopback
@@ -134,3 +135,63 @@ def test_import_llm_ports_loads_neither_pytest_nor_the_testing_package() -> None
     code = "import sys, llm_ports; print(sorted(m for m in sys.modules if m == 'pytest' or m.startswith('llm_ports.testing')))"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip()
     assert out == "[]"
+
+
+def test_a_request_with_no_url_is_judged_unknown_and_blocked() -> None:
+    from llm_ports.testing import _live
+
+    assert _live._blocked_host(object()) == "<unknown>"
+
+
+def test_a_url_the_transport_cannot_send_reaches_the_transport() -> None:
+    # Not http(s): the transport's own refusal is the test's, never `LiveRequestBlocked`.
+    with pytest.raises(httpx.UnsupportedProtocol):
+        httpx.get("ftp://files.example.invalid/x")
+
+
+def test_a_loopback_request_reaches_the_sync_transport() -> None:
+    with pytest.raises(httpx.ConnectError):  # nothing listens on port 9 here: reached, not blocked
+        httpx.get("http://127.0.0.1:9/")
+
+
+def test_a_transport_that_is_not_installed_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from llm_ports.testing import _live
+
+    monkeypatch.setattr(_live, "_TARGETS", (("no_such_module_xyz", "T", "send", _live._guard_sync),))
+    _live.block_live_requests()()  # nothing to patch, nothing to undo
+
+
+def test_the_live_opt_in_runs_in_process_with_the_flag(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+import pytest
+
+@pytest.mark.llm_live
+def test_live():
+    pass
+"""
+    )
+    pytester.runpytest_inprocess("-p", "no:cacheprovider", "--llm-live").assert_outcomes(passed=1)
+
+
+def test_the_tracer_fixture_and_a_record_without_a_live_model(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+import pytest
+from llm_ports.testing import ContractViolation, RecordingTracer
+
+def test_tracer(recording_tracer):
+    assert isinstance(recording_tracer, RecordingTracer) and recording_tracer.generations == []
+
+def test_record_needs_live(llm_replay, tmp_path):
+    with pytest.raises(ContractViolation, match="record_needs_live"):
+        llm_replay(tmp_path / "c.json")
+"""
+    )
+    pytester.runpytest_inprocess("-p", "no:cacheprovider", *ASYNC, "--llm-record").assert_outcomes(passed=2)
+
+
+async def test_a_loopback_request_reaches_the_async_transport() -> None:
+    async with httpx2.AsyncClient() as c:
+        with pytest.raises(httpx2.ConnectError):  # reached, not blocked
+            await c.get("http://127.0.0.1:9/")

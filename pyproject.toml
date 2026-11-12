@@ -297,6 +297,10 @@ forbidden_modules = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The library's own plugin loads from tests/conftest.py, not its entry point: pytest imports an
+# entry-point plugin (and so the whole package) before pytest-cov starts, which would leave every
+# module-level line of the package unmeasured.
+addopts = ["-p", "no:llm_ports"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # A deprecation raised at a call this package makes fails the suite (ADR-0009). Both categories:

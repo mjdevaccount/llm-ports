@@ -90,16 +90,7 @@ class LangfuseGeneration:
         self._gen = gen
         self._warn = warn
 
-    def end(
-        self,
-        *,
-        output: Any = None,
-        usage: Mapping[str, int | None] | None = None,
-        level: str = "DEFAULT",
-        status_message: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        **fields: Unpack[EndFields],
-    ) -> None:
+    def end(self, **fields: Unpack[EndFields]) -> None:
         """Close the generation with its output, usage, cost and metadata; never raises.
 
         Usage with neither count reported sends no usage block (and an unreported side is
@@ -110,6 +101,8 @@ class LangfuseGeneration:
         on the library's own call path; they are accepted here for the port's signature.
         """
         # `finish`, `answered` and `failure` are carried in the metadata by `generate`.
+        output, usage, metadata = fields.get("output"), fields.get("usage"), fields.get("metadata")
+        level, status_message = fields.get("level", "DEFAULT"), fields.get("status_message")
         usage_v2, cost = fields.get("usage_v2"), fields.get("cost")
         kw: dict[str, Any] = {}
         if output is not None:

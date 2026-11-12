@@ -80,29 +80,20 @@ class RecordedGeneration:
     scores: list[tuple[str, float, str | None]] = field(default_factory=list)
     score_metadata: list[Mapping[str, Any] | None] = field(default_factory=list)
 
-    def end(
-        self,
-        *,
-        output: Any = None,
-        usage: Mapping[str, int | None] | None = None,
-        level: str = "DEFAULT",
-        status_message: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        **fields: Unpack[EndFields],
-    ) -> None:
+    def end(self, **fields: Unpack[EndFields]) -> None:
         """Record how the generation ended, replacing any earlier end, and count the ends.
 
         `ended` holds the 1.x five keys always and each 1.24 keyword only when it carried a value.
         """
         self.ends += 1
         self.ended = {
-            "output": output,
-            "usage": usage,
-            "level": level,
-            "status_message": status_message,
-            "metadata": metadata,
+            "output": fields.get("output"),
+            "usage": fields.get("usage"),
+            "level": fields.get("level", "DEFAULT"),
+            "status_message": fields.get("status_message"),
+            "metadata": fields.get("metadata"),
         }
-        self.ended.update({k: v for k, v in fields.items() if v is not None})
+        self.ended.update({k: v for k, v in fields.items() if k not in self.ended and v is not None})
 
     def score(
         self, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None
