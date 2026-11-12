@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-11-12
+
 ### Behaviour fixes (read first)
 
 - **A reply the token ceiling cut is no longer `ok`.** A `finish_reason` of `length` is now
