@@ -83,6 +83,18 @@ An operator tunes scheduling (lane, weight, ttl, enabled) in your store, without
 operator owns (`OPERATOR_TUNED`) only on first insert. `sync_all(registry, mirror)` syncs every
 spec, paused ones included, and reports a failed sync instead of raising.
 
+`sync_all` never removes a row, so an action deleted from code would stay in the mirror as an
+enabled row nothing runs. After the sync, `prune_mirror(registry, mirror, unloaded=...)` retires
+each ENABLED row whose action the registry no longer holds, through your
+`PrunableMirror.retire_action` (delete the row, or disable it: your table's call). It never touches
+a row whose action is registered, and it holds (does not retire) the rows of any pack that failed
+to load in this process: pass `unloaded=[p.name for p in loads if p.outcome != "ok"]` from
+`load_packs`. Each retired row is a `market_action_pruned` event, and `PruneReport.count` is the
+number to gauge.
+
+Deleting is usually the better retire: `enabled` is seeded only on first insert, so a disabled row
+whose action later comes back stays disabled with nothing saying why.
+
 ## Producers from another distribution
 
 A distribution that declares actions for a scheduler it does not run lists a pack module under the
