@@ -309,3 +309,20 @@ async def test_a_gateway_reader_that_raises_never_fails_embed() -> None:
     assert res.outcome == "ok" and len(res.vectors) == 2 and res.failure is None
     assert res.answered is not None and res.answered.deployment is None
     assert seen.count("llm_gateway_header_invalid") == 2
+
+
+# -- resilience test 9: the embedder runs the shared wire policy ---------------------------------
+
+
+async def test_a_wire_policy_retries_only_its_kinds_and_retry_is_its_alias() -> None:
+    from llm_ports.ports import RetryRule, WirePolicy
+
+    only_429 = WirePolicy(rules={"rate_limited": RetryRule(attempts=2, wait_initial_s=0.0, wait_max_s=0.0)})
+    calls: list[int] = []
+    res = await _embedder(_flaky(calls, {1}, status=429), policy=only_429).embed(["a"])
+    assert res.ok and res.retries == 1 and calls == [1, 1]
+    calls = []
+    res = await _embedder(_flaky(calls, {1}, status=500), policy=only_429).embed(["a"])
+    assert res.outcome == "unavailable" and res.retries == 0 and calls == [1], "server is not in this policy"
+    with pytest.raises(ValueError, match="at most one"):
+        _embedder(_wire([]), policy=only_429, retry=NO_WAIT)

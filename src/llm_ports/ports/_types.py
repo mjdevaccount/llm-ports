@@ -19,6 +19,7 @@ from datetime import date
 from typing import Any, ClassVar, Literal
 
 from llm_ports.ports._failure import Failure
+from llm_ports.ports._resilience import Deadline, WirePolicy
 from llm_ports.ports._usage import Answered, Attempt, CallWarning, Cost, Finish, Usage
 from llm_ports.ports.outcomes import Outcome
 
@@ -203,11 +204,20 @@ class GenRequest:
         settings: Sent to the model verbatim (max_tokens, temperature, seed, top_p, extra_body).
         self_hosted: True for a self-hosted tier. An adapter may take a lease on that model group,
             and a role sends it the thinking switch.
-        timeout_s: The client timeout, in seconds.
+        timeout_s: The call's bound, in seconds: `Deadline(total_s=timeout_s)` when `deadline` is None.
         output_retries: Re-asks allowed when the validator finds problems.
         label: A name for the call in an adapter's logs; `call.request_for` sets the role name.
         accept_truncated: Return a length-cut reply that parsed as `ok`, with a `CallWarning`,
             instead of `truncated`. Off by default.
+        deadline: The call's clocks: total, per wire request, first event. None means
+            `Deadline(total_s=timeout_s)`. A started deadline (`call.generate` starts one) carries
+            what an earlier step already spent.
+        concurrency_group: The `Limiter` group the call takes a slot in; None means the model id.
+        policy: How the adapter retries a wire request; None means the adapter's own default.
+        stream_internally: Request a stream and assemble it, so a cancelled or timed-out call
+            closes a connection the server can act on. Off by default.
+
+    Rationale: ADR-0021.
     """
 
     model: str
@@ -220,6 +230,15 @@ class GenRequest:
     output_retries: int = 1
     label: str = "chat"
     accept_truncated: bool = False
+    deadline: Deadline | None = None
+    concurrency_group: str | None = None
+    policy: WirePolicy | None = None
+    stream_internally: bool = False
+
+    @property
+    def clocks(self) -> Deadline:
+        """`deadline`, or `Deadline(total_s=timeout_s)` when none was given."""
+        return self.deadline if self.deadline is not None else Deadline(total_s=self.timeout_s)
 
 
 @dataclass(frozen=True)
@@ -358,6 +377,8 @@ class Reranked(_Outcomed):
         reason: One line naming the failure; None on `ok`. Derived from `failure` when left None.
         answered: Who scored.
         failure: The failure's kind and detail; None exactly when `outcome == "ok"`.
+        attempts: Every failed request the reranker's wire policy re-sent, in order; `()` without
+            a policy.
 
     Invariants:
         - Scores are model-relative and order-only (one model emits raw logits, another 0..1).
@@ -370,6 +391,7 @@ class Reranked(_Outcomed):
     reason: str | None = None
     answered: Answered | None = None
     failure: Failure | None = None
+    attempts: tuple[Attempt, ...] = ()
 
 
 @dataclass(frozen=True)

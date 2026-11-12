@@ -21,7 +21,7 @@ from pydantic_ai.models import Model
 from llm_ports import ports
 from llm_ports.adapters import pydantic_ai as pag
 from llm_ports.adapters.pydantic_ai import PydanticAIGenerator, _generator, classify
-from llm_ports.ports import GenRequest
+from llm_ports.ports import GenRequest, WirePolicy
 from tests.adapters.pydantic_ai._scripted import scripted as _replies
 
 
@@ -167,9 +167,11 @@ def _wire() -> dict[str, Any]:
     return state
 
 
-def _gen(wire: dict[str, Any]) -> PydanticAIGenerator:
+def _gen(wire: dict[str, Any], policy: WirePolicy | None = None) -> PydanticAIGenerator:
     return PydanticAIGenerator(
-        model_for=pag.openai_compatible("http://gateway.test/v1", "k", transport=wire["transport"]), gated=(_Refused,)
+        model_for=pag.openai_compatible("http://gateway.test/v1", "k", transport=wire["transport"]),
+        gated=(_Refused,),
+        policy=policy,
     )
 
 
@@ -192,9 +194,18 @@ async def test_a_length_finish_is_truncated_not_invalid(wire) -> None:
 @pytest.mark.parametrize(("code", "want"), [(400, "request_fault"), (500, "unavailable")])
 async def test_status_codes_map_to_outcomes(wire, code: int, want: str) -> None:
     wire["replies"] = [(code, {"error": {"message": "nope"}})]
-    res = await _gen(wire).generate(REQ, _Note)
+    res = await _gen(wire, WirePolicy.none()).generate(REQ, _Note)
     assert res.outcome == want
     assert len(wire["sent"]) == 1, "the SDK's own retries are off by default"
+
+
+async def test_the_default_wire_policy_retries_a_server_error_once_and_never_a_bad_request(wire) -> None:
+    wire["replies"] = [(500, {"error": {"message": "boom"}})]
+    res = await _gen(wire).generate(REQ, _Note)
+    assert res.outcome == "unavailable" and len(wire["sent"]) == 2 and len(res.attempts) == 1
+    wire["sent"].clear()
+    wire["replies"] = [(400, {"error": {"message": "bad"}})]
+    assert (await _gen(wire).generate(REQ, _Note)).outcome == "request_fault" and len(wire["sent"]) == 1
 
 
 async def test_a_refusing_transport_is_gated_and_never_raises() -> None:

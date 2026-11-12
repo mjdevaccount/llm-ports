@@ -38,7 +38,7 @@ from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid
 from llm_ports.call.roles import TierTable
 from llm_ports.observability import EventHook, log_events
-from llm_ports.ports import Embedder, Generator, Probe, Reranker
+from llm_ports.ports import Embedder, Generator, Limiter, Pricer, Probe, Reranker, WirePolicy
 
 #: The entry-point group a distribution lists its provider kinds under.
 ENTRY_POINT_GROUP = "llm_ports.providers"
@@ -66,17 +66,19 @@ class BuildDeps:
     """What every factory may share: the call's planes, passed once to `build`.
 
     Attributes:
-        policy: The default wire policy. The resilience row of the work list types it.
-        limiter: The concurrency limiter. The resilience row of the work list types it.
-        pricer: Prices a reply's usage. The result-contract row of the work list types it.
+        policy: The wire policy every built client uses when a request carries none; None takes
+            each adapter's own default.
+        limiter: The concurrency limiter every built generator takes its slots from; None for no
+            in-process limit.
+        pricer: Prices a reply's usage the gateway did not price.
         transport: An HTTP transport every client is built on (a test's mock, a counting proxy).
         on_event: Receives the build's events and every built client's; without one, the stdlib
             logger `llm_ports.call`.
     """
 
-    policy: object | None = None
-    limiter: object | None = None
-    pricer: object | None = None
+    policy: WirePolicy | None = None
+    limiter: Limiter | None = None
+    pricer: Pricer | None = None
     transport: Any | None = None
     on_event: EventHook | None = None
 

@@ -52,3 +52,25 @@ def test_budget_refuses_bounds_that_cannot_hold(kw: dict[str, float]) -> None:
 def test_policy_refuses_bounds_that_cannot_hold(kw: dict[str, float]) -> None:
     with pytest.raises(ValueError):
         RetryPolicy(**kw)  # type: ignore[arg-type]
+
+
+# -- LP4: the wire policy, the deadline and the in-process limiter as values ---------------------
+
+
+def test_a_limiter_from_model_facts_takes_the_smallest_count_per_group() -> None:
+    from llm_ports.call.resilience import LocalLimiter
+
+    lim = LocalLimiter.for_models({"chat": ("gpu", 2), "web": ("gpu", 1), "solo": (None, 3), "free": ("gpu", None)})
+    assert (lim.size("gpu"), lim.size("solo"), lim.size("cloud")) == (1, 3, None)
+
+
+def test_a_deadline_bounds_one_request_by_attempt_s_and_never_past_the_end() -> None:
+    from llm_ports.ports import Deadline
+
+    idle = Deadline(total_s=10.0, attempt_s=3.0)
+    assert idle.remaining(99.0) == 10.0 and idle.attempt_bound(99.0) == 3.0
+    clocks = idle.start(100.0)
+    assert clocks.at == 110.0 and clocks.attempt_bound(101.0) == 3.0 and clocks.attempt_bound(108.5) == 1.5
+    assert Deadline(total_s=5.0).start(0.0).attempt_bound(4.0) == 1.0 and clocks.remaining(200.0) == 0.0
+    with pytest.raises(ValueError, match="start"):
+        _ = idle.at

@@ -198,3 +198,46 @@ async def test_a_broken_reply_is_invalid_output_and_ok_has_no_failure() -> None:
     assert bad.failure is not None and bad.failure.kind == "invalid_output"
     good = await _rr([{"index": i, "relevance_score": float(i)} for i in range(3)]).rerank("q", DOCS)
     assert good.ok and good.failure is None and good.answered is not None and good.answered.requested == "rr-model"
+
+
+# -- resilience: the reranker shares the generator's wire policy and loop ------------------------
+
+
+def _flaky(*replies: tuple[int, dict, dict]) -> tuple[httpx.MockTransport, list[int]]:
+    sent: list[int] = []
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        sent.append(1)
+        code, body, headers = replies[min(len(sent) - 1, len(replies) - 1)]
+        return httpx.Response(code, json=body, headers=headers)
+
+    return httpx.MockTransport(handle), sent
+
+
+OK3 = (200, {"results": [{"index": i, "relevance_score": float(i)} for i in range(3)]}, {})
+
+
+async def test_a_policy_re_sends_a_429_and_records_the_attempt(_backoff_does_not_sleep: list[float]) -> None:
+    rule = ports.RetryRule(attempts=3, wait_initial_s=1.0, wait_max_s=4.0, jitter=0.0)
+    events: list[str] = []
+    transport, sent = _flaky((429, {"error": "busy"}, {"retry-after": "2"}), OK3)
+    rr = HttpReranker(
+        URL,
+        "rr-model",
+        transport=transport,
+        policy=ports.WirePolicy(rules={"rate_limited": rule}),
+        on_event=lambda _lvl, name, _f: events.append(name),
+    )
+    res = await rr.rerank("q", DOCS)
+    assert res.ok and len(sent) == 2 and _backoff_does_not_sleep == [2.0] and events == ["llm_wire_retry"]
+    assert [a.failure.kind for a in res.attempts] == ["rate_limited"]
+
+
+async def test_without_a_policy_and_for_a_kind_it_does_not_name_one_request_is_sent() -> None:
+    transport, sent = _flaky((429, {"error": "busy"}, {}), OK3)
+    res = await HttpReranker(URL, "rr-model", transport=transport).rerank("q", DOCS)
+    assert res.failure is not None and res.failure.kind == "rate_limited" and len(sent) == 1 and res.attempts == ()
+    transport, sent = _flaky((400, {"error": "bad"}, {}), OK3)
+    rule = ports.RetryRule(attempts=3, wait_initial_s=1.0, wait_max_s=4.0)
+    rr = HttpReranker(URL, "rr-model", transport=transport, policy=ports.WirePolicy(rules={"rate_limited": rule}))
+    assert (await rr.rerank("q", DOCS)).outcome == "request_fault" and len(sent) == 1

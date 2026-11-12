@@ -20,7 +20,11 @@ Invariants:
       context overflow is `context_overflow` whatever its status.
     - `answered` names the model the reply reported, when it reported one.
 
-Rationale: ADR-0001, ADR-0020.
+Retry: `policy=WirePolicy(...)` re-sends a request whose failure kind the policy retries, through
+the loop every adapter shares (`adapters._retry`, the generator's and the embedder's); each
+re-sent request is an `Attempt` on the result. None (the default) sends one request, as 1.x did.
+
+Rationale: ADR-0001, ADR-0020, ADR-0021.
 
 Example:
     reranker = HttpReranker("http://localhost:8080/v1/rerank", "bge-reranker-v2-m3")
@@ -32,13 +36,15 @@ Example:
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
 from llm_ports._extras import extra
 from llm_ports.adapters._classify import ERROR_MESSAGE_MAX, WireFacts, classify_core
-from llm_ports.ports import Answered, Failure, Reranked, failure
+from llm_ports.adapters._retry import Judged, WireRetry
+from llm_ports.observability import EventHook, log_events
+from llm_ports.ports import Answered, Failure, Reranked, WirePolicy, failure
 from llm_ports.ports.outcomes import REASON_MAX
 
 with extra("http"):
@@ -84,7 +90,7 @@ def scores_from(body: Any, n: int) -> tuple[float, ...]:
 class HttpReranker:
     """A `Reranker` over one `/rerank` endpoint.
 
-    Each call opens its own httpx client.
+    Each call opens its own httpx client, and keeps it across the call's retries.
 
     Args:
         url: The full `/rerank` endpoint URL.
@@ -93,6 +99,9 @@ class HttpReranker:
         timeout_s: The per-call httpx timeout, in seconds.
         transport: Replaces httpx's own transport (a consumer's counting transport, or
             `httpx.MockTransport` in a test). It always sits under `IndexOrderedTransport`.
+        policy: Which failed requests are re-sent, and how; None sends each request once.
+        on_event: Receives `llm_wire_retry`; without one it goes to the stdlib logger
+            `llm_ports.adapters.http`.
 
     Raises:
         ValueError: At construction, when `url` or `model` is empty.
@@ -106,6 +115,8 @@ class HttpReranker:
         api_key: str | None = None,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         transport: httpx.AsyncBaseTransport | None = None,
+        policy: WirePolicy | None = None,
+        on_event: EventHook | None = None,
     ) -> None:
         if not url or not model:
             raise ValueError("HttpReranker: url and model are required")
@@ -114,6 +125,8 @@ class HttpReranker:
         self._headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._timeout_s = timeout_s
         self._transport = transport
+        self._policy = policy if policy is not None else WirePolicy.none()
+        self._emit: EventHook = on_event or log_events("llm_ports.adapters.http")
 
     def _failed(self, got: Failure, answered: Answered) -> Reranked:
         return Reranked(
@@ -129,26 +142,47 @@ class HttpReranker:
         asked = Answered(requested=self.model)
         if not documents:
             return Reranked(scores=(), outcome="ok", model=self.model, answered=asked)
+        wire = WireRetry(self._policy, model=self.model, deadline_at=None, emit=self._emit, label="rerank")
+        seen: list[Mapping[str, str]] = [{}]  # the latest request's response headers
+
+        def judge(res: Any) -> Judged:
+            return (res.failure, seen[0]) if isinstance(res, Reranked) else (None, {})
+
+        async with httpx.AsyncClient(
+            timeout=self._timeout_s, transport=IndexOrderedTransport(self._transport)
+        ) as client:
+
+            async def send() -> Reranked:
+                res, seen[0] = await self._once(client, query, documents, asked)
+                return res
+
+            res = await wire.run(send, judge)
+        return replace(res, attempts=tuple(wire.attempts)) if wire.attempts else res
+
+    async def _once(
+        self, client: httpx.AsyncClient, query: str, documents: Sequence[str], asked: Answered
+    ) -> tuple[Reranked, Mapping[str, str]]:
+        """One wire request: the result, and the response headers (empty without a response)."""
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout_s, transport=IndexOrderedTransport(self._transport)
-            ) as client:
-                r = await client.post(self.url, json=payload(self.model, query, documents), headers=self._headers)
-                body = r.json() if r.status_code == 200 else _error_body(r)
+            r = await client.post(self.url, json=payload(self.model, query, documents), headers=self._headers)
+            body = r.json() if r.status_code == 200 else _error_body(r)
         except httpx.HTTPError as exc:
             got = classify_core(exc, WireFacts())
             assert got is not None  # an exception always classifies
-            return self._failed(replace(got, reason=f"rerank transport: {got.reason}"[:REASON_MAX]), asked)
+            return self._failed(replace(got, reason=f"rerank transport: {got.reason}"[:REASON_MAX]), asked), {}
         except ValueError as exc:  # a 200 whose body is not JSON
-            return self._failed(failure("invalid_output", reason=f"rerank reply is not JSON: {exc}"), asked)
+            return self._failed(failure("invalid_output", reason=f"rerank reply is not JSON: {exc}"), asked), {}
+        headers = {k.lower(): v for k, v in r.headers.items()}
         if r.status_code != 200:
-            facts = _facts(r.status_code, {k.lower(): v for k, v in r.headers.items()}, body)
-            got = classify_core(None, facts)
+            got = classify_core(None, _facts(r.status_code, headers, body))
             assert got is not None  # a non-200 status always classifies
-            return self._failed(replace(got, reason=f"rerank HTTP {r.status_code}"), asked)
+            return self._failed(replace(got, reason=f"rerank HTTP {r.status_code}"), asked), headers
+        return self._scored(body, len(documents)), headers
+
+    def _scored(self, body: Any, n: int) -> Reranked:
         answered = _answered(self.model, body)
         try:
-            scores = scores_from(body, len(documents))
+            scores = scores_from(body, n)
         except ValueError as exc:
             return self._failed(failure("invalid_output", reason=str(exc)), answered)
         return Reranked(scores=scores, outcome="ok", model=self.model, answered=answered)

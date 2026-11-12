@@ -1,4 +1,13 @@
-"""Retry and skip mechanics for long runs of model calls: `RetryPolicy` and `FailureBudget`.
+"""Retry, deadline, concurrency and skip mechanics for model calls.
+
+One wire request: `WirePolicy` (a `RetryRule` per retryable `FailureKind`) says how an adapter
+retries it; the adapter's own loop is the only retry owner (ADR-0021). One call: `Deadline` bounds
+it on the clock. One process: `LocalLimiter` caps how many calls run at once per group of models.
+One long run: `FailureBudget` turns "skip and go on" into "stop".
+
+`WirePolicy`, `RetryRule` and `Deadline` are port value types (a `GenRequest` carries them),
+re-exported here. `RetryPolicy` is the 1.x embedder knob, kept as an alias that builds a
+`WirePolicy` (`RetryPolicy.wire`).
 
 A run that embeds or generates over thousands of items fails in two different ways, and the two
 need different answers:
@@ -17,20 +26,30 @@ a request may still be computing it after the client has gone (llama.cpp does), 
 retry lands on a server that is still busy with the first attempt.
 
 Invariants:
-    - Pure: no I/O, no vendor import. The adapter brings the retry library.
+    - No I/O and no vendor import. The adapter brings the retry library. `LocalLimiter` reads the
+      event loop's clock and holds per-loop semaphores; nothing else holds state.
 
-Rationale: a 10-hour embedding fill died on one item whose request timed out twice, because a
-single failed item read as "the embedder is down".
+Rationale: ADR-0021; for `FailureBudget`, a long embedding fill that died on one item whose
+request timed out twice, because a single failed item read as "the embedder is down".
 """
 
 from __future__ import annotations
 
+import asyncio
+import weakref
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+
+from llm_ports.ports import RETRYABLE, Deadline, Limiter, RetryRule, SlotWaitExceeded, WirePolicy
 
 
 @dataclass(frozen=True, slots=True)
 class RetryPolicy:
-    """How an adapter retries ONE request that failed `unavailable`.
+    """How an adapter retries ONE request that failed `unavailable`. Deprecated: use `WirePolicy`.
+
+    Kept for 1.x callers of `PydanticAIEmbedder(retry=...)`; `wire()` is the same behaviour as a
+    `WirePolicy`.
 
     Attributes:
         attempts: Tries per request, the first included; 1 means no retry.
@@ -51,6 +70,105 @@ class RetryPolicy:
             raise ValueError("RetryPolicy: attempts must be >= 1")
         if self.wait_initial_s < 0 or self.wait_max_s < self.wait_initial_s:
             raise ValueError("RetryPolicy: need 0 <= wait_initial_s <= wait_max_s")
+
+    def wire(self) -> WirePolicy:
+        """This policy as a `WirePolicy`: every retryable kind, `attempts` tries, waits doubling, no jitter.
+
+        A server's `Retry-After` is honoured up to `wait_max_s`.
+        """
+        rule = RetryRule(
+            attempts=self.attempts,
+            wait_initial_s=self.wait_initial_s,
+            wait_max_s=self.wait_max_s,
+            multiplier=2.0,
+            jitter=0.0,
+            retry_after_max_s=self.wait_max_s,
+        )
+        return WirePolicy(rules=dict.fromkeys(sorted(RETRYABLE), rule))
+
+
+class LocalLimiter:
+    """The in-process `Limiter`: at most `slots[group]` calls at once per group, per event loop.
+
+    Args:
+        slots: Group to its slot count (e.g. a tier table's `[models.<key>] slots`).
+        default: Slots for a group not in `slots`; None leaves such a group unlimited.
+        max_wait_s: The longest a call waits for a slot; past it, `SlotWaitExceeded`. None waits
+            as long as the caller's deadline allows.
+
+    Raises:
+        ValueError: A slot count below 1.
+
+    Invariants:
+        - A slot is released when the block exits, by return, exception or cancellation.
+        - Two event loops never share a semaphore.
+
+    Rationale: ADR-0021.
+    """
+
+    def __init__(
+        self, slots: Mapping[str, int], *, default: int | None = None, max_wait_s: float | None = None
+    ) -> None:
+        if any(n < 1 for n in slots.values()) or (default is not None and default < 1):
+            raise ValueError("LocalLimiter: a slot count must be >= 1")
+        self._slots = dict(slots)
+        self._default = default
+        self._max_wait_s = max_wait_s
+        self._sems: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Semaphore]] = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def size(self, group: str) -> int | None:
+        """The slot count of `group`; None when it is unlimited."""
+        return self._slots.get(group, self._default)
+
+    def free(self, group: str) -> int | None:
+        """Slots of `group` free now on the running loop; None when it is unlimited."""
+        n = self.size(group)
+        if n is None:
+            return None
+        sem = self._sems.get(asyncio.get_running_loop(), {}).get(group)
+        return n if sem is None else sem._value  # asyncio exposes no public count
+
+    @asynccontextmanager
+    async def slot(self, group: str) -> AsyncIterator[float]:
+        """Hold one slot of `group`; yields the seconds waited for it.
+
+        Raises:
+            SlotWaitExceeded: No slot came free within `max_wait_s`.
+        """
+        n = self.size(group)
+        if n is None:
+            yield 0.0
+            return
+        loop = asyncio.get_running_loop()
+        sem = self._sems.setdefault(loop, {}).setdefault(group, asyncio.Semaphore(n))
+        started = loop.time()
+        try:
+            async with asyncio.timeout(self._max_wait_s):
+                await sem.acquire()
+        except TimeoutError:
+            raise SlotWaitExceeded(group, loop.time() - started) from None
+        try:
+            yield loop.time() - started
+        finally:
+            sem.release()
+
+    @classmethod
+    def for_models(
+        cls, slots: Mapping[str, tuple[str | None, int | None]], *, max_wait_s: float | None = None
+    ) -> LocalLimiter:
+        """Build a limiter from per-model facts: model key to `(group, slots)`.
+
+        A model's group is its `group`, else its key; a group's count is the smallest any of its
+        models states. A model that states no slots adds nothing.
+        """
+        out: dict[str, int] = {}
+        for key, (group, n) in slots.items():
+            if n is not None:
+                g = group or key
+                out[g] = min(out.get(g, n), n)
+        return cls(out, max_wait_s=max_wait_s)
 
 
 @dataclass(slots=True)
@@ -115,4 +233,13 @@ class FailureBudget:
         return None
 
 
-__all__ = ["FailureBudget", "RetryPolicy"]
+__all__ = [
+    "Deadline",
+    "FailureBudget",
+    "Limiter",
+    "LocalLimiter",
+    "RetryPolicy",
+    "RetryRule",
+    "SlotWaitExceeded",
+    "WirePolicy",
+]

@@ -40,14 +40,15 @@ Decisions = "https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr"
 # `adapters.pydantic_ai`: the Generator, the Embedder, output schemas and record/replay. httpx2 is
 # named, not inherited: the adapter builds its own `httpx2.AsyncClient` (ADR-0009); its floor is
 # the OpenAI SDK 3's (`openai` requires `httpx2>=2.12`). httpx stays for `IndexOrderedTransport` and a legacy transport.
-# tenacity carries the embedder's per-request retry (`RetryPolicy`). The floor is 2.62, the first
-# release with every `ModelAPIError` category class the failure taxonomy reads (ADR-0020).
-pydantic-ai = ["pydantic-ai-slim[openai]>=2.62,<3", "httpx2>=2.12", "httpx>=0.27", "tenacity>=8.2"]
+# tenacity is the engine of the one wire-retry loop (`adapters._retry`, ADR-0021). The floor is 2.64,
+# the first release with `first_event_timeout` (the streamed-call bound, ADR-0021); 2.62 brought every
+# `ModelAPIError` category class the failure taxonomy reads (ADR-0020).
+pydantic-ai = ["pydantic-ai-slim[openai]>=2.64,<3", "httpx2>=2.12", "httpx>=0.27", "tenacity>=9"]
 # `adapters.http`: the reranker, the grounder client and the index-ordered transport.
-http = ["httpx>=0.27"]
+http = ["httpx>=0.27", "tenacity>=9"]
 # `adapters.pydantic_evals` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
 # pydantic-ai-slim to its own version, so it moves with the `pydantic-ai` extra.
-evals = ["pydantic-evals>=2.62,<3"]
+evals = ["pydantic-evals>=2.64,<3"]
 # `adapters.genai_prices` (the Pricer on genai-prices' dated price table, ADR-0019).
 prices = ["genai-prices>=0.2.3"]
 # `adapters.lettucedetect` with the REAL model (torch + transformers, hundreds of MB). The module
@@ -99,15 +100,15 @@ packages = ["src/llm_ports"]
 # lettucedetect is NOT here: its tests run over `testing.StubDetector`; the real model is the
 # consumer's lane.
 dev = [
-    "pydantic-ai-slim[openai]>=2.62,<3",
+    "pydantic-ai-slim[openai]>=2.64,<3",
     "genai-prices>=0.2.3",
     "httpx2>=2.12",
     "httpx>=0.27",
-    "tenacity>=8.2",
+    "tenacity>=9",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.15",
-    "pydantic-evals>=2.62,<3",
+    "pydantic-evals>=2.64,<3",
     "langfuse>=5.0.2,<6",
     "opentelemetry-sdk>=1.30",
     "opentelemetry-semantic-conventions>=0.58b0",

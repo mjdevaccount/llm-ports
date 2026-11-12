@@ -19,6 +19,7 @@ import pytest
 
 from llm_ports.call import models, roles
 from llm_ports.call.models import DEFAULT_FALLBACK_ON, ModelInfo, TableInvalid
+from llm_ports.ports import RetryRule, WirePolicy
 from tests.conftest import FIXTURES, TABLE
 
 V2_PATH = FIXTURES / "llm_tiers_v2.toml"
@@ -108,7 +109,12 @@ def test_a_schema_2_table_states_its_models_providers_policies_and_fallbacks() -
     local = V2.tiers["local"]
     assert (local.model, local.timeout_s, local.self_hosted, local.info) == ("small-chat", 120.0, True, chat)
     assert local.fallback == ("cloud",) and local.fallback_on == DEFAULT_FALLBACK_ON
-    assert local.policy == {"rate_limited": {"attempts": 45, "wait_initial_s": 2.0}}
+    assert local.policy == {
+        "rate_limited": {"attempts": 45, "wait_initial_s": 2.0, "wait_max_s": 20.0, "multiplier": 1.6}
+    }
+    assert local.wire_policy == WirePolicy(
+        rules={"rate_limited": RetryRule(attempts=45, wait_initial_s=2.0, wait_max_s=20.0, multiplier=1.6)}
+    )
     with pytest.raises(TypeError):
         local.policy["x"] = 1  # type: ignore[index]  # the declared policy is read-only
     cloud = V2.tiers["cloud"]
@@ -121,10 +127,12 @@ def test_a_tier_stays_hashable_with_a_policy_as_in_1_22() -> None:
     assert local.policy is not None
     assert hash(local) == hash(roles.load_tiers(V2_PATH).tiers["local"]), "equal tiers hash equal"
     assert len({local, V2.tiers["cloud"], local}) == 2
-    raw = _with(lambda r: r["policies"]["local"].update(codes=[429, 503], tags={"a": ["x"]}))
+    busy = {"attempts": 3, "wait_initial_s": 8.0, "wait_max_s": 8.0}
+    raw = _with(lambda r: r["policies"]["local"].update(overloaded=busy, max_total_attempts=10))
     tier = roles.load_tiers(raw).tiers["local"]
     hash(tier)
-    assert isinstance(tier.policy, Mapping) and tier.policy["codes"] == (429, 503), "an array reads as a tuple"
+    assert isinstance(tier.policy, Mapping) and tier.policy["overloaded"] == busy
+    assert tier.wire_policy is not None and tier.wire_policy.max_total_attempts == 10
 
 
 def _with(edit: Any) -> dict[str, Any]:
@@ -166,6 +174,20 @@ def _with(edit: Any) -> dict[str, Any]:
         (lambda r: r["models"]["chat"].update(group=""), "models.chat.group", "non-empty string"),
         (lambda r: r["models"].update(bad="small"), "models.bad", "must be a table"),
         (lambda r: r["policies"].update(bad=1), "policies.bad", "must be a table"),
+        (lambda r: r["policies"]["local"].update(quota={}), "policies.local.quota", "not a retryable failure kind"),
+        (lambda r: r["policies"]["local"].update(codes=[429]), "policies.local.codes", "not a retryable failure kind"),
+        (
+            lambda r: r["policies"]["local"]["rate_limited"].update(attempts=0),
+            "policies.local.rate_limited",
+            "attempts must be an int >= 1",
+        ),
+        (
+            lambda r: r["policies"]["local"]["rate_limited"].update(wait=1),
+            "policies.local.rate_limited.wait",
+            "unknown field",
+        ),
+        (lambda r: r["policies"]["local"].update(server=3), "policies.local.server", "must be a table of RetryRule"),
+        (lambda r: r["policies"]["local"].update(max_total_attempts=0), "policies.local", "max_total_attempts"),
         (lambda r: r["tiers"].update(bad="x"), "tiers.bad", "must be a table"),
         (lambda r: r["tiers"]["local"].update(model="nope"), "tiers.local.model", "unknown model key 'nope'"),
         (lambda r: r["tiers"]["local"].update(timeout="nope"), "tiers.local.timeout", "unknown rung 'nope'"),
@@ -219,10 +241,9 @@ def test_the_fingerprint_is_stable_order_free_and_moves_with_any_value() -> None
     assert TABLE.fingerprint() != fp
 
 
-def test_a_policy_value_with_no_canonical_form_is_refused_by_the_fingerprint() -> None:
-    raw = _with(lambda r: r["policies"]["local"].update(odd=object()))
-    with pytest.raises(TypeError, match="no canonical JSON form for object"):
-        roles.load_tiers(raw)
+def test_a_policy_value_a_rule_cannot_hold_is_refused_before_the_fingerprint() -> None:
+    raw = _with(lambda r: r["policies"]["local"]["rate_limited"].update(wait_max_s=object()))
+    _invalid(raw, "policies.local.rate_limited")
 
 
 # -- require: a role's capabilities, on its tier and every fallback ------------------------------
