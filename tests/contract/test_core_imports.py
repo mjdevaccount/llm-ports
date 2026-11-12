@@ -18,6 +18,7 @@ import pytest
 from llm_ports import _extras
 
 VENDORS = (
+    "genai_prices",
     "gepa",
     "httpx",
     "httpx2",
@@ -45,6 +46,7 @@ VENDORS = (
 NEEDS_AN_EXTRA = ("llm_ports.adapters", "llm_ports.testing.langfuse")
 #: Each adapter, the extra that installs it, and the vendor module its import needs first.
 ADAPTERS = {
+    "llm_ports.adapters.genai_prices": ("prices", "genai_prices"),
     "llm_ports.adapters.gepa": ("gepa", "gepa"),
     "llm_ports.adapters.http": ("http", "httpx"),
     "llm_ports.adapters.langfuse": ("langfuse", "langfuse"),
@@ -132,6 +134,11 @@ def test_the_model_table_and_the_provider_registry_are_core() -> None:
 @pytest.mark.skipif(not _installed("httpx"), reason="the `http` extra is not installed")
 def test_the_http_adapters_load_httpx_and_nothing_else() -> None:
     assert _loaded_vendors("llm_ports.adapters.http") == ["httpx"]
+
+
+def test_the_gateway_reader_needs_no_extra() -> None:
+    # `adapters.litellm_proxy` reads header mappings; it must load with no vendor at all.
+    assert _loaded_vendors("llm_ports.adapters.litellm_proxy") == []
 
 
 @pytest.mark.parametrize("module", sorted(ADAPTERS))

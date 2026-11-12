@@ -14,10 +14,13 @@ Invariants:
       duplicate index cannot pass a count check and leave one document unscored.
     - Every `ok` score is a finite number.
     - A reply that breaks either rule is `invalid`, never a partial ranking.
-    - A call never raises for a model, wire or gate failure: a transport error is `unavailable`, a
-      refused request (400/413/422) is `request_fault`, and any other non-200 is `unavailable`.
+    - A call never raises for a model, wire or gate failure. Every failure is a `Failure` from the
+      shared classification table (`adapters._classify`), the one the generator and the embedder
+      use: a transport error is `transport` or `timeout`, a status maps by `kind_for_status`, a
+      context overflow is `context_overflow` whatever its status.
+    - `answered` names the model the reply reported, when it reported one.
 
-Rationale: ADR-0001.
+Rationale: ADR-0001, ADR-0020.
 
 Example:
     reranker = HttpReranker("http://localhost:8080/v1/rerank", "bge-reranker-v2-m3")
@@ -30,11 +33,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from llm_ports._extras import extra
-from llm_ports.ports import Outcome, Reranked
-from llm_ports.ports.outcomes import REASON_MAX, failure_reason, outcome_for_status
+from llm_ports.adapters._classify import ERROR_MESSAGE_MAX, WireFacts, classify_core
+from llm_ports.ports import Answered, Failure, Reranked, failure
+from llm_ports.ports.outcomes import REASON_MAX
 
 with extra("http"):
     import httpx
@@ -110,8 +115,10 @@ class HttpReranker:
         self._timeout_s = timeout_s
         self._transport = transport
 
-    def _failed(self, outcome: Outcome, reason: str) -> Reranked:
-        return Reranked(scores=(), outcome=outcome, model=self.model, reason=reason[:REASON_MAX])
+    def _failed(self, got: Failure, answered: Answered) -> Reranked:
+        return Reranked(
+            scores=(), outcome=got.outcome, model=self.model, reason=got.reason, answered=answered, failure=got
+        )
 
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
         """Score `documents` against `query`, in input order.
@@ -119,25 +126,67 @@ class HttpReranker:
         An empty `documents` returns `ok` with no scores and sends no request. A failure is a named
         outcome, never an exception (see the module invariants).
         """
+        asked = Answered(requested=self.model)
         if not documents:
-            return Reranked(scores=(), outcome="ok", model=self.model)
+            return Reranked(scores=(), outcome="ok", model=self.model, answered=asked)
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout_s, transport=IndexOrderedTransport(self._transport)
             ) as client:
                 r = await client.post(self.url, json=payload(self.model, query, documents), headers=self._headers)
-                body = r.json() if r.status_code == 200 else None
+                body = r.json() if r.status_code == 200 else _error_body(r)
         except httpx.HTTPError as exc:
-            return self._failed("unavailable", f"rerank transport: {failure_reason(exc)}")
+            got = classify_core(exc, WireFacts())
+            assert got is not None  # an exception always classifies
+            return self._failed(replace(got, reason=f"rerank transport: {got.reason}"[:REASON_MAX]), asked)
         except ValueError as exc:  # a 200 whose body is not JSON
-            return self._failed("invalid", f"rerank reply is not JSON: {failure_reason(exc)}")
+            return self._failed(failure("invalid_output", reason=f"rerank reply is not JSON: {exc}"), asked)
         if r.status_code != 200:
-            return self._failed(outcome_for_status(r.status_code), f"rerank HTTP {r.status_code}")
+            facts = _facts(r.status_code, {k.lower(): v for k, v in r.headers.items()}, body)
+            got = classify_core(None, facts)
+            assert got is not None  # a non-200 status always classifies
+            return self._failed(replace(got, reason=f"rerank HTTP {r.status_code}"), asked)
+        answered = _answered(self.model, body)
         try:
             scores = scores_from(body, len(documents))
         except ValueError as exc:
-            return self._failed("invalid", str(exc))
-        return Reranked(scores=scores, outcome="ok", model=self.model)
+            return self._failed(failure("invalid_output", reason=str(exc)), answered)
+        return Reranked(scores=scores, outcome="ok", model=self.model, answered=answered)
+
+
+def _error_body(r: httpx.Response) -> Any:
+    try:
+        return r.json()
+    except ValueError:
+        return None
+
+
+def _facts(status: int, headers: dict[str, str], body: Any) -> WireFacts:
+    """The facts of a non-200 reply: its status, headers and the provider's error fields, no body."""
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, str):
+        err = {"message": err}
+    if not isinstance(err, dict):
+        err = {}
+    message = err.get("message")
+    code, kind = err.get("code"), err.get("type")
+    return WireFacts(
+        status=status,
+        headers=headers,
+        error_code=str(code) if code is not None else None,
+        error_type=kind if isinstance(kind, str) else None,
+        error_message=message[:ERROR_MESSAGE_MAX] if isinstance(message, str) else None,
+    )
+
+
+def _answered(requested: str, body: Any) -> Answered:
+    model = body.get("model") if isinstance(body, dict) else None
+    rid = body.get("id") if isinstance(body, dict) else None
+    return Answered(
+        requested=requested,
+        model=model if isinstance(model, str) else None,
+        response_id=rid if isinstance(rid, str) else None,
+    )
 
 
 __all__ = ["DEFAULT_TIMEOUT_S", "HttpReranker", "payload", "scores_from"]

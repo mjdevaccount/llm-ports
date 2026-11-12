@@ -6,7 +6,10 @@ The package root exports:
 - the call path `generate`, which resolves a `Role` from the consumer's tier table
   (`llm_ports.call.roles`), runs per-call graders whose failures are recorded as scores
   (`llm_ports.call.graders`), and ends in a named `Outcome` (`ok`, `gated`, `unavailable`,
-  `request_fault`, `truncated` or `invalid`);
+  `request_fault`, `truncated`, `invalid` or `refused`), with the detail in a `Failure` whose
+  `kind` names what happened;
+- the result contract: `Usage` summed over every request, `Cost` with its source, `Answered`
+  (who answered), `Finish`, `CallWarning`, `Attempt`, and the `Pricer` and `GatewayReader` seams;
 - the data-rights gate `print_gate` (`llm_ports.provenance`) and `GenerationFailed`.
 
 Prompt packs named by their content sha are `llm_ports.prompts`; the number law and grounded
@@ -20,7 +23,7 @@ Invariants:
     - The package root imports no framework: it needs only pydantic, jinja2 and pyyaml.
     - A `Generator` never raises for a model, wire or gate failure.
 
-Rationale: ADR-0001.
+Rationale: ADR-0001, ADR-0019, ADR-0020.
 """
 
 from importlib.metadata import version
@@ -28,12 +31,20 @@ from importlib.metadata import version
 from llm_ports.call import Hooks, generate, json_output, request_for, require_ok, tracer_trace
 from llm_ports.call.roles import Role, Tier, TierTable, load_tiers
 from llm_ports.ports import (
+    Answered,
+    Attempt,
+    CallWarning,
     Chunk,
     CitedAnswer,
     Claim,
+    Cost,
     Embedded,
     Embedder,
     EmbedInput,
+    Failure,
+    FailureKind,
+    Finish,
+    GatewayReader,
     Generated,
     Generation,
     Generator,
@@ -41,12 +52,15 @@ from llm_ports.ports import (
     Judge,
     JudgeVerdict,
     Outcome,
+    Pricer,
     Prompt,
     PromptSource,
     Reranked,
     Reranker,
     Seed,
     Tracer,
+    Usage,
+    failure,
 )
 from llm_ports.ports.outcomes import GenerationFailed
 from llm_ports.provenance import Activity, ContentItem, DataClass, GateVerdict, print_gate
@@ -55,15 +69,23 @@ __version__ = version("llm-ports")
 
 __all__ = [
     "Activity",
+    "Answered",
+    "Attempt",
+    "CallWarning",
     "Chunk",
     "CitedAnswer",
     "Claim",
     "ContentItem",
+    "Cost",
     "DataClass",
     "EmbedInput",
     "Embedded",
     "Embedder",
+    "Failure",
+    "FailureKind",
+    "Finish",
     "GateVerdict",
+    "GatewayReader",
     "GenRequest",
     "Generated",
     "Generation",
@@ -73,6 +95,7 @@ __all__ = [
     "Judge",
     "JudgeVerdict",
     "Outcome",
+    "Pricer",
     "Prompt",
     "PromptSource",
     "Reranked",
@@ -82,7 +105,9 @@ __all__ = [
     "Tier",
     "TierTable",
     "Tracer",
+    "Usage",
     "__version__",
+    "failure",
     "generate",
     "json_output",
     "load_tiers",

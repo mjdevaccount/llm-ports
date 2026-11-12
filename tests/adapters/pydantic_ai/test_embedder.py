@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import struct
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -219,3 +220,92 @@ async def test_without_a_policy_a_request_is_sent_once() -> None:
     calls: list[int] = []
     res = await _embedder(_flaky(calls, {1})).embed(["a"])
     assert res.outcome == "unavailable" and res.retries == 0 and calls == [1]
+
+
+# ── failures acceptance test 10: the embedder's failures come from the shared table ──────────────
+
+
+@pytest.mark.parametrize(
+    ("status", "kind"),
+    [(429, "rate_limited"), (401, "auth"), (404, "not_found"), (500, "server"), (400, "bad_request")],
+)
+async def test_a_status_carries_the_shared_kind(status: int, kind: str) -> None:
+    res = await _embedder(_wire([], status=status)).embed(["a"])
+    assert res.failure is not None and res.failure.kind == kind and res.outcome == res.failure.outcome
+
+
+async def test_a_dead_wire_is_transport_and_a_wrong_dimension_is_invalid_output() -> None:
+    def boom(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    dead = await _embedder(httpx.MockTransport(boom)).embed(["a"])
+    assert dead.failure is not None and dead.failure.kind == "transport"
+    wrong = await _embedder(_wire([], dims=3)).embed(["a"])
+    assert wrong.failure is not None and wrong.failure.kind == "invalid_output"
+
+
+async def test_auth_is_not_retried_but_a_server_error_is() -> None:
+    # The retry predicate is `Failure.retryable`: a wait cannot fix a key, it can fix a busy server.
+    calls: list[int] = []
+    res = await _embedder(_flaky(calls, {1}, status=401), retry=NO_WAIT).embed(["a"])
+    assert res.failure is not None and res.failure.kind == "auth" and calls == [1]
+    calls = []
+    res = await _embedder(_flaky(calls, {1}, status=500), retry=NO_WAIT).embed(["a"])
+    assert res.ok and calls == [1, 1]
+
+
+async def test_an_ok_embed_reports_usage_and_who_answered() -> None:
+    res = await _embedder(_wire([])).embed(["a", "b"])
+    assert res.ok and res.failure is None and res.usage_v2 is not None and res.usage_v2.input == 6
+    assert res.answered is not None and res.answered.requested == "embeddings"
+    unmeasured = await _embedder(_wire([], usage=False)).embed(["a"])
+    assert unmeasured.usage_v2 is not None and unmeasured.usage_v2.unmeasured == 1
+
+
+# ── a cost header is a report, never a reason to fail or raise from embed ─────────────────────────
+
+
+def _with_cost(inner: httpx.MockTransport, header: str) -> httpx.MockTransport:
+    async def handler(req: httpx.Request) -> httpx.Response:
+        r = await inner.handle_async_request(req)
+        await r.aread()
+        return httpx.Response(
+            r.status_code, content=r.content, headers={**r.headers, "x-litellm-response-cost": header}
+        )
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize(
+    ("header", "usd"),
+    [("1e9999999", None), ("1e7", None), ("-0", Decimal(0)), ("1e-9999999", None)],
+    ids=["1e9999999", "1e7", "-0", "1e-9999999"],
+)
+async def test_an_implausible_cost_header_never_fails_embed(header: str, usd: Decimal | None) -> None:
+    from llm_ports.adapters import litellm_proxy
+
+    seen: list[str] = []
+    emb = _embedder(_with_cost(_wire([]), header), gateway=litellm_proxy, on_event=lambda _l, e, _f: seen.append(e))
+    res = await emb.embed(["a", "b"])
+    assert res.outcome == "ok" and len(res.vectors) == 2 and res.failure is None
+    assert (res.cost.usd if res.cost is not None else None) == usd
+    assert seen.count("llm_gateway_header_invalid") == (1 if usd is None else 0)
+
+
+class _BrokenReader:
+    """A custom gateway reader whose every read raises."""
+
+    def cost_from_headers(self, _headers: Any) -> Decimal | None:
+        raise RuntimeError("reader bug")
+
+    def answered_from_headers(self, _headers: Any) -> tuple[str | None, str | None]:
+        raise RuntimeError("reader bug")
+
+
+async def test_a_gateway_reader_that_raises_never_fails_embed() -> None:
+    seen: list[str] = []
+    emb = _embedder(_wire([]), gateway=_BrokenReader(), on_event=lambda _l, e, _f: seen.append(e))
+    res = await emb.embed(["a", "b"])
+    assert res.outcome == "ok" and len(res.vectors) == 2 and res.failure is None
+    assert res.answered is not None and res.answered.deployment is None
+    assert seen.count("llm_gateway_header_invalid") == 2

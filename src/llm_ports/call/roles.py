@@ -422,6 +422,8 @@ class Role:
         timeout_s: Overrides the tier's timeout, in seconds.
         graders: Names of `call.graders` entries that `call.generate` scores every `ok` reply with.
         settings: Per-role sampling the tier does not decide (seed, top_p, temperature).
+        accept_truncated: A reply the token ceiling cut is `ok` (with a `CallWarning`) instead of
+            `truncated`: the 1.x behaviour, for a role whose consumer reads a partial reply.
 
     Raises:
         ValueError: `tier` is not in `TIERS`.
@@ -441,6 +443,7 @@ class Role:
     timeout_s: float | None = None
     graders: tuple[str, ...] = ()
     settings: Mapping[str, Any] = field(default_factory=dict)
+    accept_truncated: bool = False
 
     def __post_init__(self) -> None:
         if self.tier not in self.TIERS:

@@ -2,7 +2,8 @@
 
 Example:
     res = await call.generate(CATEGORIZE, prompt=text, output=Reply, generator=gen, hooks=HOOKS)
-    if res.outcome != "ok": ...  # gated | unavailable | request_fault | truncated | invalid
+    if res.outcome != "ok": ...  # gated | unavailable | request_fault | truncated | invalid | refused
+    if res.failure: res.failure.kind  # the detail: rate_limited, context_overflow, internal, ...
 
 Per call, the role resolves to one `GenRequest` (`request_for`), the category is entered with
 `observability.llm_feature`, and the `admit` hook runs. A refusal returns `gated` before any trace opens:
@@ -22,8 +23,10 @@ Invariants:
     - A non-`ok`, non-`gated` outcome ends the observation in error and emits `llm_call_failed`.
       `_NotOk` is raised inside the trace block only and never escapes.
     - A caller whose ledger is an `except` uses `require_ok`.
+    - The observation's metadata carries the failure kind, the cost and its source, who answered,
+      the unified finish, the attempt count and every usage bucket; an unknown stays None.
 
-Rationale: ADR-0001.
+Rationale: ADR-0001, ADR-0019, ADR-0020.
 """
 
 from __future__ import annotations
@@ -135,6 +138,7 @@ def request_for(
         timeout_s=role.resolved_timeout_s,
         output_retries=role.output_retries,
         label=role.name,
+        accept_truncated=role.accept_truncated,
     )
 
 
@@ -247,7 +251,34 @@ def _gated(role: Role, req: GenRequest, h: Hooks) -> Generated[Any] | None:
     refused = h.admit(role) if h.admit is not None else None
     if refused is None:
         return None
-    return Generated(value=None, outcome="gated", model=req.model, reason=refused[:REASON_MAX])
+    return Generated(
+        value=None,
+        outcome="gated",
+        model=req.model,
+        answered=ports.Answered(requested=req.model),
+        failure=ports.failure("gated", reason=refused[:REASON_MAX]),
+    )
+
+
+def _result_metadata(res: Generated[Any]) -> dict[str, Any]:
+    """The result contract as flat observation metadata: kind, cost, who answered, finish, usage."""
+    u, cost, who = res.usage_v2, res.cost, res.answered
+    return {
+        "kind": res.failure.kind if res.failure is not None else None,
+        "cost_usd": str(cost.usd) if cost is not None and cost.usd is not None else None,
+        "cost_source": cost.source if cost is not None else None,
+        "answered_model": who.model if who is not None else None,
+        "answered_deployment": who.deployment if who is not None else None,
+        "finish": res.finish.unified if res.finish is not None else None,
+        "attempts": len(res.attempts),
+        "usage_input": u.input if u is not None else None,
+        "usage_output": u.output if u is not None else None,
+        "usage_cache_read": u.cache_read if u is not None else None,
+        "usage_cache_write": u.cache_write if u is not None else None,
+        "usage_reasoning": u.reasoning if u is not None else None,
+        "usage_requests": u.requests if u is not None else None,
+        "usage_unmeasured": u.unmeasured if u is not None else None,
+    }
 
 
 def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T]:
@@ -261,6 +292,7 @@ def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T
             "retries": res.retries,
             "finish_reason": res.finish_reason,
             "problems": len(res.problems),
+            **_result_metadata(res),
         },
     )
     return replace(res, stamp={**res.stamp, "generation": obs})
@@ -328,6 +360,7 @@ async def generate[T](
                 "llm_call_failed",
                 role=role.name,
                 outcome=res.outcome if res else None,
+                kind=res.failure.kind if res and res.failure else None,
                 reason=res.reason if res else None,
             )
         if res is None:  # reachable only when a trace hook swallowed a generator exception

@@ -17,14 +17,15 @@ Langfuse SDK 5 is OpenTelemetry underneath:
 - Trace-level fields (session, trace name, tags) ride `propagate_attributes` around the open.
   `name` is stored verbatim as the generation name, the trace name and the one tag, so a cost
   dashboard can group by it.
-- Usage is `usage_details={"input", "output"}`; the server adds `total` and prices by model.
+- Usage is `usage_details` with the measured sides of `{"input", "output"}`; the server adds
+  `total` and prices by model.
 - Export is a background batch: `end` does not block on the network.
 
 `provider` has no Langfuse field; it rides `metadata["provider"]` unless the caller set that key.
 
 Invariants:
-    - When neither token count is reported, no usage block is sent, never zero tokens; when one
-      side is reported, the other is booked as 0.
+    - An unreported token count is never sent as 0: only the measured sides go, and with
+      neither measured no usage block is sent.
     - Fails open: a client that raises on open yields a `NoopGeneration`.
     - Every failure (open, end, score) emits at most one warning event per `warn_hold_s` through
       `on_event` (default: the stdlib logger `llm_ports.adapters.langfuse.tracer`), and never raises into
@@ -60,13 +61,14 @@ _ERR_CAP = 200
 def usage_details(prompt: int | None, completion: int | None) -> dict[str, int] | None:
     """Return the Langfuse usage block, or None when the provider reported neither count.
 
-    When only one count is reported, the other is booked as 0. Pure.
+    When only one count is reported, only that side is sent: an unreported side is unknown, and
+    booking it as 0 would make a half-measured call look cheaper than it was. Pure.
 
-    Rationale: ADR-0007.
+    Rationale: ADR-0007, ADR-0019.
     """
-    if prompt is None and completion is None:
-        return None
-    return {"input": prompt or 0, "output": completion or 0}
+    sides = {"input": prompt, "output": completion}
+    measured = {k: v for k, v in sides.items() if v is not None}
+    return measured or None
 
 
 def trace_id(client: Any) -> str:

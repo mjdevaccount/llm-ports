@@ -5,16 +5,27 @@ mapping every adapter shares.
 """
 
 from llm_ports.ports import outcomes
+from llm_ports.ports._failure import (
+    FAILURE_KINDS,
+    OUTCOME_FOR,
+    RETRYABLE,
+    Failure,
+    FailureKind,
+    Phase,
+    failure,
+)
 from llm_ports.ports._health import Health, HealthState, Probe
 from llm_ports.ports._protocols import (
     Citer,
     Embedder,
     Evaluator,
+    GatewayReader,
     Generation,
     Generator,
     Grader,
     Grounder,
     Judge,
+    Pricer,
     PromptSource,
     Reranker,
     Retriever,
@@ -37,16 +48,39 @@ from llm_ports.ports._types import (
     Seed,
     json_output,
 )
+from llm_ports.ports._usage import (
+    Answered,
+    Attempt,
+    CallWarning,
+    Cost,
+    CostSource,
+    Finish,
+    UnifiedFinish,
+    Usage,
+    WarningKind,
+)
 
 __all__ = [
+    "FAILURE_KINDS",
+    "OUTCOME_FOR",
+    "RETRYABLE",
+    "Answered",
+    "Attempt",
+    "CallWarning",
     "Chunk",
     "CitedAnswer",
     "Citer",
     "Claim",
+    "Cost",
+    "CostSource",
     "EmbedInput",
     "Embedded",
     "Embedder",
     "Evaluator",
+    "Failure",
+    "FailureKind",
+    "Finish",
+    "GatewayReader",
     "GenRequest",
     "Generated",
     "Generation",
@@ -60,6 +94,8 @@ __all__ = [
     "Judge",
     "JudgeVerdict",
     "Outcome",
+    "Phase",
+    "Pricer",
     "Probe",
     "Prompt",
     "PromptSource",
@@ -68,6 +104,10 @@ __all__ = [
     "Retriever",
     "Seed",
     "Tracer",
+    "UnifiedFinish",
+    "Usage",
+    "WarningKind",
+    "failure",
     "json_output",
     "outcomes",
 ]

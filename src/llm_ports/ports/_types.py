@@ -18,6 +18,10 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, ClassVar, Literal
 
+from llm_ports.ports._failure import Failure
+from llm_ports.ports._usage import Answered, Attempt, CallWarning, Cost, Finish, Usage
+from llm_ports.ports.outcomes import Outcome
+
 
 @dataclass(frozen=True)
 class Chunk:
@@ -158,17 +162,6 @@ class Seed:
     kind: str = ""
 
 
-#: Every way one generation can end:
-#:
-#: - `ok`: the reply parsed into the output type.
-#: - `gated`: the category switchboard refused the call.
-#: - `unavailable`: the model server or gateway failed, and the input is not to blame.
-#: - `request_fault`: the request was refused (HTTP 400, 413 or 422), so the input is to blame.
-#: - `truncated`: the token ceiling cut the reply. A budget failure, never a parse error.
-#: - `invalid`: the reply would not parse into the output type.
-Outcome = Literal["ok", "gated", "unavailable", "request_fault", "truncated", "invalid"]
-
-
 class JsonOutput(dict[str, Any]):
     """A hand-written JSON schema used as a `Generator` output type.
 
@@ -213,6 +206,8 @@ class GenRequest:
         timeout_s: The client timeout, in seconds.
         output_retries: Re-asks allowed when the validator finds problems.
         label: A name for the call in an adapter's logs; `call.request_for` sets the role name.
+        accept_truncated: Return a length-cut reply that parsed as `ok`, with a `CallWarning`,
+            instead of `truncated`. Off by default.
     """
 
     model: str
@@ -224,6 +219,7 @@ class GenRequest:
     timeout_s: float = 120.0
     output_retries: int = 1
     label: str = "chat"
+    accept_truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -231,18 +227,35 @@ class Generated[T]:
     """What a `Generator` returns.
 
     Attributes:
-        value: The parsed value; None exactly when `outcome != "ok"`.
+        value: The parsed value. None when `outcome != "ok"`, except `truncated`, which keeps a
+            length-cut reply that still parsed so a caller that accepts cut text can read it.
         outcome: How the call ended.
-        model: The model that answered.
+        model: The model id the request named. Deprecated: `answered` says who answered.
         reason: One line naming the failure; None on `ok`.
         retries: Re-asks used; None when the run died mid-flight and the count is unknown, never 0.
         problems: The validator's findings on the kept value once the re-asks ran out. The caller
             prunes the value or drops it.
-        usage: Token counts as the provider reported them; None, or a None count, is unmeasured.
+        usage: `{"input", "output"}` token counts; None, or a None count, is unmeasured.
+            Deprecated: derived from `usage_v2`.
         sources: URLs the model server fetched while answering (a research-server extension);
             None when the reply carried none.
-        finish_reason: The provider's finish reason, when it sent one.
+        finish_reason: The provider's finish reason, when it sent one. Deprecated: derived from
+            `finish.raw`.
         stamp: Extras the call path attaches by name (e.g. `scores`, `generation`).
+        usage_v2: Every bucket, summed over every wire request; None when no request was made.
+        cost: What the call cost; None only when no `Pricer` was configured and no gateway
+            reported a cost.
+        finish: How the last reply ended; None when the provider said nothing.
+        answered: Who produced the result.
+        attempts: Every wire request or fallback step that did not answer, in order.
+        warnings: Settings dropped or altered on the way to the model.
+        failure: The failure's kind and detail; None exactly when `outcome == "ok"`.
+
+    Invariants:
+        - When left None, `usage` is `usage_v2.as_mapping()`, `finish_reason` is `finish.raw`
+          and `reason` is `failure.reason`.
+
+    Rationale: ADR-0001, ADR-0019, ADR-0020.
     """
 
     value: T | None
@@ -255,36 +268,42 @@ class Generated[T]:
     sources: tuple[str, ...] | None = None
     finish_reason: str | None = None
     stamp: Mapping[str, Any] = field(default_factory=dict)
+    usage_v2: Usage | None = None
+    cost: Cost | None = None
+    finish: Finish | None = None
+    answered: Answered | None = None
+    attempts: tuple[Attempt, ...] = ()
+    warnings: tuple[CallWarning, ...] = ()
+    failure: Failure | None = None
+
+    def __post_init__(self) -> None:
+        """Derive the 1.x fields a caller left None from the fields that carry them now."""
+        if self.usage is None and self.usage_v2 is not None:
+            object.__setattr__(self, "usage", self.usage_v2.as_mapping())
+        if self.finish_reason is None and self.finish is not None:
+            object.__setattr__(self, "finish_reason", self.finish.raw)
+        if self.reason is None and self.failure is not None:
+            object.__setattr__(self, "reason", self.failure.reason)
 
 
 #: Which side of an asymmetric embedding model a text is on.
 EmbedInput = Literal["document", "query"]
 
 
-@dataclass(frozen=True)
-class Embedded:
-    """What an `Embedder` returns: one vector per input, in input order, all in one space.
+class _Outcomed:
+    """Behaviour shared by the result types whose only 1.x field is `reason`.
 
-    Attributes:
-        vectors: One vector per input; `()` exactly when `outcome != "ok"`.
-        outcome: How the call ended.
-        stamp: The vector space (model and dims). It belongs on every stored vector.
-        reason: One line naming the failure; None on `ok`.
-        input_tokens: Tokens the wire reported; None when it reported no usage (unknown, never 0).
-        retries: Requests the adapter re-sent after an `unavailable` failure (its `RetryPolicy`),
-            counted whether the call then landed or not.
-
-    Invariants:
-        - Two stamps never compare: a store holding two is a reindex in progress, not an index.
-        - A batch that half-landed is a failed batch; no partial result is returned.
+    A plain base (not a dataclass), so it adds no fields: each subclass declares its own.
     """
 
-    vectors: tuple[tuple[float, ...], ...]
     outcome: Outcome
-    stamp: str = ""
-    reason: str | None = None
-    input_tokens: int | None = None
-    retries: int = 0
+    reason: str | None
+    failure: Failure | None
+
+    def __post_init__(self) -> None:
+        """Derive the 1.x `reason` from `failure` when a caller left it None."""
+        if self.reason is None and self.failure is not None:
+            object.__setattr__(self, "reason", self.failure.reason)
 
     @property
     def ok(self) -> bool:
@@ -293,14 +312,52 @@ class Embedded:
 
 
 @dataclass(frozen=True)
-class Reranked:
+class Embedded(_Outcomed):
+    """What an `Embedder` returns: one vector per input, in input order, all in one space.
+
+    Attributes:
+        vectors: One vector per input; `()` exactly when `outcome != "ok"`.
+        outcome: How the call ended.
+        stamp: The vector space (model and dims). It belongs on every stored vector.
+        reason: One line naming the failure; None on `ok`. Derived from `failure` when left None.
+        input_tokens: Tokens the wire reported; None when it reported no usage (unknown, never 0).
+        retries: Requests the adapter re-sent after a retryable failure (its `RetryPolicy`),
+            counted whether the call then landed or not.
+        usage_v2: Token counts summed over every request; None when no request was made.
+        cost: What the call cost; None only when no `Pricer` was configured.
+        answered: Who produced the vectors.
+        failure: The failure's kind and detail; None exactly when `outcome == "ok"`.
+
+    Invariants:
+        - Two stamps never compare: a store holding two is a reindex in progress, not an index.
+        - A batch that half-landed is a failed batch; no partial result is returned.
+
+    Rationale: ADR-0001, ADR-0019.
+    """
+
+    vectors: tuple[tuple[float, ...], ...]
+    outcome: Outcome
+    stamp: str = ""
+    reason: str | None = None
+    input_tokens: int | None = None
+    retries: int = 0
+    usage_v2: Usage | None = None
+    cost: Cost | None = None
+    answered: Answered | None = None
+    failure: Failure | None = None
+
+
+@dataclass(frozen=True)
+class Reranked(_Outcomed):
     """What a `Reranker` returns: one score per document, in input order.
 
     Attributes:
         scores: One score per document; `()` exactly when `outcome != "ok"`.
         outcome: How the call ended.
         model: The model that scored.
-        reason: One line naming the failure; None on `ok`.
+        reason: One line naming the failure; None on `ok`. Derived from `failure` when left None.
+        answered: Who scored.
+        failure: The failure's kind and detail; None exactly when `outcome == "ok"`.
 
     Invariants:
         - Scores are model-relative and order-only (one model emits raw logits, another 0..1).
@@ -311,11 +368,8 @@ class Reranked:
     outcome: Outcome
     model: str = ""
     reason: str | None = None
-
-    @property
-    def ok(self) -> bool:
-        """True when `outcome == "ok"`."""
-        return self.outcome == "ok"
+    answered: Answered | None = None
+    failure: Failure | None = None
 
 
 @dataclass(frozen=True)

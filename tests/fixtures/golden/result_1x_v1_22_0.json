@@ -1,0 +1,273 @@
+{
+  "custom_capture_500": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "unavailable",
+    "problems": [],
+    "reason": "ModelServerError: status 500",
+    "retries": null,
+    "sources": null,
+    "usage": null,
+    "value": null
+  },
+  "custom_capture_invalid": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "invalid",
+    "problems": [],
+    "reason": "UnexpectedModelBehavior: Exceeded maximum output retries (1)",
+    "retries": null,
+    "sources": null,
+    "usage": null,
+    "value": null
+  },
+  "custom_capture_no_usage": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": null,
+    "value": "plain"
+  },
+  "custom_capture_usage": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": {
+      "input": 11,
+      "output": 7
+    },
+    "value": "plain"
+  },
+  "function_ok": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": {
+      "input": 51,
+      "output": 1
+    },
+    "value": "prose"
+  },
+  "gated_model_for": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "gated",
+    "problems": [],
+    "reason": "category_disabled: switched off",
+    "retries": null,
+    "sources": null,
+    "usage": null,
+    "value": null
+  },
+  "model_for_ok": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": {
+      "input": 51,
+      "output": 1
+    },
+    "value": "prose"
+  },
+  "stub_embed_fail": {
+    "input_tokens": null,
+    "outcome": "unavailable",
+    "reason": "stub unavailable"
+  },
+  "stub_ok": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": null,
+    "value": "x"
+  },
+  "stub_raises": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "unavailable",
+    "problems": [],
+    "reason": "ZeroDivisionError: division by zero",
+    "retries": null,
+    "sources": null,
+    "usage": null,
+    "value": null
+  },
+  "stub_rerank_fail": {
+    "model": "stub-reranker",
+    "outcome": "request_fault",
+    "reason": "stub request_fault"
+  },
+  "wire_400": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "request_fault",
+    "problems": [],
+    "reason": "ModelRequestRejectedError: status 400",
+    "retries": null,
+    "sources": null,
+    "usage": {
+      "input": null,
+      "output": null
+    },
+    "value": null
+  },
+  "wire_413": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "request_fault",
+    "problems": [],
+    "reason": "ModelHTTPError: status 413",
+    "retries": null,
+    "sources": null,
+    "usage": {
+      "input": null,
+      "output": null
+    },
+    "value": null
+  },
+  "wire_429": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "unavailable",
+    "problems": [],
+    "reason": "ModelRateLimitError: status 429",
+    "retries": null,
+    "sources": null,
+    "usage": {
+      "input": null,
+      "output": null
+    },
+    "value": null
+  },
+  "wire_500": {
+    "finish_reason": null,
+    "model": "small-chat",
+    "outcome": "unavailable",
+    "problems": [],
+    "reason": "ModelServerError: status 500",
+    "retries": null,
+    "sources": null,
+    "usage": {
+      "input": null,
+      "output": null
+    },
+    "value": null
+  },
+  "wire_invalid": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "invalid",
+    "problems": [],
+    "reason": "UnexpectedModelBehavior: Exceeded maximum output retries (1)",
+    "retries": null,
+    "sources": null,
+    "usage": {
+      "input": 11,
+      "output": 7
+    },
+    "value": null
+  },
+  "wire_kept_problems": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [
+      "always"
+    ],
+    "reason": null,
+    "retries": 1,
+    "sources": null,
+    "usage": {
+      "input": 22,
+      "output": 14
+    },
+    "value": {
+      "confidence": 0.5,
+      "headline": ""
+    }
+  },
+  "wire_length_unparsed": {
+    "finish_reason": "length",
+    "model": "small-chat",
+    "outcome": "truncated",
+    "problems": [],
+    "reason": "finish_reason=length: the token ceiling cut the reply",
+    "retries": null,
+    "sources": null,
+    "usage": {
+      "input": 11,
+      "output": 7
+    },
+    "value": null
+  },
+  "wire_ok": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": [
+      "https://a.example/1"
+    ],
+    "usage": {
+      "input": 11,
+      "output": 7
+    },
+    "value": {
+      "confidence": 0.5,
+      "headline": "a"
+    }
+  },
+  "wire_reask": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 1,
+    "sources": null,
+    "usage": {
+      "input": 22,
+      "output": 14
+    },
+    "value": {
+      "confidence": 0.5,
+      "headline": "b"
+    }
+  },
+  "wire_str_no_usage": {
+    "finish_reason": "stop",
+    "model": "small-chat",
+    "outcome": "ok",
+    "problems": [],
+    "reason": null,
+    "retries": 0,
+    "sources": null,
+    "usage": {
+      "input": null,
+      "output": null
+    },
+    "value": "plain"
+  }
+}

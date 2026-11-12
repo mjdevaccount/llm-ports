@@ -7,13 +7,13 @@ from __future__ import annotations
 import json
 
 from pydantic import BaseModel
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
 from llm_ports.adapters.pydantic_ai import PydanticAIGenerator
 from llm_ports.adapters.pydantic_ai.replay import NotRecorded, Recorder, Recording, key, recorder, recording, replay
 from llm_ports.ports import GenRequest
 from llm_ports.prompts import sha
+from tests.adapters.pydantic_ai._scripted import scripted_model as _live
 
 
 class _Note(BaseModel):
@@ -21,16 +21,6 @@ class _Note(BaseModel):
 
 
 REQ = GenRequest(model="small-chat", prompt="narrate", output_retries=1)
-
-
-def _live(*texts: str) -> FunctionModel:
-    calls: list[int] = []
-
-    def fn(_m: list[ModelMessage], _i: AgentInfo) -> ModelResponse:
-        calls.append(1)
-        return ModelResponse(parts=[TextPart(texts[min(len(calls) - 1, len(texts) - 1)])])
-
-    return FunctionModel(fn)
 
 
 def _not_empty(n: _Note) -> list[str]:
