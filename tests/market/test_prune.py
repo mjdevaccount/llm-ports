@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import Any
 
 from llm_ports.market import ActionRegistry, ActionSpec, MirrorRow, PrunableMirror, prune_mirror, sync_all
 from tests.market._events import CACHE, Events
@@ -114,10 +113,27 @@ async def test_a_failed_retire_is_reported_and_the_rest_still_prune() -> None:
     assert [e[1] for e in events.seen] == ["market_prune_failed", "market_action_pruned"]
 
 
-async def test_without_a_hook_the_prune_logs_each_row(caplog: Any) -> None:
-    caplog.set_level(logging.INFO, logger="llm_ports.market")
-    await prune_mirror(_registry("live"), Mirror([MirrorRow("f.gone", True)]))
-    assert "market_action_pruned" in caplog.text and "f.gone" in caplog.text
+class _Records(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+async def test_without_a_hook_the_prune_logs_each_row() -> None:
+    # A handler on the logger itself: another test may have turned propagation (and caplog) off.
+    log, records = logging.getLogger("llm_ports.market"), _Records()
+    was = log.level
+    log.addHandler(records)
+    log.setLevel(logging.INFO)
+    try:
+        await prune_mirror(_registry("live"), Mirror([MirrorRow("f.gone", True)]))
+    finally:
+        log.removeHandler(records)
+        log.setLevel(was)
+    assert any("market_action_pruned" in line and "f.gone" in line for line in records.lines)
 
 
 async def test_sync_then_prune_leaves_exactly_the_declared_actions() -> None:
