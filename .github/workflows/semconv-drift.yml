@@ -1,0 +1,64 @@
+# The outside witness for the pinned OpenTelemetry GenAI names (ADR-0025).
+#
+# `observability/semconv.py` pins every attribute and metric name to one commit of the GenAI
+# conventions; the unit tests test those constants, so an upstream rename passes them. Weekly,
+# `tools/semconv_drift.py` diffs the pinned names against the convention's HEAD:
+#   exit 0  no drift: the job is green.
+#   exit 1  drift: the job opens (or comments on) one issue titled "semconv drift" and goes red.
+#   exit 2  could not look: the job goes red with no issue; never read as "no drift".
+# mcp/scripts/ci-schedule-audit.py watches that the weekly run keeps happening.
+name: semconv-drift
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  drift:
+    name: drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write # open the drift issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+      - run: uv sync --no-dev
+      - name: diff the pinned names against HEAD
+        id: diff
+        run: |
+          set +e
+          uv run --no-sync python tools/semconv_drift.py > drift.txt
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          cat drift.txt
+          if [ "$rc" -eq 2 ]; then exit 2; fi
+          exit 0
+      - name: open or update the drift issue
+        if: steps.diff.outputs.rc == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "The pinned GenAI names in \`src/llm_ports/observability/semconv.py\` drifted from the convention's HEAD:"
+            echo
+            while read -r name; do echo "- \`$name\`"; done < drift.txt
+            echo
+            echo "Re-pin: check each name against the registry at HEAD, update \`semconv.py\` and \`SEMCONV_SOURCE\`, and name the rename in the changelog."
+          } > body.md
+          num=$(gh issue list --state open --search "semconv drift in:title" --json number --jq '.[0].number')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file body.md
+          else
+            gh issue create --title "semconv drift" --body-file body.md
+          fi
+          exit 1

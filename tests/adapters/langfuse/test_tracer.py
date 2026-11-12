@@ -205,3 +205,41 @@ def test_the_default_event_sink_is_the_stdlib_logger(caplog) -> None:
             name="n", model="m", provider="p", input="i", metadata={}, session_id=None, prompt_name=None
         )
     assert "open_failed" in caplog.text
+
+
+# -- 1.24: the result contract reaches the trace store ---------------------------------------------
+
+
+def test_cost_details_are_sent_only_when_the_cost_is_known(rig) -> None:
+    # MUST FIRE both ways: a known cost is the total; an unknown one sends nothing, so the store's
+    # own model pricing may apply, and `cost_source` says which happened.
+    from decimal import Decimal
+
+    _start(rig.client).end(output="o", cost=ports.Cost(Decimal("0.0125"), "price_table"))
+    _start(rig.client).end(output="o", cost=ports.Cost(None, "unknown", reason="unknown_model"))
+    known, unknown = (dict(s.attributes) for s in rig.spans())
+    assert json.loads(known[OBS + "cost_details"]) == {"total": 0.0125}
+    assert json.loads(known[OBS + "metadata.cost_source"]) == "price_table"
+    assert OBS + "cost_details" not in unknown
+    assert json.loads(unknown[OBS + "metadata.cost_source"]) == "unknown"
+
+
+def test_usage_v2_alone_sends_its_measured_sides_and_never_a_zero_for_the_other(rig) -> None:
+    _start(rig.client).end(output="o", usage_v2=ports.Usage(input=9, output=None, requests=1))
+    assert json.loads(rig.attrs()[OBS + "usage_details"]) == {"input": 9}
+
+
+def test_a_cancelled_end_is_a_warning_with_its_status(rig) -> None:
+    _start(rig.client).end(level="CANCELLED", status_message="CancelledError")
+    a = rig.attrs()
+    assert a[OBS + "level"] == "WARNING" and a[OBS + "status_message"] == "CancelledError"
+
+
+async def test_observe_cancelled_over_the_real_sdk_ends_once_as_a_warning(rig) -> None:
+    import asyncio
+
+    with pytest.raises(asyncio.CancelledError):
+        async with observe(tp.LangfuseTracer(rig.client), name="c", model="m", provider="p", input="i"):
+            raise asyncio.CancelledError
+    (span,) = rig.spans()
+    assert dict(span.attributes)[OBS + "level"] == "WARNING"

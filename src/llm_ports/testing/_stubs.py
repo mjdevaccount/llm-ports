@@ -1,8 +1,7 @@
 """Test doubles for the library's ports, so a consumer's tests do not hand-roll their own.
 
-- `StubGenerator` fakes `Generator` with a reply function and records every request; a reply
-  function returns `Reply.failed(kind, **detail)` (or `ports.failure(...)`) to fail a call with
-  that kind.
+- `StubGenerator` (in `testing._generator`) fakes `Generator` from a reply function, a constant
+  or a script, and runs the re-ask loop.
 - `RecordingTracer` fakes `Tracer` and records every generation, its end and its scores.
 - `StubEmbedder` fakes `Embedder` with deterministic unit vectors hashed from each text, and
   records every call.
@@ -29,9 +28,9 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Unpack
 
 from llm_ports.ports import (
     Answered,
@@ -39,50 +38,14 @@ from llm_ports.ports import (
     CitedAnswer,
     Embedded,
     EmbedInput,
+    EndFields,
     Failure,
     FailureKind,
-    Generated,
-    GenRequest,
     Outcome,
     Prompt,
     Reranked,
     failure,
 )
-from llm_ports.ports.outcomes import failure_reason
-
-
-class _ReplyNamespace(type(Protocol)):  # type: ignore[misc]  # Protocol's metaclass, named at runtime
-    """Gives `Reply` a constructor that is not a protocol member, so any plain function is a `Reply`."""
-
-    def failed(cls, kind: FailureKind, **detail: Any) -> Failure:
-        """Return the `Failure` a reply function returns to fail its call with `kind`.
-
-        Pure. `detail` is `ports.failure`'s keyword arguments (`status`, `retry_after_s`, ...).
-
-        Raises:
-            ValueError: `kind` is not a `FailureKind`.
-        """
-        return failure(kind, **detail)
-
-
-class Reply(Protocol, metaclass=_ReplyNamespace):
-    """A `StubGenerator` reply function: `(request, output type)` to a value, `Generated` or `Failure`.
-
-    Any function of that shape is a `Reply`. `Reply.failed(kind, **detail)` builds the `Failure`
-    one returns to fail its call with that kind.
-
-    Example:
-        gen = StubGenerator(lambda req, out: Reply.failed("rate_limited", retry_after_s=2.0))
-    """
-
-    def __call__(self, req: GenRequest, output: type[Any], /) -> Any:
-        """Answer `req` for `output`."""
-        ...
-
-
-#: The model id a `StubGenerator` reports as having answered unless told otherwise; never the
-#: request's id, since a real result's `answered.model` is what the response said.
-STUB_MODEL = "stub-generator"
 
 #: The kind a stub fails with for a configured outcome: one representative per outcome.
 _KIND_FOR: Mapping[Outcome, FailureKind] = {
@@ -99,58 +62,6 @@ def _stub_failure(outcome: Outcome) -> Failure:
     return failure(_KIND_FOR.get(outcome, "internal"), reason=f"stub {outcome}")
 
 
-class StubGenerator:
-    """A `Generator` that answers from a reply function and records every request.
-
-    The reply function's result maps onto a `Generated`: a plain value is wrapped as `ok`, a
-    `Generated` is returned as-is (any outcome), a `Failure` fails the call with that kind and
-    its outcome, and a raised exception becomes `unavailable` (kind `server`).
-
-    Args:
-        reply: A function of `(request, output type)`, or a non-callable value returned for every
-            request.
-        model: The model id the stub reports in `answered.model`.
-
-    Attributes:
-        requests: Every `GenRequest` received, in call order.
-
-    Invariants:
-        - `generate` never raises.
-        - `validate` runs on an `ok` value and its problems are kept on the result; there is no
-          re-ask.
-    """
-
-    def __init__(self, reply: Reply | Any, *, model: str = STUB_MODEL) -> None:
-        self._reply: Reply = reply if callable(reply) else (lambda _req, _out: reply)
-        self._model = model
-        self.requests: list[GenRequest] = []
-
-    async def generate[T](
-        self,
-        req: GenRequest,
-        output: type[T],
-        *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
-    ) -> Generated[T]:
-        """Return the reply function's answer to `req` as a `Generated`; `retry_message` is unused."""
-        del retry_message
-        self.requests.append(req)
-        answered = Answered(requested=req.model, model=self._model)
-        try:
-            got = self._reply(req, output)
-        except Exception as exc:
-            got = failure("server", reason=failure_reason(exc))
-        if isinstance(got, Generated):
-            return got
-        if isinstance(got, Failure):
-            return Generated(
-                value=None, outcome=got.outcome, model=req.model, retries=None, answered=answered, failure=got
-            )
-        problems = tuple(validate(got)) if validate is not None else ()
-        return Generated(value=got, outcome="ok", model=req.model, problems=problems, answered=answered)
-
-
 @dataclass
 class RecordedGeneration:
     """One `start_generation` call: what it was opened with, how it ended and how it was scored.
@@ -160,30 +71,29 @@ class RecordedGeneration:
         ended: The keyword arguments of `end`, or None while the generation is open.
         scores: Every `(name, value, comment)` passed to `score`, in call order.
         score_metadata: The `metadata` of each of those scores, in the same order (None where none).
+        ends: How many times `end` was called (a generation is ended exactly once).
     """
 
     opened: dict[str, Any]
     ended: dict[str, Any] | None = None
+    ends: int = 0
     scores: list[tuple[str, float, str | None]] = field(default_factory=list)
     score_metadata: list[Mapping[str, Any] | None] = field(default_factory=list)
 
-    def end(
-        self,
-        *,
-        output: Any = None,
-        usage: Mapping[str, int | None] | None = None,
-        level: str = "DEFAULT",
-        status_message: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> None:
-        """Record how the generation ended, replacing any earlier end."""
+    def end(self, **fields: Unpack[EndFields]) -> None:
+        """Record how the generation ended, replacing any earlier end, and count the ends.
+
+        `ended` holds the 1.x five keys always and each 1.24 keyword only when it carried a value.
+        """
+        self.ends += 1
         self.ended = {
-            "output": output,
-            "usage": usage,
-            "level": level,
-            "status_message": status_message,
-            "metadata": metadata,
+            "output": fields.get("output"),
+            "usage": fields.get("usage"),
+            "level": fields.get("level", "DEFAULT"),
+            "status_message": fields.get("status_message"),
+            "metadata": fields.get("metadata"),
         }
+        self.ended.update({k: v for k, v in fields.items() if k not in self.ended and v is not None})
 
     def score(
         self, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None
@@ -292,10 +202,13 @@ class StubReranker:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
     async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
-        """Score each document by word overlap with `query`, or fail with the configured outcome."""
+        """Score each document by word overlap with `query`, or fail with the configured outcome.
+
+        No documents is `ok` with no scores even when the stub is set to fail, as the port says.
+        """
         self.calls.append((query, tuple(documents)))
         answered = Answered(requested=self.model, model=self.model)
-        if self._fail:
+        if self._fail and documents:  # no documents is `ok` with no scores (the port's contract)
             return Reranked(
                 scores=(), outcome=self._fail, model=self.model, answered=answered, failure=_stub_failure(self._fail)
             )
@@ -371,14 +284,11 @@ _DIGITS = re.compile(r"\d+(?:\.\d+)?")
 
 
 __all__ = [
-    "STUB_MODEL",
     "RecordedGeneration",
     "RecordingTracer",
-    "Reply",
     "StubCiter",
     "StubDetector",
     "StubEmbedder",
-    "StubGenerator",
     "StubPromptSource",
     "StubReranker",
 ]

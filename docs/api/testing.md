@@ -8,6 +8,12 @@
     options:
       show_root_heading: false
 
+## `llm_ports.testing.pytest_plugin`
+
+::: llm_ports.testing.pytest_plugin
+    options:
+      show_root_heading: false
+
 ## `llm_ports.testing.langfuse`
 
 ::: llm_ports.testing.langfuse
