@@ -36,6 +36,10 @@ Issues = "https://github.com/mjdevaccount/llm-ports/issues"
 Changelog = "https://github.com/mjdevaccount/llm-ports/blob/main/CHANGELOG.md"
 Decisions = "https://github.com/mjdevaccount/llm-ports/tree/main/docs/adr"
 
+# The pytest plugin (live requests blocked, the kit's fixtures); loaded by pytest only.
+[project.entry-points.pytest11]
+llm_ports = "llm_ports.testing.pytest_plugin"
+
 [project.optional-dependencies]
 # `adapters.pydantic_ai`: the Generator, the Embedder, output schemas and record/replay. httpx2 is
 # named, not inherited: the adapter builds its own `httpx2.AsyncClient` (ADR-0009); its floor is
@@ -331,6 +335,8 @@ ignore_names = [
     "confidence", "conviction", "entry_low", "hedge", "stop", "summary", "thesis", "ticker", "tickers",
     # a Protocol's call signature; a result field the retry layer fills; a function only mypy reads
     "__call__", "waited_s", "exhaustive",
+    # pytest reads it by name (the root conftest turns on `pytester`)
+    "pytest_plugins",
 ]
 
 [tool.coverage.run]

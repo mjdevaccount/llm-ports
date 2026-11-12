@@ -1,27 +1,31 @@
-"""Test doubles for every port, and conformance suites for backends.
+"""Test doubles for every port, a fake clock, and conformance suites.
 
-`testing.conformance` (no extra) checks a `RunLedger`, `ExampleStore` or `ModelRegistry` backend
-against its port's contract; `testing.langfuse` (the `langfuse` extra) is imported by path.
+`testing.conformance` (no extra) checks any implementation of a port against its contract;
+`testing.pytest_plugin` is the pytest plugin (loaded by pytest's entry point, never by
+`import llm_ports`); `testing.langfuse` (the `langfuse` extra) is imported by path.
 """
 
+from llm_ports.testing._clock import FakeClock
+from llm_ports.testing._generator import STUB_MODEL, Reply, ScriptedReply, StubGenerator
 from llm_ports.testing._stubs import (
-    STUB_MODEL,
     RecordedGeneration,
     RecordingTracer,
-    Reply,
     StubCiter,
     StubDetector,
     StubEmbedder,
-    StubGenerator,
     StubPromptSource,
     StubReranker,
 )
+from llm_ports.testing._violation import ContractViolation
 
 __all__ = [
     "STUB_MODEL",
+    "ContractViolation",
+    "FakeClock",
     "RecordedGeneration",
     "RecordingTracer",
     "Reply",
+    "ScriptedReply",
     "StubCiter",
     "StubDetector",
     "StubEmbedder",

@@ -80,8 +80,8 @@ def test_a_live_span_is_named_operation_model_and_carries_the_consumer_dimension
         rec.set_usage(11, 7)
     (sp,) = tracer.spans
     assert tracer.names == ["chat m"]
+    assert ga.SYSTEM not in sp.attrs  # removed from the conventions at v1.37.0; no longer emitted
     assert sp.attrs == {
-        ga.SYSTEM: "p",
         ga.PROVIDER_NAME: "p",
         ga.OPERATION: "chat",
         ga.REQUEST_MODEL: "m",

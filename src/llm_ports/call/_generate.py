@@ -54,7 +54,15 @@ from llm_ports.call._fallback import Route, chain_of, timed_out
 from llm_ports.call.graders import CallGrader, CallScore, graders_for_inputs, score_all
 from llm_ports.call.models import missing, needs
 from llm_ports.call.roles import Role
-from llm_ports.observability import EventHook, NoopTracer, Observation, llm_feature, log_events, observe
+from llm_ports.observability import (
+    EventHook,
+    NoopTracer,
+    Observation,
+    PortObservation,
+    llm_feature,
+    log_events,
+    observe,
+)
 from llm_ports.ports import Deadline, Generated, Generator, GenRequest, Tracer
 from llm_ports.ports.outcomes import REASON_MAX, GenerationFailed
 
@@ -102,21 +110,28 @@ class Hooks:
     generator_for: Callable[[str], Generator] | None = None
 
 
-def tracer_trace(tracer: Tracer, *, provider: str = "openai") -> TraceHook:
-    """Return a `trace` hook over any `Tracer` port adapter (Langfuse, OTel, a test recorder).
+def tracer_trace(tracer: Tracer, *, provider: str | None = None) -> TraceHook:
+    """Return a `trace` hook over any `Tracer` port adapter (Langfuse, OTel, `TeeTracer`, a recorder).
 
     The hook opens one generation per call (`observability.observe`), named by the role's category,
-    and ends it in error on a non-`ok` outcome.
+    and ends it in error on a non-`ok` outcome. The end carries the call's result contract (usage,
+    cost, finish, who answered, failure) through the one end payload `observability.record` uses.
+
+    Args:
+        tracer: The sink.
+        provider: The provider named on the generation; None takes the tier's provider from a
+            schema 2 table, else `"unknown"` (1.x defaulted to `"openai"`).
     """
 
     def trace(
         role: Role, req: GenRequest, prompt: str, meta: Mapping[str, Any]
     ) -> AbstractAsyncContextManager[Observation]:
+        info = role.resolved_tier.info
         return observe(
             tracer,
             name=role.category,
             model=req.model,
-            provider=provider,
+            provider=provider or (info.provider if info is not None else None) or "unknown",
             input=prompt,
             metadata=meta,
             prompt_name=role.pack,
@@ -309,7 +324,14 @@ def _result_metadata(res: Generated[Any]) -> dict[str, Any]:
 
 
 def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T]:
-    """Write the reply on its observation and stamp the observation on the reply."""
+    """Write the reply on its observation and stamp the observation on the reply.
+
+    The tier answering is stamped on `answered` here, before the observation ends, so the trace
+    names the tier (the fallback loop stamps the same name later).
+    """
+    who = res.answered
+    if who is not None and who.tier is None:
+        res = replace(res, answered=replace(who, tier=role.resolved_tier.name))
     obs.update(
         output=_trace_output(res.value),
         usage_details=dict(res.usage or {}),
@@ -322,6 +344,8 @@ def _observed[T](role: Role, res: Generated[T], obs: Observation) -> Generated[T
             **_result_metadata(res),
         },
     )
+    if isinstance(obs, PortObservation):
+        obs.attach(res)
     return replace(res, stamp={**res.stamp, "generation": obs})
 
 

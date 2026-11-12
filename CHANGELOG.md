@@ -24,6 +24,26 @@ All notable changes to this project are documented here. The format is based on
   hold (an unknown kind such as `quota`, a missing `wait_max_s`, a negative wait) is
   `TableInvalid` naming its path. 1.23.0 stored any table.
 
+- **`gen_ai.system` is no longer emitted** by `gen_ai_span` / `record_gen_ai` (the GenAI
+  conventions removed it at v1.37.0 for `gen_ai.provider.name`, which is still set). `SYSTEM`
+  stays exported; nothing sets it (ADR-0025).
+- **A cancelled or interrupted call now ends its generation**, once, at level `CANCELLED`
+  (Langfuse: `WARNING`), with its latency; the `CancelledError` / `KeyboardInterrupt` still
+  propagates. 1.x left the generation open.
+- **`tracer_trace(provider=)` no longer defaults to `"openai"`**: None takes the tier's provider
+  from a schema 2 table, else `"unknown"`.
+- **`StubGenerator` runs the re-ask loop**: problems from `validate` (or `Reply.problems`) earn
+  `req.output_retries` re-asks and `retries` counts them (1.x always reported 0); a scripted
+  `Failure` reports the attempt number as `retries`, not None. A `StubReranker` set to fail
+  still answers no documents with `ok`, as the port says.
+- **The pytest plugin blocks live requests in any test session where `llm-ports` is
+  installed** (entry point `pytest11` `llm_ports`): a request to a non-loopback host over a real
+  `httpx2` / `httpx` transport raises `LiveRequestBlocked`, and pydantic-ai's
+  `ALLOW_MODEL_REQUESTS` is False. Opt in per test with `@pytest.mark.llm_live` plus
+  `--llm-live`; turn the plugin off with `-p no:llm_ports`.
+- The observation ContextVar's name is `"llm_feature"` (was `"langfuse_feature"`); the accessor
+  functions are unchanged.
+
 ### Added
 
 - **Wire policy** (ADR-0021): `WirePolicy` (kind to `RetryRule`, plus `max_total_attempts`) and
@@ -59,6 +79,37 @@ All notable changes to this project are documented here. The format is based on
   `OpenAICompatibleFactory` passes them, with `on_event`, to every generator and embedder it
   builds.
 - `RetryPolicy.wire()`: the 1.x policy as a `WirePolicy`.
+
+- **`OtelTracer`** (`adapters.otel`, extra `otel`, ADR-0025): the `Tracer` port over
+  OpenTelemetry. A CLIENT span `"{operation} {model}"` per generation with the result's usage,
+  cost, finish, who answered and `error.type = failure.kind`; given a `meter_provider`, the
+  `gen_ai.client.inference.duration` histogram and one counter per measured token kind. Never a
+  body, never an env read.
+- **`observability.semconv`**: every GenAI attribute and metric name, pinned to
+  `semantic-conventions-genai@e6658f1`; `tools/semconv_drift.py` and the weekly
+  `semconv-drift.yml` job diff them against HEAD (an issue on drift; exit 2 when it cannot look).
+- **`TeeTracer`**: one `Tracer` over several sinks, each isolated; `stats()` per sink
+  (started, ended, failed) and a throttled `tracer_sink_failed` event.
+- **`observability.record`**: one call records a finished outside call with the same end
+  payload `generate` sends.
+- **`Generation.end` gains keyword-only `usage_v2`, `cost`, `finish`, `answered`, `failure`**,
+  passed only to an `end` that accepts them, so a 1.x `Generation` keeps working. The Langfuse
+  adapter sends `cost_details` only when the cost is known (and `metadata.cost_source`).
+- **Testing kit**: `Reply.ok` / `Reply.problems` (a `ScriptedReply`), a `StubGenerator` SCRIPT
+  (one reply per request; running out or leaving replies is a `ContractViolation`), `FakeClock`,
+  and the pytest plugin's fixtures `stub_generator`, `recording_tracer`, `fake_clock`,
+  `llm_replay`.
+- **Conformance for every port** (`testing.conformance`, now a package): `check_generator`
+  (driven by a script; the stub and `PydanticAIGenerator` both pass), `check_embedder`,
+  `check_reranker`, `check_tracer`, `check_generation`, `check_pricer`, `check_probe`,
+  `check_retriever`, `check_citer`, `check_grounder`, `check_evaluator`, `check_prompt_source`,
+  `check_judge`, `check_gateway_reader`, `check_limiter`; `CHECKS` maps every runtime-checkable
+  port to its check (a test proves it total).
+- **Replay key v2** (`adapters.pydantic_ai.replay`): `key_v2` covers the model, system prompt and
+  instructions, the whole message list, the settings and the output schema; `Recorder(version=2)`
+  writes `{"version": 2, "entries": ...}` and refuses (`SecretInCassette`) a reply containing a
+  bound secret; `replay` reads v1 and v2, a miss names the parts that differ, and
+  `ReplayModel.unplayed()` names the entries a run never asked for. A v1 cassette still replays.
 
 ### Changed
 

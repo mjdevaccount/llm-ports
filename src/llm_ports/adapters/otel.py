@@ -1,5 +1,9 @@
 """OpenTelemetry GenAI spans for model calls (extra `[otel]`).
 
+`OtelTracer` is the `Tracer` port over OpenTelemetry: compose it like any other sink
+(`TeeTracer(LangfuseTracer(client), OtelTracer())`) and every call the library makes is a span.
+The two helpers below are for a call the library does not make.
+
 Example:
     with gen_ai_span(tracer, operation="chat", model=m, provider="openai") as rec:
         reply = await client.call(...)
@@ -21,15 +25,15 @@ prefix, outside the reserved `gen_ai.*` namespace.
   the caller's block propagates, and the SDK records it on the span.
 - `record_gen_ai` records a call after it is over, for a call that learns its latency and usage
   only then. The span is back-dated by the measured `latency_ms`, so its duration is the call's.
-- `gen_ai.system` (deprecated in the conventions) is emitted beside `gen_ai.provider.name`, which
-  replaced it, so a query written against either keeps working.
+- `gen_ai.system` is no longer emitted (1.24): the conventions removed it in v1.37.0 for
+  `gen_ai.provider.name`. `SYSTEM` stays exported for 1.x imports; nothing sets it.
 
 Invariants:
     - Prompt and completion bodies are never carried, and no switch turns them on.
     - None is not zero: a provider that reported neither count gets the `unmeasured_attr` flag
       and no token attributes; a reported zero stays zero.
 
-Rationale: ADR-0007.
+Rationale: ADR-0007, ADR-0025.
 """
 
 from __future__ import annotations
@@ -40,12 +44,14 @@ from collections.abc import Iterator, Mapping
 from typing import Any
 
 from llm_ports._extras import extra
+from llm_ports.adapters._otel_tracer import DEFAULT_OPERATION, OtelGeneration, OtelTracer
 
 with extra("otel"):
     from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as ga
     from opentelemetry.trace import Status, StatusCode
 
 
+#: Deprecated: removed from the conventions at v1.37.0 and no longer emitted; kept for 1.x imports.
 SYSTEM = ga.GEN_AI_SYSTEM
 PROVIDER_NAME = ga.GEN_AI_PROVIDER_NAME
 OPERATION = ga.GEN_AI_OPERATION_NAME
@@ -93,7 +99,7 @@ def attributes_for(
     *, operation: str, model: str, provider: str, attributes: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
     """Return the convention attributes plus the caller's own, with None values dropped. Pure."""
-    out: dict[str, Any] = {SYSTEM: provider, PROVIDER_NAME: provider, OPERATION: operation, REQUEST_MODEL: model}
+    out: dict[str, Any] = {PROVIDER_NAME: provider, OPERATION: operation, REQUEST_MODEL: model}
     out.update({k: v for k, v in (attributes or {}).items() if v is not None})
     return out
 
@@ -169,6 +175,7 @@ def record_gen_ai(
 
 
 __all__ = [
+    "DEFAULT_OPERATION",
     "ERROR_MAX",
     "INPUT_TOKENS",
     "OPERATION",
@@ -178,6 +185,8 @@ __all__ = [
     "SYSTEM",
     "UNMEASURED",
     "GenAiRecorder",
+    "OtelGeneration",
+    "OtelTracer",
     "attributes_for",
     "gen_ai_span",
     "record_gen_ai",

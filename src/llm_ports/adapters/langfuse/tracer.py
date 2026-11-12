@@ -45,7 +45,7 @@ from typing import Any
 
 from llm_ports._extras import extra
 from llm_ports.observability import EventHook, NoopGeneration, log_events
-from llm_ports.ports import Generation
+from llm_ports.ports import Answered, Cost, Failure, Finish, Generation, Usage
 
 with extra("langfuse"):
     from langfuse import propagate_attributes
@@ -56,6 +56,8 @@ DEFAULT_PROMPT_CACHE_TTL_S = 300
 DEFAULT_WARN_HOLD_S = 300
 EVENT = "langfuse_tracer"
 _ERR_CAP = 200
+# The port's levels Langfuse has a level for; DEFAULT is Langfuse's own default and is not sent.
+_LEVELS = {"ERROR": "ERROR", "CANCELLED": "WARNING"}
 
 
 def usage_details(prompt: int | None, completion: int | None) -> dict[str, int] | None:
@@ -96,22 +98,39 @@ class LangfuseGeneration:
         level: str = "DEFAULT",
         status_message: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        usage_v2: Usage | None = None,
+        cost: Cost | None = None,
+        finish: Finish | None = None,
+        answered: Answered | None = None,
+        failure: Failure | None = None,
     ) -> None:
-        """Close the generation with its output, usage and metadata; never raises.
+        """Close the generation with its output, usage, cost and metadata; never raises.
 
-        Usage with neither count reported sends no usage block. Only `level="ERROR"` sends a level,
-        together with `status_message`.
+        Usage with neither count reported sends no usage block (and an unreported side is
+        omitted, never 0). `cost_details` is sent only when the call's cost is known in dollars;
+        otherwise Langfuse's own model pricing may apply, and `metadata.cost_source` says which.
+        `level="ERROR"` sends ERROR and a cancelled call (`"CANCELLED"`) sends WARNING, each with
+        `status_message`. `finish`, `answered` and `failure` already reach the sink as metadata
+        on the library's own call path; they are accepted here for the port's signature.
         """
+        del finish, answered, failure  # carried in the metadata by `generate`
         kw: dict[str, Any] = {}
         if output is not None:
             kw["output"] = output
+        if usage is None and usage_v2 is not None:
+            usage = {"input": usage_v2.input, "output": usage_v2.output}
         u = usage_details(usage.get("input"), usage.get("output")) if usage is not None else None
         if u is not None:
             kw["usage_details"] = u
-        if metadata is not None:
-            kw["metadata"] = metadata
-        if level == "ERROR":
-            kw["level"] = "ERROR"
+        meta = dict(metadata) if metadata is not None else None
+        if cost is not None:
+            meta = {**(meta or {}), "cost_source": cost.source}
+            if cost.usd is not None:
+                kw["cost_details"] = {"total": float(cost.usd)}
+        if meta is not None:
+            kw["metadata"] = meta
+        if level in _LEVELS:
+            kw["level"] = _LEVELS[level]
             kw["status_message"] = status_message
         try:
             if kw:
