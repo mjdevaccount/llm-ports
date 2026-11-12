@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +28,7 @@ from pydantic import TypeAdapter, ValidationError
 from llm_ports.call.context import cut_middle
 from llm_ports.ports import (
     Answered,
+    Chat,
     ChatRequest,
     Failure,
     FailureKind,
@@ -37,6 +38,7 @@ from llm_ports.ports import (
     Message,
     Part,
     ReasoningDelta,
+    RetryMessage,
     StepFinished,
     StreamEvent,
     TextDelta,
@@ -45,6 +47,7 @@ from llm_ports.ports import (
     ToolCallStarted,
     ToolOutput,
     Usage,
+    Validator,
     failure,
 )
 from llm_ports.ports.outcomes import failure_reason
@@ -140,7 +143,7 @@ async def run_tool(tool: Tool, args: Mapping[str, Any], budget: int | None) -> t
     )
 
 
-class StubChat:
+class StubChat(Chat):
     """A `Chat` with no wire; the module docstring states the contract.
 
     Args:
@@ -175,29 +178,13 @@ class StubChat:
         self._played += 1
         return self._script[self._played - 1]
 
-    async def chat[T](
-        self,
-        req: ChatRequest,
-        output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
-        *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
-    ) -> Generated[T]:
-        """Run `stream` to its end and return `Finished.result`."""
-        result: Generated[T] | None = None
-        async for ev in self.stream(req, output, validate=validate, retry_message=retry_message):
-            if isinstance(ev, Finished):
-                result = ev.result
-        assert result is not None  # stream always yields Finished
-        return result
-
     async def stream[T](
         self,
         req: ChatRequest,
         output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> AsyncGenerator[StreamEvent]:
         """Play the script for `req`, running its tools; `retry_message` is unused (no re-ask)."""
         del retry_message
@@ -270,7 +257,7 @@ class StubChat:
         self,
         req: ChatRequest,
         output: type[T],
-        validate: Callable[[T], Sequence[Any]] | None,
+        validate: Validator[T] | None,
         text: str,
         made: list[Message],
         total: Usage | None,

@@ -45,9 +45,9 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, cast, runtime_checkable
 
-from llm_ports.ports._chat import ChatRequest, Message, StreamEvent, Tool
+from llm_ports.ports._chat import ChatRequest, Finished, Message, StreamEvent, Tool
 from llm_ports.ports._failure import Failure
 from llm_ports.ports._types import (
     Chunk,
@@ -61,6 +61,8 @@ from llm_ports.ports._types import (
     JudgeVerdict,
     Prompt,
     Reranked,
+    RetryMessage,
+    Validator,
 )
 from llm_ports.ports._usage import Answered, Cost, Finish, Usage
 
@@ -310,8 +312,8 @@ class Generator(Protocol):
         req: GenRequest,
         output: type[T],
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         """Run one call and parse the reply into `output`.
 
@@ -493,6 +495,21 @@ class TokenCounter(Protocol):
         ...
 
 
+async def _drained(events: AsyncIterator[StreamEvent]) -> Generated[Any]:
+    """`Finished.result` of `events` run to its end; the iterator is closed on every exit."""
+    result: Generated[Any] | None = None
+    try:
+        async for ev in events:
+            if isinstance(ev, Finished):
+                result = ev.result
+    finally:
+        close = getattr(events, "aclose", None)
+        if close is not None:
+            await close()
+    assert result is not None  # `stream` always ends with `Finished`
+    return result
+
+
 @runtime_checkable
 class Chat(Protocol):
     """A multi-turn, tool-using, streamed conversation: messages in, events and new messages out.
@@ -501,7 +518,8 @@ class Chat(Protocol):
         - `stream` yields `Finished` exactly once, last, in every case, and never raises for a
           model, wire or gate failure (ADR-0001 holds for streams). Closing the iterator or
           cancelling the task stops the call; `asyncio.CancelledError` propagates.
-        - `chat` is `stream` drained: it returns `Finished.result`.
+        - `chat` is `stream` drained: it returns `Finished.result`. An implementation that
+          subclasses `Chat` inherits that `chat` and writes only `stream`.
         - The port is stateless: the caller appends `Generated.messages` to its own history.
 
     Rationale: ADR-0023.
@@ -512,8 +530,8 @@ class Chat(Protocol):
         req: ChatRequest,
         output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         """Run one call to its end and return the result `Finished` carries.
 
@@ -523,15 +541,16 @@ class Chat(Protocol):
             validate: Lists the problems with a parsed value, as for `Generator.generate`.
             retry_message: Builds a re-ask's message from the problems.
         """
-        ...
+        events = self.stream(req, output, validate=validate, retry_message=retry_message)
+        return cast("Generated[T]", await _drained(events))
 
     def stream[T](
         self,
         req: ChatRequest,
         output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Run one call, yielding its events as they happen and `Finished` last.
 

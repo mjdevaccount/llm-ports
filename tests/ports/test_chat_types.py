@@ -13,7 +13,20 @@ import pytest
 from llm_ports import call
 from llm_ports.adapters.http import HttpTokenCounter
 from llm_ports.adapters.pydantic_ai._core import call_settings
-from llm_ports.ports import ChatRequest, Counted, Deadline, Message, Part, Tool, ToolOutput
+from llm_ports.ports import (
+    Chat,
+    ChatRequest,
+    Counted,
+    Deadline,
+    Finished,
+    Generated,
+    Message,
+    Part,
+    StreamEvent,
+    TextDelta,
+    Tool,
+    ToolOutput,
+)
 from llm_ports.testing import StubChat, Turn
 from tests.call.test_chat import R, _user
 
@@ -131,3 +144,34 @@ async def test_the_stub_runs_tool_budgets_and_validators() -> None:
     assert res.failure is not None and res.failure.kind == "internal"
     res = await StubChat([Turn.reply("x")]).chat(req, validate=lambda v: ["no"])
     assert res.outcome == "ok" and res.problems == ("no",)
+
+
+class _Events:
+    """An async iterator with no `aclose`: the inherited `Chat.chat` drains it all the same."""
+
+    def __init__(self, events: list[Any]) -> None:
+        self._events = iter(events)
+
+    def __aiter__(self) -> _Events:
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return next(self._events)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+class _PlainChat(Chat):
+    """A `Chat` that writes only `stream`, returning a plain iterator."""
+
+    def stream(self, req: ChatRequest, output: type[Any] = str, **_kw: Any) -> AsyncIterator[StreamEvent]:
+        res = Generated(value="hi", outcome="ok", reason=None, model=req.model)
+        return _Events([TextDelta("hi"), Finished(res)])
+
+
+async def test_chat_is_inherited_as_the_drained_stream_with_or_without_aclose() -> None:
+    req = ChatRequest(model="m", messages=(Message("user", (Part("text", text="q"),)),))
+    assert (await _PlainChat().chat(req)).value == "hi"
+    stub = StubChat([Turn.reply("hey")])
+    assert (await stub.chat(req)).value == "hey"

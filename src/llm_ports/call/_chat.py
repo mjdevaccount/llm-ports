@@ -31,21 +31,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
 from llm_ports import ports
 from llm_ports.call._generate import (
     Hooks,
+    _call_failed,
     _event,
-    _grade,
     _log_event,
     _NotOk,
     _null_trace,
-    _observed,
+    _raise_unless_ok,
     _report,
+    _settled,
     _stamped,
 )
 from llm_ports.call._preflight import Preflight, optimistic, preflight
@@ -61,10 +62,12 @@ from llm_ports.ports import (
     Generated,
     GenRequest,
     Message,
+    RetryMessage,
     StreamEvent,
     TokenCounter,
     Tool,
     ToolCallFinished,
+    Validator,
 )
 from llm_ports.ports.outcomes import REASON_MAX
 
@@ -176,37 +179,68 @@ def _merged(res: Generated[Any], pre: Preflight, warns: tuple[CallWarning, ...])
     return replace(res, warnings=(*warns, *pre.warnings, *res.warnings), stamp={**res.stamp, **pre.stamp()})
 
 
+class TurnOptions(TypedDict, total=False):
+    """The optional keywords `stream` and `chat` share; each one omitted takes the default named."""
+
+    tools: Sequence[Tool]
+    """The tools offered to the model (default none)."""
+    hooks: Hooks | None
+    """Trace, admit, graders, report and event hooks (default `Hooks()`)."""
+    system: str
+    """The system prompt (default empty)."""
+    settings: Mapping[str, Any] | None
+    """Model settings merged over the role's (default the role's)."""
+    metadata: Mapping[str, Any] | None
+    """Extra trace metadata (default none)."""
+    max_steps: int | None
+    """Overrides `Role.max_steps` for this call (default the role's)."""
+    counter: TokenCounter | None
+    """Measures the history for the pre-flight (`Role.context`); None counts nothing."""
+
+
 async def stream[T](
     role: Role,
     *,
     messages: Sequence[Message],
     chat: ports.Chat,
     output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
-    tools: Sequence[Tool] = (),
-    hooks: Hooks | None = None,
-    system: str = "",
-    settings: Mapping[str, Any] | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    max_steps: int | None = None,
-    counter: TokenCounter | None = None,
-    validate: Callable[[T], Sequence[Any]] | None = None,
-    retry_message: Callable[[Sequence[Any]], str] | None = None,
+    validate: Validator[T] | None = None,
+    retry_message: RetryMessage | None = None,
+    **opts: Unpack[TurnOptions],
 ) -> AsyncGenerator[StreamEvent]:
     """Run one conversation turn for `role` through `chat`, yielding its events and `Finished` last.
 
     The path is described in the module docstring. The caller appends `Finished.result.messages`
     to its own history; the port keeps none.
 
+    Args:
+        role: The role: its tier, timeout, context policy, cache prefix and graders.
+        messages: The history, oldest first; the caller owns it.
+        chat: The `Chat` port the call runs on (`Backends.chat_for`).
+        output: `str` for prose, a pydantic model, or a `JsonOutput` subclass.
+        validate: Lists the problems with a parsed value; a non-empty list re-asks.
+        retry_message: Builds a re-ask's message from the problems.
+        **opts: The `TurnOptions`.
+
     Raises:
         asyncio.CancelledError: The caller cancelled the call.
     """
-    h = hooks or Hooks()
+    tools = opts.get("tools", ())
+    system = opts.get("system", "")
+    counter = opts.get("counter")
+    metadata = opts.get("metadata") or {}
+    h = opts.get("hooks") or Hooks()
     emit = h.on_event or _log_event
     loop = asyncio.get_running_loop()
     clocks = Deadline(total_s=role.resolved_timeout_s).start(loop.time())
     with llm_feature(role.category):
         req = chat_request_for(
-            role, messages=messages, system=system, tools=tools, settings=settings, max_steps=max_steps
+            role,
+            messages=messages,
+            system=system,
+            tools=tools,
+            settings=opts.get("settings"),
+            max_steps=opts.get("max_steps"),
         )
         req = replace(req, deadline=clocks)
         refused = _refused(role, req, output, h)
@@ -231,7 +265,7 @@ async def stream[T](
         done: list[ToolCallFinished] = []
         trace = h.trace or _null_trace
         try:
-            async with trace(role, greq, prompt, {"role": role.name, **(metadata or {})}) as obs:
+            async with trace(role, greq, prompt, {"role": role.name, **metadata}) as obs:
                 inner = chat.stream(req, output, validate=validate, retry_message=retry_message)
                 async with _closing(inner):
                     async for ev in inner:
@@ -251,21 +285,10 @@ async def stream[T](
                 if res is None:
                     res = _refusal(req, ports.failure("internal", reason="the Chat stream ended without Finished"))
                 res = _merged(res, pre, warns)
-                res = _observed(role, res, obs, {"steps": res.steps, **_tool_meta(done)})
-                if res.outcome == "ok" and role.graders:
-                    res = _grade(role, prompt, res, obs, h)
-                if res.outcome not in ("ok", "gated"):
-                    raise _NotOk(f"{res.outcome}: {res.reason}")
+                res = _settled(role, prompt, res, obs, h, {"steps": res.steps, **_tool_meta(done)})
+                _raise_unless_ok(res)
         except _NotOk:
-            _event(
-                h,
-                logging.WARNING,
-                "llm_call_failed",
-                role=role.name,
-                outcome=res.outcome if res else None,
-                kind=res.failure.kind if res and res.failure else None,
-                reason=res.reason if res else None,
-            )
+            _call_failed(h, role, res)
         if res is None:  # reachable only when a trace hook swallowed an exception
             res = _refusal(req, ports.failure("internal", reason="the trace hook swallowed the call"))
         _tool_events(role, res, done, h)
@@ -281,35 +304,19 @@ async def chat[T](
     messages: Sequence[Message],
     chat: ports.Chat,
     output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
-    tools: Sequence[Tool] = (),
-    hooks: Hooks | None = None,
-    system: str = "",
-    settings: Mapping[str, Any] | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    max_steps: int | None = None,
-    counter: TokenCounter | None = None,
-    validate: Callable[[T], Sequence[Any]] | None = None,
-    retry_message: Callable[[Sequence[Any]], str] | None = None,
+    validate: Validator[T] | None = None,
+    retry_message: RetryMessage | None = None,
+    **opts: Unpack[TurnOptions],
 ) -> Generated[T]:
     """Run one conversation turn for `role` and return its result: `stream` drained.
+
+    Takes exactly `stream`'s arguments.
 
     Raises:
         asyncio.CancelledError: The caller cancelled the call.
     """
     events = stream(
-        role,
-        messages=messages,
-        chat=chat,
-        output=output,
-        tools=tools,
-        hooks=hooks,
-        system=system,
-        settings=settings,
-        metadata=metadata,
-        max_steps=max_steps,
-        counter=counter,
-        validate=validate,
-        retry_message=retry_message,
+        role, messages=messages, chat=chat, output=output, validate=validate, retry_message=retry_message, **opts
     )
     async with aclosing(events):
         async for ev in events:
@@ -318,4 +325,4 @@ async def chat[T](
     raise RuntimeError("call.stream ended without Finished")  # unreachable: stream always yields it
 
 
-__all__ = ["chat", "chat_request_for", "stream"]
+__all__ = ["TurnOptions", "chat", "chat_request_for", "stream"]

@@ -24,12 +24,19 @@ All notable changes to this project are documented here. The format is based on
 - **The `Chat` port (ADR-0023).** `ports.Chat` with `chat` and `stream`; `ChatRequest`, `Message`,
   `Part`, `Tool`, `ToolOutput`, and the stream events `TextDelta`, `ReasoningDelta`,
   `ToolCallStarted`, `ToolCallFinished`, `StepFinished`, `Finished`. `Generated` gains `messages`
-  and `steps`.
+  and `steps`. `Chat.chat` has a default body (`stream` drained), so an implementation that
+  subclasses `Chat` writes only `stream`.
 - **`call.chat` / `call.stream` / `call.chat_request_for`**: capability check (`tools`,
   `json_schema`, `vision`), admit gate, cache plan, pre-flight, one trace observation with a child
   span per tool, graders. Events `llm_tool_failed`, `llm_tool_truncated`, `llm_max_steps`.
+  `call.TurnOptions` declares the optional keywords both take once (`tools`, `hooks`, `system`,
+  `settings`, `metadata`, `max_steps`, `counter`).
+- **`ports.Validator[T]` and `ports.RetryMessage`**: named aliases for the `validate` and
+  `retry_message` callables, now used by every `Generator` and `Chat` signature. The types are
+  unchanged.
 - **`adapters.pydantic_ai.PydanticAIChat`** on pydantic-ai's agent loop, sharing the generator's
-  wire policy, deadline, limiter, classification and result contract (`AdapterCore`). The
+  wire policy, deadline, limiter, classification and result contract (`AdapterCore`, which now
+  also takes `model=` / `model_for=` for both). The
   `openai_compatible` factory builds one per provider (`Backends.chat_for`).
 - **Context is measured (ADR-0024).** `ports.TokenCounter` / `Counted`;
   `adapters.http.HttpTokenCounter` (LiteLLM's `/utils/token_counter` shape), built by the factory

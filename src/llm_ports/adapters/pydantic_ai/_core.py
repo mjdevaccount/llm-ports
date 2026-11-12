@@ -52,7 +52,9 @@ from llm_ports.ports import (
     Generated,
     Limiter,
     Pricer,
+    RetryMessage,
     Usage,
+    Validator,
     WirePolicy,
     failure,
 )
@@ -93,10 +95,14 @@ class Facts:
         self.resps = resps
 
 
-class AdapterCore:
+class AdapterCore[R]:
     """The planes a pydantic-ai port adapter shares; each adapter's docstring states its contract.
 
+    `R` is the request type a `model_for` factory takes (`GenRequest` or `ChatRequest`).
+
     Args:
+        model: A fixed pydantic-ai `Model`.
+        model_for: A per-request model factory; the source `stats` and `aclose` reach.
         capture: The capture factory; the default is filled by `openai_compatible`'s response hook.
         gated: Exception types that classify as `gated`.
         wrap: Applied to each model a `model_for` yields, e.g. a `replay.Recorder`.
@@ -110,11 +116,16 @@ class AdapterCore:
             own; None is `WirePolicy.default()`.
         limiter: Caps concurrent calls per concurrency group (else per model id); None runs every
             call at once.
+
+    Raises:
+        ValueError: When neither or both of `model` and `model_for` are given.
     """
 
     def __init__(
         self,
+        model: Model | None = None,
         *,
+        model_for: Callable[[R], AbstractAsyncContextManager[Model]] | None = None,
         capture: Callable[[], AbstractContextManager[CaptureLike]] = capture,
         gated: tuple[type[BaseException], ...] = (),
         wrap: Callable[[Model], Model] | None = None,
@@ -125,6 +136,10 @@ class AdapterCore:
         policy: WirePolicy | None = None,
         limiter: Limiter | None = None,
     ) -> None:
+        if (model is None) == (model_for is None):
+            raise ValueError(f"{type(self).__name__} needs exactly one of model= / model_for=")
+        self._model = model
+        self._model_for = model_for
         self._capture = capture
         self._gated = gated
         self._wrap = wrap
@@ -135,7 +150,7 @@ class AdapterCore:
         self._policy = policy if policy is not None else WirePolicy.default()
         self._limiter = limiter
         self._in_flight = 0
-        self._source: object | None = None
+        self._source: object | None = model_for
 
     def stats(self) -> Mapping[str, int]:
         """`calls_in_flight`, and the client's counts when the model source reports them (`openai_compatible`)."""
@@ -258,8 +273,8 @@ def build_agent[T](
     *,
     settings: Mapping[str, Any],
     output_retries: int,
-    validate: Callable[[T], Sequence[Any]] | None,
-    retry_message: Callable[[Sequence[Any]], str] | None,
+    validate: Validator[T] | None,
+    retry_message: RetryMessage | None,
     system: str = "",
     instructions: str | None = None,
     tools: Sequence[AITool[None]] = (),

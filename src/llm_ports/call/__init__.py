@@ -5,7 +5,7 @@ Submodules: `context` (budgets, trimming, the cache plan), `roles`, `models` (wh
 """
 
 from llm_ports.call import context, graders, models, providers, resilience, roles, schema
-from llm_ports.call._chat import chat, chat_request_for, stream
+from llm_ports.call._chat import TurnOptions, chat, chat_request_for, stream
 from llm_ports.call._generate import (
     DEADLINE_GRACE_S,
     OUTPUT_TRACE_MAX,
@@ -25,6 +25,7 @@ __all__ = [
     "AdmitHook",
     "Hooks",
     "TraceHook",
+    "TurnOptions",
     "chat",
     "chat_request_for",
     "context",

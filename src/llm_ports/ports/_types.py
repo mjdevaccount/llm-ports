@@ -13,7 +13,7 @@ Rationale: ADR-0001.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -22,6 +22,11 @@ from llm_ports.ports._failure import Failure
 from llm_ports.ports._resilience import Deadline, WirePolicy
 from llm_ports.ports._usage import Answered, Attempt, CallWarning, Cost, Finish, Usage
 from llm_ports.ports.outcomes import Outcome
+
+#: Lists the problems with a parsed value; an empty sequence means it passed.
+type Validator[T] = Callable[[T], Sequence[Any]]
+#: Builds the re-ask message the model sees from a validator's problems.
+type RetryMessage = Callable[[Sequence[Any]], str]
 
 if TYPE_CHECKING:
     from llm_ports.ports._chat import Message
@@ -436,6 +441,8 @@ __all__ = [
     "Outcome",
     "Prompt",
     "Reranked",
+    "RetryMessage",
     "Seed",
+    "Validator",
     "json_output",
 ]

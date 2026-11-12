@@ -53,14 +53,14 @@ Rationale: ADR-0001, ADR-0019, ADR-0020, ADR-0021; the httpx2 client, ADR-0009.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from typing import Any
 
 from llm_ports._extras import extra
 from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
-from llm_ports.adapters._classify import Classifier, WireFacts
+from llm_ports.adapters._classify import WireFacts
 from llm_ports.adapters.pydantic_ai._capture import CaptureLike, capture, record_response
 from llm_ports.adapters.pydantic_ai._classify import classify, classify_failure
 from llm_ports.adapters.pydantic_ai._core import (
@@ -72,17 +72,14 @@ from llm_ports.adapters.pydantic_ai._core import (
     settled,
 )
 from llm_ports.adapters.pydantic_ai._result import responses, unsupported, usage_1x
-from llm_ports.observability import EventHook
 from llm_ports.ports import (
     Answered,
     CallWarning,
-    GatewayReader,
     Generated,
     GenRequest,
-    Limiter,
-    Pricer,
+    RetryMessage,
     SlotWaitExceeded,
-    WirePolicy,
+    Validator,
     failure,
 )
 
@@ -166,7 +163,7 @@ def _prompt(req: GenRequest) -> Any:
     return [req.prompt, *(BinaryContent(data=b, media_type=m) for b, m in req.images)]
 
 
-class PydanticAIGenerator(AdapterCore):
+class PydanticAIGenerator(AdapterCore[GenRequest]):
     """The `Generator` port on pydantic-ai; the module docstring states the contract.
 
     Args:
@@ -195,45 +192,13 @@ class PydanticAIGenerator(AdapterCore):
         ValueError: When neither or both of `model` and `model_for` are given.
     """
 
-    def __init__(
-        self,
-        model: Model | None = None,
-        *,
-        model_for: ModelFor | None = None,
-        capture: Callable[[], AbstractContextManager[CaptureLike]] = _capture,
-        gated: tuple[type[BaseException], ...] = (),
-        wrap: Callable[[Model], Model] | None = None,
-        pricer: Pricer | None = None,
-        gateway: GatewayReader | None = None,
-        extra: Sequence[Classifier] = (),
-        on_event: EventHook | None = None,
-        policy: WirePolicy | None = None,
-        limiter: Limiter | None = None,
-    ) -> None:
-        if (model is None) == (model_for is None):
-            raise ValueError("PydanticAIGenerator needs exactly one of model= / model_for=")
-        super().__init__(
-            capture=capture,
-            gated=gated,
-            wrap=wrap,
-            pricer=pricer,
-            gateway=gateway,
-            extra=extra,
-            on_event=on_event,
-            policy=policy,
-            limiter=limiter,
-        )
-        self._model = model
-        self._model_for = model_for
-        self._source = model_for
-
     async def generate[T](
         self,
         req: GenRequest,
         output: type[T],
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         """Run one generation; a model, wire or gate failure returns a named outcome, never raises.
 
@@ -283,8 +248,8 @@ class PydanticAIGenerator(AdapterCore):
         self,
         req: GenRequest,
         output: type[T],
-        validate: Callable[[T], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
+        validate: Validator[T] | None,
+        retry_message: RetryMessage | None,
     ) -> Generated[T]:
         if self._model is not None:
             return await self.run(self._model, req, output, validate, retry_message)
@@ -312,8 +277,8 @@ class PydanticAIGenerator(AdapterCore):
         model: Model,
         req: GenRequest,
         output: type[T],
-        validate: Callable[[T], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
+        validate: Validator[T] | None,
+        retry_message: RetryMessage | None,
     ) -> Generated[T]:
         """Run one agent on `model` and classify the result; the arguments are as for `generate`.
 

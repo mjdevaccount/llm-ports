@@ -70,7 +70,9 @@ from llm_ports.ports._types import (
     Outcome,
     Prompt,
     Reranked,
+    RetryMessage,
     Seed,
+    Validator,
     json_output,
 )
 from llm_ports.ports._usage import (
@@ -141,6 +143,7 @@ __all__ = [
     "Reranked",
     "Reranker",
     "Retriever",
+    "RetryMessage",
     "RetryRule",
     "Seed",
     "SlotWaitExceeded",
@@ -156,6 +159,7 @@ __all__ = [
     "Tracer",
     "UnifiedFinish",
     "Usage",
+    "Validator",
     "WarningKind",
     "WirePolicy",
     "failure",

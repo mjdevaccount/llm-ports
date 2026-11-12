@@ -64,7 +64,7 @@ from llm_ports.observability import (
     log_events,
     observe,
 )
-from llm_ports.ports import Deadline, Generated, Generator, GenRequest, TokenCounter, Tracer
+from llm_ports.ports import Deadline, Generated, Generator, GenRequest, RetryMessage, TokenCounter, Tracer, Validator
 from llm_ports.ports.outcomes import REASON_MAX, GenerationFailed
 
 #: The longest output text written on a trace observation, in characters.
@@ -324,6 +324,40 @@ def _result_metadata(res: Generated[Any]) -> dict[str, Any]:
     }
 
 
+def _settled[T](
+    role: Role,
+    prompt: str,
+    res: Generated[T],
+    obs: Observation,
+    h: Hooks,
+    extra: Mapping[str, Any] | None = None,
+) -> Generated[T]:
+    """The reply written on its observation, then graded when it is `ok` and the role has graders."""
+    res = _observed(role, res, obs, extra)
+    if res.outcome == "ok" and role.graders:
+        res = _grade(role, prompt, res, obs, h)
+    return res
+
+
+def _raise_unless_ok(res: Generated[Any]) -> None:
+    """End the observation in error for any outcome but `ok` / `gated` (inside the trace block only)."""
+    if res.outcome not in ("ok", "gated"):
+        raise _NotOk(f"{res.outcome}: {res.reason}")
+
+
+def _call_failed(h: Hooks, role: Role, res: Generated[Any] | None) -> None:
+    """Emit `llm_call_failed` for a call whose observation ended in error."""
+    _event(
+        h,
+        logging.WARNING,
+        "llm_call_failed",
+        role=role.name,
+        outcome=res.outcome if res else None,
+        kind=res.failure.kind if res and res.failure else None,
+        reason=res.reason if res else None,
+    )
+
+
 def _observed[T](
     role: Role, res: Generated[T], obs: Observation, extra: Mapping[str, Any] | None = None
 ) -> Generated[T]:
@@ -370,8 +404,8 @@ async def generate[T](
     hooks: Hooks | None = None,
     system: str = "",
     images: Sequence[tuple[bytes, str]] = (),
-    validate: Callable[[T], Sequence[Any]] | None = None,
-    retry_message: Callable[[Sequence[Any]], str] | None = None,
+    validate: Validator[T] | None = None,
+    retry_message: RetryMessage | None = None,
     settings: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
     web: bool = False,
@@ -444,8 +478,8 @@ async def _one[T](
     output: type[T],
     generator: Generator,
     h: Hooks,
-    validate: Callable[[T], Sequence[Any]] | None,
-    retry_message: Callable[[Sequence[Any]], str] | None,
+    validate: Validator[T] | None,
+    retry_message: RetryMessage | None,
     metadata: Mapping[str, Any] | None,
     web: bool,
 ) -> Generated[T]:
@@ -459,21 +493,10 @@ async def _one[T](
         try:
             async with trace(role, req, prompt, {"role": role.name, **(metadata or {})}) as obs:
                 res = await generator.generate(req, output, validate=validate, retry_message=retry_message)
-                res = _observed(role, res, obs)
-                if res.outcome == "ok" and role.graders:
-                    res = _grade(role, prompt, res, obs, h)
-                if res.outcome not in ("ok", "gated"):
-                    raise _NotOk(f"{res.outcome}: {res.reason}")
+                res = _settled(role, prompt, res, obs, h)
+                _raise_unless_ok(res)
         except _NotOk:
-            _event(
-                h,
-                logging.WARNING,
-                "llm_call_failed",
-                role=role.name,
-                outcome=res.outcome if res else None,
-                kind=res.failure.kind if res and res.failure else None,
-                reason=res.reason if res else None,
-            )
+            _call_failed(h, role, res)
         if res is None:  # reachable only when a trace hook swallowed a generator exception
             raise RuntimeError(f"llm_call {role.name}: the generator returned nothing")
         return res

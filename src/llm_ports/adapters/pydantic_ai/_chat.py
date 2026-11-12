@@ -39,13 +39,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, aclosing
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from typing import Any
 
 from llm_ports._extras import extra
-from llm_ports.adapters._classify import Classifier, WireFacts
-from llm_ports.adapters.pydantic_ai._capture import CaptureLike, capture
+from llm_ports.adapters._classify import WireFacts
+from llm_ports.adapters.pydantic_ai._capture import CaptureLike
 from llm_ports.adapters.pydantic_ai._chat_messages import (
     ToolRecord,
     from_model_messages,
@@ -58,21 +58,19 @@ from llm_ports.adapters.pydantic_ai._classify import classify_failure
 from llm_ports.adapters.pydantic_ai._core import WIRE, AdapterCore, build_agent, call_settings, settled
 from llm_ports.adapters.pydantic_ai._result import finish_of, unsupported, usage_of
 from llm_ports.call.context import cut_middle
-from llm_ports.observability import EventHook
 from llm_ports.ports import (
     Answered,
     CallWarning,
+    Chat,
     ChatRequest,
     Failure,
     Finish,
     Finished,
-    GatewayReader,
     Generated,
-    Limiter,
     Message,
     Part,
-    Pricer,
     ReasoningDelta,
+    RetryMessage,
     SlotWaitExceeded,
     StepFinished,
     StreamEvent,
@@ -81,7 +79,7 @@ from llm_ports.ports import (
     ToolCallFinished,
     ToolCallStarted,
     ToolOutput,
-    WirePolicy,
+    Validator,
     failure,
 )
 
@@ -235,7 +233,7 @@ def _required_check(tool: Tool) -> Callable[..., Any]:
     return check
 
 
-class PydanticAIChat(AdapterCore):
+class PydanticAIChat(AdapterCore[ChatRequest], Chat):
     """The `Chat` port on pydantic-ai; the module docstring states the contract.
 
     Args:
@@ -257,62 +255,13 @@ class PydanticAIChat(AdapterCore):
         ValueError: When neither or both of `model` and `model_for` are given.
     """
 
-    def __init__(
-        self,
-        model: Model | None = None,
-        *,
-        model_for: ChatModelFor | None = None,
-        capture: Callable[[], AbstractContextManager[CaptureLike]] = capture,
-        gated: tuple[type[BaseException], ...] = (),
-        wrap: Callable[[Model], Model] | None = None,
-        pricer: Pricer | None = None,
-        gateway: GatewayReader | None = None,
-        extra: Sequence[Classifier] = (),
-        on_event: EventHook | None = None,
-        policy: WirePolicy | None = None,
-        limiter: Limiter | None = None,
-    ) -> None:
-        if (model is None) == (model_for is None):
-            raise ValueError("PydanticAIChat needs exactly one of model= / model_for=")
-        super().__init__(
-            capture=capture,
-            gated=gated,
-            wrap=wrap,
-            pricer=pricer,
-            gateway=gateway,
-            extra=extra,
-            on_event=on_event,
-            policy=policy,
-            limiter=limiter,
-        )
-        self._model = model
-        self._model_for = model_for
-        self._source = model_for
-
-    async def chat[T](
-        self,
-        req: ChatRequest,
-        output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
-        *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
-    ) -> Generated[T]:
-        """Run `stream` to its end and return `Finished.result`; never raises for a model failure."""
-        result: Generated[T] | None = None
-        async with aclosing(self.stream(req, output, validate=validate, retry_message=retry_message)) as events:
-            async for ev in events:
-                if isinstance(ev, Finished):
-                    result = ev.result
-        assert result is not None  # `stream` always ends with `Finished`
-        return result
-
     async def stream[T](
         self,
         req: ChatRequest,
         output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> AsyncGenerator[StreamEvent]:
         """Run one call, yielding its events as they happen and `Finished` last, exactly once.
 
@@ -340,7 +289,7 @@ class PydanticAIChat(AdapterCore):
         req: ChatRequest,
         output: type[Any],
         validate: Callable[[Any], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
+        retry_message: RetryMessage | None,
         put: Callable[[StreamEvent], None],
     ) -> None:
         loop = asyncio.get_running_loop()
@@ -387,7 +336,7 @@ class PydanticAIChat(AdapterCore):
         req: ChatRequest,
         output: type[Any],
         validate: Callable[[Any], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
+        retry_message: RetryMessage | None,
         run: _Run,
     ) -> Generated[Any]:
         if self._model is not None:
@@ -461,7 +410,7 @@ class PydanticAIChat(AdapterCore):
         req: ChatRequest,
         output: type[Any],
         validate: Callable[[Any], Sequence[Any]] | None,
-        retry_message: Callable[[Sequence[Any]], str] | None,
+        retry_message: RetryMessage | None,
         run: _Run,
     ) -> Generated[Any]:
         settings, warns = self._settings(req)

@@ -27,7 +27,7 @@ Rationale: ADR-0022.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -36,7 +36,18 @@ from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
 from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid
 from llm_ports.call.providers import BuildDeps, Built
 from llm_ports.observability import EventHook, log_events
-from llm_ports.ports import Chat, ChatRequest, Embedder, Generated, Generator, GenRequest, StreamEvent, TokenCounter
+from llm_ports.ports import (
+    Chat,
+    ChatRequest,
+    Embedder,
+    Generated,
+    Generator,
+    GenRequest,
+    RetryMessage,
+    StreamEvent,
+    TokenCounter,
+    Validator,
+)
 
 with extra("pydantic-ai"):
     import httpx
@@ -125,8 +136,8 @@ class _TableGenerator(_Translating):
         req: GenRequest,
         output: type[T],
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         req = replace(req, settings=self._settings(req.model, req.settings))
         return await self._inner.generate(req, output, validate=validate, retry_message=retry_message)
@@ -144,8 +155,8 @@ class _TableChat(_Translating):
         req: ChatRequest,
         output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
         req = replace(req, settings=self._settings(req.model, req.settings))
         return await self._inner.chat(req, output, validate=validate, retry_message=retry_message)
@@ -155,8 +166,8 @@ class _TableChat(_Translating):
         req: ChatRequest,
         output: type[T] = str,  # type: ignore[assignment]  # omitted, T is str; no TypeVar default spells it
         *,
-        validate: Callable[[T], Sequence[Any]] | None = None,
-        retry_message: Callable[[Sequence[Any]], str] | None = None,
+        validate: Validator[T] | None = None,
+        retry_message: RetryMessage | None = None,
     ) -> AsyncGenerator[StreamEvent]:
         req = replace(req, settings=self._settings(req.model, req.settings))
         events = self._inner.stream(req, output, validate=validate, retry_message=retry_message)
