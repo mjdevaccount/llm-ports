@@ -38,8 +38,7 @@ All notable changes to this project are documented here. The format is based on
   still answers no documents with `ok`, as the port says.
 - **The pytest plugin blocks live requests in any test session where `llm-ports` is
   installed** (entry point `pytest11` `llm_ports`): a request to a non-loopback host over a real
-  `httpx2` / `httpx` transport raises `LiveRequestBlocked`, and pydantic-ai's
-  `ALLOW_MODEL_REQUESTS` is False. Opt in per test with `@pytest.mark.llm_live` plus
+  `httpx2` / `httpx` transport raises `LiveRequestBlocked`. Opt in per test with `@pytest.mark.llm_live` plus
   `--llm-live`; turn the plugin off with `-p no:llm_ports`.
 - The observation ContextVar's name is `"llm_feature"` (was `"langfuse_feature"`); the accessor
   functions are unchanged.

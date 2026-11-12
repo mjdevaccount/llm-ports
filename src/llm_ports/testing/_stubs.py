@@ -30,22 +30,20 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Unpack
 
 from llm_ports.ports import (
     Answered,
     Chunk,
     CitedAnswer,
-    Cost,
     Embedded,
     EmbedInput,
+    EndFields,
     Failure,
     FailureKind,
-    Finish,
     Outcome,
     Prompt,
     Reranked,
-    Usage,
     failure,
 )
 
@@ -90,11 +88,7 @@ class RecordedGeneration:
         level: str = "DEFAULT",
         status_message: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-        usage_v2: Usage | None = None,
-        cost: Cost | None = None,
-        finish: Finish | None = None,
-        answered: Answered | None = None,
-        failure: Failure | None = None,
+        **fields: Unpack[EndFields],
     ) -> None:
         """Record how the generation ended, replacing any earlier end, and count the ends.
 
@@ -108,8 +102,7 @@ class RecordedGeneration:
             "status_message": status_message,
             "metadata": metadata,
         }
-        v2 = {"usage_v2": usage_v2, "cost": cost, "finish": finish, "answered": answered, "failure": failure}
-        self.ended.update({k: v for k, v in v2.items() if v is not None})
+        self.ended.update({k: v for k, v in fields.items() if v is not None})
 
     def score(
         self, name: str, value: float, comment: str | None = None, metadata: Mapping[str, Any] | None = None

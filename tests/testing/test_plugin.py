@@ -23,12 +23,6 @@ async def test_this_suite_blocks_a_live_host_by_default() -> None:
         httpx.get("https://api.example.invalid/")
 
 
-def test_pydantic_ai_requests_are_off_in_this_suite() -> None:
-    from pydantic_ai import models
-
-    assert models.ALLOW_MODEL_REQUESTS is False
-
-
 async def test_a_mock_transport_is_never_blocked() -> None:
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _r: httpx2.Response(204))) as c:
         assert (await c.get("https://api.example.invalid/")).status_code == 204
@@ -60,15 +54,18 @@ def test_only_loopback_is_the_test_s_own(host: str, local: bool) -> None:
 ASYNC = ("-o", "asyncio_mode=auto", "-o", "asyncio_default_fixture_loop_scope=function")
 
 LIVE_TEST = """
+import httpx
 import pytest
-from pydantic_ai import models
+from llm_ports.testing import LiveRequestBlocked
 
 @pytest.mark.llm_live
 def test_live():
-    assert models.ALLOW_MODEL_REQUESTS is True
+    with pytest.raises(httpx.ConnectError):  # reached the network: `.invalid` never resolves
+        httpx.get("https://api.example.invalid/")
 
 def test_unmarked():
-    assert models.ALLOW_MODEL_REQUESTS is False
+    with pytest.raises(LiveRequestBlocked):
+        httpx.get("https://api.example.invalid/")
 """
 
 

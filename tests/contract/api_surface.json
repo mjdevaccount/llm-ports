@@ -812,6 +812,7 @@
   "EmbedInput",
   "Embedded",
   "Embedder",
+  "EndFields",
   "Evaluator",
   "FAILURE_KINDS",
   "Failure",
@@ -930,6 +931,7 @@
  "llm_ports.testing": [
   "ContractViolation",
   "FakeClock",
+  "LiveRequestBlocked",
   "RecordedGeneration",
   "RecordingTracer",
   "Reply",
@@ -940,7 +942,9 @@
   "StubEmbedder",
   "StubGenerator",
   "StubPromptSource",
-  "StubReranker"
+  "StubReranker",
+  "block_live_requests",
+  "is_loopback"
  ],
  "llm_ports.testing.conformance": [
   "CHECKS",

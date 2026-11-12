@@ -42,7 +42,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import date
 from decimal import Decimal
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 from llm_ports.ports._failure import Failure
 from llm_ports.ports._types import (
@@ -176,6 +176,20 @@ class PromptSource(Protocol):
             - `text` is never empty.
         """
         ...
+
+
+class EndFields(TypedDict, total=False):
+    """The 1.24 keyword-only fields of `Generation.end`, for an implementation's `**fields`.
+
+    An implementation may spell them out or take `**fields: Unpack[EndFields]`; each key is
+    absent or None when the call did not measure it (ADR-0025).
+    """
+
+    usage_v2: Usage | None
+    cost: Cost | None
+    finish: Finish | None
+    answered: Answered | None
+    failure: Failure | None
 
 
 @runtime_checkable

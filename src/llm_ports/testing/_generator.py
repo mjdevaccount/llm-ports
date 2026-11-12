@@ -48,14 +48,14 @@ class ScriptedReply:
         value: The parsed value.
         problems: Problems the reply carries regardless of `validate` (a validator not satisfied).
         usage: The request's usage; None is unmeasured.
-        finish: How the reply ended.
+        finish: How the reply ended; None (a bare 1.x reply value) reports no finish.
         answered_model: The model the reply says answered; None uses the stub's.
     """
 
     value: Any
     problems: tuple[Any, ...] = ()
     usage: Usage | None = None
-    finish: UnifiedFinish = "stop"
+    finish: UnifiedFinish | None = None
     answered_model: str | None = None
 
 
@@ -75,7 +75,7 @@ class _ReplyNamespace(type(Protocol)):  # type: ignore[misc]  # Protocol's metac
 
     def problems(cls, value: Any, problems: Sequence[Any], *, usage: Usage | None = None) -> ScriptedReply:
         """A reply whose `value` the validator is not satisfied with: it earns a re-ask. Pure."""
-        return ScriptedReply(value, tuple(problems), usage)
+        return ScriptedReply(value, tuple(problems), usage, "stop")
 
     def failed(cls, kind: FailureKind, **detail: Any) -> Failure:
         """Return the `Failure` a reply returns to fail its call with `kind`.
@@ -208,7 +208,7 @@ class StubGenerator:
                 problems=problems,
                 retries=n,
                 usage_v2=total,
-                finish=Finish(reply.finish, reply.finish),
+                finish=Finish(reply.finish, reply.finish) if reply.finish is not None else None,
                 answered=answered,
             )
         raise AssertionError("unreachable: the loop's last pass returns")  # pragma: no cover
@@ -216,7 +216,13 @@ class StubGenerator:
 
 def _failed(req: GenRequest, got: Failure, n: int, total: Usage | None, answered: Answered) -> Generated[Any]:
     return Generated(
-        value=None, outcome=got.outcome, model=req.model, retries=n, usage_v2=total, answered=answered, failure=got
+        value=None,
+        outcome=got.outcome,
+        model=req.model,
+        retries=n or None,
+        usage_v2=total,
+        answered=answered,
+        failure=got,
     )
 
 

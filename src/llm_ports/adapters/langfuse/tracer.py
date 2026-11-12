@@ -41,11 +41,11 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Unpack
 
 from llm_ports._extras import extra
 from llm_ports.observability import EventHook, NoopGeneration, log_events
-from llm_ports.ports import Answered, Cost, Failure, Finish, Generation, Usage
+from llm_ports.ports import EndFields, Generation
 
 with extra("langfuse"):
     from langfuse import propagate_attributes
@@ -98,11 +98,7 @@ class LangfuseGeneration:
         level: str = "DEFAULT",
         status_message: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-        usage_v2: Usage | None = None,
-        cost: Cost | None = None,
-        finish: Finish | None = None,
-        answered: Answered | None = None,
-        failure: Failure | None = None,
+        **fields: Unpack[EndFields],
     ) -> None:
         """Close the generation with its output, usage, cost and metadata; never raises.
 
@@ -113,7 +109,8 @@ class LangfuseGeneration:
         `status_message`. `finish`, `answered` and `failure` already reach the sink as metadata
         on the library's own call path; they are accepted here for the port's signature.
         """
-        del finish, answered, failure  # carried in the metadata by `generate`
+        # `finish`, `answered` and `failure` are carried in the metadata by `generate`.
+        usage_v2, cost = fields.get("usage_v2"), fields.get("cost")
         kw: dict[str, Any] = {}
         if output is not None:
             kw["output"] = output

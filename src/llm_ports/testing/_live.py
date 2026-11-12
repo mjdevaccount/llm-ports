@@ -1,16 +1,15 @@
 """Blocking live model requests in tests: `block_live_requests()` and `LiveRequestBlocked`.
 
-Two guards, so a request is stopped whichever way it is made:
-
-- pydantic-ai's own switch, `models.ALLOW_MODEL_REQUESTS = False`, refuses a request from any of
-  its provider models (when pydantic-ai is installed);
-- a transport guard: a request that reaches a REAL network transport (`httpx2` or `httpx`,
+One guard, on the transports every provider SDK the library wraps sends through: a request that reaches a REAL network transport (`httpx2` or `httpx`,
   async or sync) for any host but loopback raises `LiveRequestBlocked` naming the host. A test
   transport (`MockTransport`, a recorded transport, an in-process ASGI app) is not a network
   transport, and a server on loopback (`localhost`, `127.0.0.0/8`, `::1`) is the test's own: neither
   is blocked.
 
-`block_live_requests()` returns the function that undoes both. The pytest plugin applies it to
+pydantic-ai's own `ALLOW_MODEL_REQUESTS` switch is left alone: it refuses a model on loopback
+too, so it would block the test's own server.
+
+`block_live_requests()` returns the function that undoes the guard. The pytest plugin applies it to
 every test that does not opt in (`@pytest.mark.llm_live` plus `--llm-live`).
 """
 
@@ -95,14 +94,6 @@ def block_live_requests() -> Callable[[], None]:
         original = cls.__dict__[meth]
         setattr(cls, meth, guard(original))
         undo.append(functools.partial(setattr, cls, meth, original))
-    try:
-        models = importlib.import_module("pydantic_ai.models")
-    except ImportError:
-        pass
-    else:
-        was = getattr(models, "ALLOW_MODEL_REQUESTS", True)
-        setattr(models, "ALLOW_MODEL_REQUESTS", False)  # noqa: B010  # a module read by name
-        undo.append(functools.partial(setattr, models, "ALLOW_MODEL_REQUESTS", was))
 
     def release() -> None:
         for fn in reversed(undo):

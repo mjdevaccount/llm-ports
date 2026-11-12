@@ -7,6 +7,7 @@
 
 from llm_ports.testing._clock import FakeClock
 from llm_ports.testing._generator import STUB_MODEL, Reply, ScriptedReply, StubGenerator
+from llm_ports.testing._live import LiveRequestBlocked, block_live_requests, is_loopback
 from llm_ports.testing._stubs import (
     RecordedGeneration,
     RecordingTracer,
@@ -22,6 +23,7 @@ __all__ = [
     "STUB_MODEL",
     "ContractViolation",
     "FakeClock",
+    "LiveRequestBlocked",
     "RecordedGeneration",
     "RecordingTracer",
     "Reply",
@@ -32,4 +34,6 @@ __all__ = [
     "StubGenerator",
     "StubPromptSource",
     "StubReranker",
+    "block_live_requests",
+    "is_loopback",
 ]

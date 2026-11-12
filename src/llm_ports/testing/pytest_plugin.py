@@ -3,8 +3,8 @@
 Installing `llm-ports` in a test environment turns it on; `-p no:llm_ports` turns it off.
 
 - **Live model requests are blocked in every test** (`testing._live.block_live_requests`): a
-  request that reaches a real network transport raises `LiveRequestBlocked` naming the host, and
-  pydantic-ai's `ALLOW_MODEL_REQUESTS` is False. A test opts in with `@pytest.mark.llm_live`; it
+  request that reaches a real network transport for a non-loopback host raises
+  `LiveRequestBlocked` naming the host. A test opts in with `@pytest.mark.llm_live`; it
   then runs only when `--llm-live` is passed, and is skipped otherwise.
 - **Fixtures:** `stub_generator` (a factory; every script it built must be spent by teardown),
   `recording_tracer`, `fake_clock`, and `llm_replay` (a cassette by path: replayed, or recorded

@@ -187,6 +187,9 @@ layers = [
     "grounding | prompts | observability",
     "ports | learn | forecast",
 ]
+# The pytest plugin's `llm_replay` fixture serves the pydantic-ai replay adapter, imported only
+# when a test requests that fixture (so the plugin itself needs no extra).
+ignore_imports = ["llm_ports.testing.pytest_plugin -> llm_ports.adapters.pydantic_ai.replay"]
 
 [[tool.importlinter.contracts]]
 id = "learn-standalone"
