@@ -22,6 +22,7 @@ from llm_ports.adapters import litellm_proxy
 from llm_ports.adapters import pydantic_ai as pag
 from llm_ports.adapters.pydantic_ai import PydanticAIGenerator
 from llm_ports.ports import Answered, Cost, GenRequest, Usage
+from tests.adapters.pydantic_ai._scripted import scripted_model as _replies
 
 
 class _Note(BaseModel):
@@ -103,16 +104,6 @@ def _gen(wire: dict[str, Any], **kw: Any) -> PydanticAIGenerator:
 
 
 # ── RC2, RC3: usage is the sum over every request, unknown stays None ───────────────────────────
-
-
-def _replies(*texts: str) -> FunctionModel:
-    calls: list[int] = []
-
-    def fn(_m: list[ModelMessage], _i: AgentInfo) -> ModelResponse:
-        calls.append(1)
-        return ModelResponse(parts=[TextPart(texts[min(len(calls) - 1, len(texts) - 1)])])
-
-    return FunctionModel(fn)
 
 
 async def test_rc2_two_re_asks_report_the_sum_of_three_requests() -> None:

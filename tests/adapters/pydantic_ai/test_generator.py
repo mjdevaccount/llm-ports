@@ -15,14 +15,14 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import TextPart
 from pydantic_ai.models import Model
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from llm_ports import ports
 from llm_ports.adapters import pydantic_ai as pag
 from llm_ports.adapters.pydantic_ai import PydanticAIGenerator, _generator, classify
 from llm_ports.ports import GenRequest
+from tests.adapters.pydantic_ai._scripted import scripted as _replies
 
 
 class _Note(BaseModel):
@@ -35,16 +35,6 @@ class _Refused(Exception):
 
 
 REQ = GenRequest(model="small-chat", prompt="narrate", output_retries=1)
-
-
-def _replies(*texts: str) -> tuple[FunctionModel, list[int]]:
-    calls: list[int] = []
-
-    def fn(_m: list[ModelMessage], _i: AgentInfo) -> ModelResponse:
-        calls.append(1)
-        return ModelResponse(parts=[TextPart(texts[min(len(calls) - 1, len(texts) - 1)])])
-
-    return FunctionModel(fn), calls
 
 
 def _j(headline: str, c: float = 0.5) -> str:

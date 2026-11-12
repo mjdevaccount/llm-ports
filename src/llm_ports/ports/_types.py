@@ -290,8 +290,29 @@ class Generated[T]:
 EmbedInput = Literal["document", "query"]
 
 
+class _Outcomed:
+    """Behaviour shared by the result types whose only 1.x field is `reason`.
+
+    A plain base (not a dataclass), so it adds no fields: each subclass declares its own.
+    """
+
+    outcome: Outcome
+    reason: str | None
+    failure: Failure | None
+
+    def __post_init__(self) -> None:
+        """Derive the 1.x `reason` from `failure` when a caller left it None."""
+        if self.reason is None and self.failure is not None:
+            object.__setattr__(self, "reason", self.failure.reason)
+
+    @property
+    def ok(self) -> bool:
+        """True when `outcome == "ok"`."""
+        return self.outcome == "ok"
+
+
 @dataclass(frozen=True)
-class Embedded:
+class Embedded(_Outcomed):
     """What an `Embedder` returns: one vector per input, in input order, all in one space.
 
     Attributes:
@@ -325,19 +346,9 @@ class Embedded:
     answered: Answered | None = None
     failure: Failure | None = None
 
-    def __post_init__(self) -> None:
-        """Derive the 1.x `reason` from `failure` when a caller left it None."""
-        if self.reason is None and self.failure is not None:
-            object.__setattr__(self, "reason", self.failure.reason)
-
-    @property
-    def ok(self) -> bool:
-        """True when `outcome == "ok"`."""
-        return self.outcome == "ok"
-
 
 @dataclass(frozen=True)
-class Reranked:
+class Reranked(_Outcomed):
     """What a `Reranker` returns: one score per document, in input order.
 
     Attributes:
@@ -359,16 +370,6 @@ class Reranked:
     reason: str | None = None
     answered: Answered | None = None
     failure: Failure | None = None
-
-    def __post_init__(self) -> None:
-        """Derive the 1.x `reason` from `failure` when a caller left it None."""
-        if self.reason is None and self.failure is not None:
-            object.__setattr__(self, "reason", self.failure.reason)
-
-    @property
-    def ok(self) -> bool:
-        """True when `outcome == "ok"`."""
-        return self.outcome == "ok"
 
 
 @dataclass(frozen=True)
