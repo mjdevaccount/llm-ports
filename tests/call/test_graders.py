@@ -91,6 +91,49 @@ class TestEachGrader:
         plain = cg.schema_complete(PROMPT, {"ticker": "SPY", "entry_low": None}, ROLE)
         assert not plain.passed and plain.value == 0.5 and plain.reason == "empty: ['entry_low']"
 
+    def test_schema_complete_reads_a_dict_against_a_declared_model(self) -> None:
+        # A strict grammar replies a DICT; the declared model supplies the answer paths it cannot carry.
+        reply = {
+            "thesis": "t",
+            "stop": None,
+            "tickers": [{"ticker": "SPY", "entry_low": None, "note": None}],
+            "hedge": None,
+        }
+        assert not cg.schema_complete(PROMPT, reply, ROLE).passed, "undeclared: today's strict read"
+        ok = cg.schema_complete(PROMPT, reply, ROLE, model=_Call)
+        assert (ok.passed, ok.value, ok.reason) == (True, 1.0, ""), ok.reason
+
+    def test_a_declared_model_still_fails_a_null_on_a_required_field_of_a_dict(self) -> None:
+        reply = {"thesis": "", "stop": None, "tickers": [{"ticker": None, "entry_low": None, "note": None}]}
+        bad = cg.schema_complete(PROMPT, reply, ROLE, model=_Call)
+        assert not bad.passed and bad.reason == "empty: ['thesis', 'tickers[0].ticker']", bad.reason
+        assert bad.value == 0.6
+
+    def test_named_paths_exempt_only_themselves(self) -> None:
+        # A field typed nullable whose prompt never asks for null: the caller names the subset.
+        reply = {"thesis": "t", "stop": None, "tickers": [{"ticker": "SPY", "entry_low": None, "note": None}]}
+        some = cg.schema_complete(PROMPT, reply, ROLE, nullable={"tickers[].entry_low", "tickers[].note"})
+        assert not some.passed and some.reason == "empty: ['stop']", some.reason
+        assert cg.schema_complete(
+            PROMPT, reply, ROLE, nullable={"stop", "tickers[].entry_low", "tickers[].note"}
+        ).passed
+        both = cg.schema_complete(PROMPT, {"x": None, "stop": None}, ROLE, model=_Call, nullable={"x"})
+        assert both.passed, "model and named paths join"
+
+    def test_a_declaration_replaces_a_pydantic_values_own_annotations(self) -> None:
+        # Declared = the caller's whole answer set, on any value: an empty declaration is strict.
+        value = _Level(ticker="SPY")
+        strict = cg.schema_complete(PROMPT, value, ROLE, nullable=())
+        assert not strict.passed and strict.reason == "empty: ['entry_low', 'note']", strict.reason
+
+    def test_a_bound_declaration_is_a_table_entry(self) -> None:
+        from functools import partial
+
+        table = {**cg.GRADERS, "schema_complete": partial(cg.schema_complete, model=_Call)}
+        s = cg.score_one("schema_complete", PROMPT, {"thesis": "t", "stop": None, "tickers": []}, ROLE, table)
+        assert s.passed, s.reason
+        assert cg.GRADERS["schema_complete"] is cg.schema_complete, "the built-in table is untouched"
+
     def test_numbers_from_inputs(self) -> None:
         ok = cg.numbers_from_inputs(PROMPT, {"why": "spot sat at 766.2 above 765.0"}, ROLE)
         assert ok.passed and ok.value == 0.0

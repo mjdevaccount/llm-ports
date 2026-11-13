@@ -13,7 +13,10 @@ Built-in graders, for structured outputs (a dict or pydantic value under a gramm
   every required key, so a parsed reply is not necessarily an answered one. An empty list is an
   answer; only None and blank text count as unanswered. On a pydantic value, None on a field whose
   annotation admits None (`float | None`, `Optional[X]`) is an answer too, while None on a required
-  field fails. A dict value has no annotations to read, so every None in it is unanswered.
+  field fails. A dict value has no annotations to read, so every None in it is unanswered, unless
+  the caller declares the answer paths: `schema_complete(..., model=Out)` reads them off a model,
+  `nullable={"items[].stop"}` names them, and `partial(schema_complete, nullable=...)` binds them
+  into a table entry.
 - `numbers_from_inputs`: figures in the reply's prose that no part of the prompt rendered, digit
   runs by value and spelled numbers alike (`numbers.loose`): the number law, per call.
 - `echo`: the share of the reply's sentences copied verbatim from the prompt.
@@ -39,7 +42,7 @@ from __future__ import annotations
 
 import re
 import types
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any, Union, get_args, get_origin
 
@@ -166,17 +169,44 @@ def nullable_paths(model: type[BaseModel], prefix: str = "", _seen: frozenset[ty
     return frozenset(out)
 
 
-def schema_complete(_prompt: str, value: Any, _role: Role) -> CallScore:
+def schema_complete(
+    _prompt: str,
+    value: Any,
+    _role: Role,
+    *,
+    model: type[BaseModel] | None = None,
+    nullable: Iterable[str] | None = None,
+) -> CallScore:
     """Score the share of the reply's fields that carry a value.
 
     Passes only when no field is unanswered. None and blank text are unanswered; an empty list is an
-    answer, and so is None on a pydantic field whose annotation admits None.
+    answer, and so is None on a path declared nullable.
+
+    Args:
+        _prompt: The rendered prompt (unused).
+        value: The reply: a dict, a list or a pydantic value.
+        _role: The call's role (unused).
+        model: The declared output model; its `nullable_paths` are the answer paths for any value,
+            a dict reply included.
+        nullable: Answer paths named directly, index-free (`items[].stop`). Taken with `model`, the
+            two sets are joined.
+
+    Returns:
+        A `CallScore`; never raises on a value `leaves` can walk.
+
+    Invariants:
+        - With neither `model` nor `nullable`, a pydantic value's own annotations decide and a dict's
+          every None is unanswered: the grader the built-in table carries.
+        - A declared path exempts None and blank text only; a non-empty value scores the same.
     """
     fields = list(leaves(value))
     if not fields:
         return CallScore("schema_complete", 0.0, False, "the reply carries no fields")
-    nullable = nullable_paths(type(value)) if isinstance(value, BaseModel) else frozenset()
-    empty = [p for p, v in fields if _empty(v) and _INDEX.sub("[]", p) not in nullable]
+    if model is None and nullable is None:
+        exempt = nullable_paths(type(value)) if isinstance(value, BaseModel) else frozenset()
+    else:
+        exempt = (nullable_paths(model) if model is not None else frozenset()) | frozenset(nullable or ())
+    empty = [p for p, v in fields if _empty(v) and _INDEX.sub("[]", p) not in exempt]
     share = round(1 - len(empty) / len(fields), 4)
     return CallScore("schema_complete", share, not empty, f"empty: {empty[:4]}" if empty else "")
 
