@@ -6,6 +6,7 @@
 #   exit 0  no drift: the job is green.
 #   exit 1  drift: the job opens (or comments on) one issue titled "semconv drift" and goes red.
 #   exit 2  could not look: the job goes red with no issue; never read as "no drift".
+#   other   the tool did not finish (127 no interpreter, 137 killed): red the same way.
 # mcp/scripts/ci-schedule-audit.py watches that the weekly run keeps happening.
 name: semconv-drift
 
@@ -40,7 +41,8 @@ jobs:
           rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           cat drift.txt
-          if [ "$rc" -eq 2 ]; then exit 2; fi
+          # Only 0 and 1 are answers. Anything else did not finish looking.
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then exit 2; fi
           exit 0
       - name: open or update the drift issue
         if: steps.diff.outputs.rc == '1'
