@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`call.graders.schema_complete(..., model=, nullable=)`: declared answer paths for a dict reply.**
+  A strict grammar replies a dict, which carries no annotations, so every None in it read as
+  unanswered, including a null the prompt orders ("else null"). Pass the declared output model
+  (`model=Out`, its `nullable_paths`), name the paths (`nullable={"items[].stop"}`, for a field
+  typed nullable whose prompt still forbids null), or both (joined). A declaration replaces a
+  pydantic value's own annotations. Bind it into a table with
+  `{**GRADERS, "schema_complete": partial(schema_complete, model=Out)}`. With neither keyword,
+  grading is unchanged.
+
 ## [1.25.0] - 2026-11-12
 
 ### Behaviour changes (read first)
