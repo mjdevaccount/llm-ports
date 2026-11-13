@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-11-12
+
 ### Added
 
 - **`call.graders.schema_complete(..., model=, nullable=)`: declared answer paths for a dict reply.**
