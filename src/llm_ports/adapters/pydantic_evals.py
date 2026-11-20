@@ -36,6 +36,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 
 from llm_ports._extras import extra
+from llm_ports.call.models import translate_settings
 from llm_ports.call.roles import Role
 from llm_ports.ports import JudgeVerdict
 
@@ -172,12 +173,26 @@ class PydanticEvalsJudge:
         async with self._model_for() as model:
             return await self._run(model, inputs, output, rubric)
 
+    def _settings(self) -> dict[str, Any]:
+        """The role's settings, with `thinking` spelled the way the judge's model takes it.
+
+        A schema 2 role emits provider-neutral `thinking: bool`; a `chat_template` model reads it
+        only as `extra_body.chat_template_kwargs.enable_thinking`. Untranslated, the box's template
+        default (thinking ON) spent the whole token budget reasoning and every verdict was
+        "token limit exceeded" (1.26.1). A role whose model override is not its tier's model has
+        no `ModelInfo` here, so its settings pass through unchanged.
+        """
+        info = self._role.resolved_tier.info
+        if info is not None and self._role.model not in (None, info.id):
+            info = None
+        return translate_settings(self._role.model_settings(), info)[0]
+
     async def _run(self, model: Model, inputs: str | list[Any], output: Any, rubric: str) -> JudgeVerdict:
         judge = LLMJudge(
             rubric=rubric,
             model=model,
             include_input=True,
-            model_settings=cast(ModelSettings, self._role.model_settings()),
+            model_settings=cast(ModelSettings, self._settings()),
             score={"evaluation_name": SCORE_KEY, "include_reason": True},
             assertion={"evaluation_name": PASS_KEY, "include_reason": True},
         )

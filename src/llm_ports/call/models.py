@@ -335,6 +335,32 @@ def missing(info: ModelInfo, wanted: frozenset[Capability]) -> tuple[Capability,
     return tuple(c for c in CAPABILITIES if c in wanted and c not in have)
 
 
+def translate_settings(settings: Mapping[str, Any], info: ModelInfo | None) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Spell a request's provider-neutral `thinking` switch the way its model needs. Pure.
+
+    Args:
+        settings: The request's settings; a schema 2 role puts `thinking: bool` in them.
+        info: The request's model, or None when the table does not know it (the settings pass
+            through unchanged, so pydantic-ai's own unified `thinking` applies).
+
+    Returns:
+        The settings to send, and the names of settings the model cannot take (dropped):
+        `unified` keeps `thinking` (pydantic-ai's `ModelSettings["thinking"]`); `chat_template`
+        moves it to `extra_body.chat_template_kwargs.enable_thinking`; `none` drops it, and names
+        it when the role asked to think.
+    """
+    out = dict(settings)
+    if info is None or "thinking" not in out or info.thinking == "unified":
+        return out, ()
+    want = bool(out.pop("thinking"))
+    if info.thinking == "chat_template":
+        extra_body = dict(out.get("extra_body") or {})
+        extra_body["chat_template_kwargs"] = {**(extra_body.get("chat_template_kwargs") or {}), "enable_thinking": want}
+        out["extra_body"] = extra_body
+        return out, ()
+    return out, ("thinking",) if want else ()
+
+
 __all__ = [
     "CAPABILITIES",
     "DEFAULT_FALLBACK_ON",

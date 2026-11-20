@@ -33,7 +33,7 @@ from typing import Any
 
 from llm_ports._extras import extra
 from llm_ports._headers import HEADER_VALUE_RULE, header_value_ok
-from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid
+from llm_ports.call.models import ModelInfo, ProviderSpec, TableInvalid, translate_settings
 from llm_ports.call.providers import BuildDeps, Built
 from llm_ports.observability import EventHook, log_events
 from llm_ports.ports import (
@@ -59,32 +59,6 @@ with extra("pydantic-ai"):
     from llm_ports.adapters.pydantic_ai._generator import PydanticAIGenerator, openai_compatible
 
 _log_event = log_events("llm_ports.call")
-
-
-def translate_settings(settings: Mapping[str, Any], info: ModelInfo | None) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Spell a request's provider-neutral `thinking` switch the way its model needs. Pure.
-
-    Args:
-        settings: The request's settings; a schema 2 role puts `thinking: bool` in them.
-        info: The request's model, or None when the table does not know it (the settings pass
-            through unchanged, so pydantic-ai's own unified `thinking` applies).
-
-    Returns:
-        The settings to send, and the names of settings the model cannot take (dropped):
-        `unified` keeps `thinking` (pydantic-ai's `ModelSettings["thinking"]`); `chat_template`
-        moves it to `extra_body.chat_template_kwargs.enable_thinking`; `none` drops it, and names
-        it when the role asked to think.
-    """
-    out = dict(settings)
-    if info is None or "thinking" not in out or info.thinking == "unified":
-        return out, ()
-    want = bool(out.pop("thinking"))
-    if info.thinking == "chat_template":
-        extra_body = dict(out.get("extra_body") or {})
-        extra_body["chat_template_kwargs"] = {**(extra_body.get("chat_template_kwargs") or {}), "enable_thinking": want}
-        out["extra_body"] = extra_body
-        return out, ()
-    return out, ("thinking",) if want else ()
 
 
 class _Translating:
