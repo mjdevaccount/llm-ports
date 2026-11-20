@@ -202,3 +202,49 @@ async def test_images_reach_the_judge_model_beside_the_text() -> None:
     assert len(imgs) == 1 and imgs[0].data == b"\x89PNG-bytes" and imgs[0].media_type == "image/png"
     assert any(isinstance(c, str) and "read the chart" in c for c in got)
     assert judge_inputs("p") == "p", "a text call stays text"
+
+
+class TestTheJudgesThinkingSwitch:
+    """The judge sends `thinking` spelled for its model, as the generator's factory does (1.26.1).
+
+    Untranslated, a schema 2 role's `thinking: False` reached a `chat_template` model as a key it
+    ignores, the template default (thinking ON) spent the whole budget, and every verdict failed.
+    """
+
+    @staticmethod
+    def _role(tier: str, model: str | None = None) -> Any:
+        from llm_ports.call import roles
+        from tests.conftest import FIXTURES
+
+        class V2Role(roles.Role):
+            TIERS = roles.load_tiers(FIXTURES / "llm_tiers_v2.toml").tiers
+
+        return V2Role("llm.judge", tier=tier, temperature=0.0, max_tokens=600, model=model)
+
+    def test_a_chat_template_model_gets_enable_thinking_in_its_chat_template_kwargs(self) -> None:
+        s = PydanticEvalsJudge(self._role("local"), model=FunctionModel(lambda _m, _i: None))._settings()  # type: ignore[arg-type,return-value]
+        assert "thinking" not in s
+        assert s["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+        assert s["max_tokens"] == 600
+
+    def test_a_unified_model_keeps_the_neutral_switch(self) -> None:
+        s = PydanticEvalsJudge(self._role("cloud"), model=FunctionModel(lambda _m, _i: None))._settings()  # type: ignore[arg-type,return-value]
+        assert s["thinking"] is False and "extra_body" not in s
+
+    def test_a_model_override_the_table_does_not_describe_passes_through(self) -> None:
+        role = self._role("local", model="someone-else")
+        s = PydanticEvalsJudge(role, model=FunctionModel(lambda _m, _i: None))._settings()  # type: ignore[arg-type,return-value]
+        assert s["thinking"] is False and "extra_body" not in s
+
+    async def test_the_translated_settings_reach_the_judging_model(self) -> None:
+        seen: list[Any] = []
+
+        def fn(_m: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_settings)
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name="final_result", args={"reason": "ok", "pass": True, "score": 1.0})]
+            )
+
+        await PydanticEvalsJudge(self._role("local"), model=FunctionModel(fn)).judge(prompt="p", output="o", rubric="r")
+        assert seen and seen[0]["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+        assert "thinking" not in seen[0]

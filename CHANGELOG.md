@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.26.1] - 2026-11-20
+
+### Fixed
+
+- **`PydanticEvalsJudge` sends `thinking` spelled for its model.** It passed `Role.model_settings()`
+  straight to `LLMJudge`, so a schema 2 role's provider-neutral `thinking: False` reached a
+  `chat_template` model (llama.cpp, vLLM) as a key it ignores; the template default (thinking ON)
+  spent the whole token budget reasoning and every verdict failed "token limit exceeded before
+  any response was generated". The judge now runs the settings through `translate_settings`, as
+  the generator's factory does, with the tier's `ModelInfo`. A role whose model override is not
+  its tier's model passes through unchanged. `translate_settings` now lives beside `ModelInfo`
+  (`llm_ports.call.models`), so the `evals` extra no longer needs the `pydantic-ai` adapter's
+  dependencies to reach it; `adapters.pydantic_ai` still exports it.
+
 ## [1.26.0] - 2026-11-12
 
 ### Added
