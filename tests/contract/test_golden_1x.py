@@ -18,13 +18,28 @@ from tests.contract.golden_1x_scenarios import run_all
 
 GOLDEN = Path(__file__).parents[1] / "fixtures" / "golden" / "result_1x_v1_22_0.json"
 
+#: `reason` names the exception class (ADR-0001), so it follows pydantic-ai's own classification.
+#: A scenario here may read either value: the golden's (the floor pydantic-ai, `test-lowest`) or the
+#: newer one. Every other field, the outcome included, must still match exactly.
+#: wire_413 -- pydantic-ai 2.71 raises HTTP 413 as `ModelHTTPError.for_category(ModelRequestRejectedError)`
+#: (its docstring: "an HTTP 400, 413 or 422"), where 2.68 raised a plain `ModelHTTPError`.
+UPSTREAM_REASON = {"wire_413": "ModelRequestRejectedError: status 413"}
+
 
 async def test_every_1x_field_matches_the_1_22_0_golden() -> None:
     want = json.loads(GOLDEN.read_text(encoding="utf-8"))
     got = json.loads(json.dumps(await run_all(), sort_keys=True))
     assert sorted(got) == sorted(want)
     for name in want:
+        if got[name].get("reason") == UPSTREAM_REASON.get(name):
+            got[name] = {**got[name], "reason": want[name]["reason"]}
         assert got[name] == want[name], name
+
+
+def test_an_upstream_reason_is_allowed_only_where_the_golden_is_another_value() -> None:
+    want = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    for name, reason in UPSTREAM_REASON.items():
+        assert name in want and want[name]["reason"] != reason, name
 
 
 def test_the_golden_covers_every_1x_outcome() -> None:
