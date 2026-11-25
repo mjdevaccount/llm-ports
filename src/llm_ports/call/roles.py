@@ -444,6 +444,10 @@ class Role:
         output_retries: Re-asks allowed when the validator finds problems.
         timeout_s: Overrides the tier's timeout, in seconds.
         graders: Names of `call.graders` entries that `call.generate` scores every `ok` reply with.
+        gates: The graders, among `graders`, that are ACCEPTANCE GATES for `call.generate`: a reply
+            failing one is re-asked while `output_retries` remain and then refused (`invalid`),
+            never returned `ok`. Empty by default: a grader measures and the caller decides.
+            ADR-0028.
         settings: Per-role sampling the tier does not decide (seed, top_p, temperature).
         accept_truncated: A reply the token ceiling cut is `ok` (with a `CallWarning`) instead of
             `truncated`: the 1.x behaviour, for a role whose consumer reads a partial reply.
@@ -464,7 +468,7 @@ class Role:
             state `cache`.
 
     Raises:
-        ValueError: `tier` is not in `TIERS`.
+        ValueError: `tier` is not in `TIERS`, or `gates` names a grader `graders` does not.
     """
 
     TIERS: ClassVar[Mapping[str, Tier]] = {}
@@ -489,10 +493,14 @@ class Role:
     context: ContextMode = "off"
     trim: TrimPolicy | None = None
     cache_prefix: bool = False
+    gates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.tier not in self.TIERS:
             raise ValueError(f"role {self.name!r}: unknown tier {self.tier!r} (have {sorted(self.TIERS)})")
+        ungraded = [g for g in self.gates if g not in self.graders]
+        if ungraded:
+            raise ValueError(f"role {self.name!r}: gates {ungraded} are not among its graders {list(self.graders)}")
         if not self.category:
             object.__setattr__(self, "category", self.name)
 

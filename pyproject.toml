@@ -1,6 +1,6 @@
 [project]
 name = "llm-ports"
-version = "1.26.1"
+version = "1.27.0"
 description = "Thin Protocols for LLM work (Generator, Embedder, Reranker, Tracer, PromptSource, Judge, ...) and the one call path around them: roles from a tier table, prompt packs with a frozen content sha, per-call graders, named outcomes. Frameworks live behind the ports; pydantic-ai is the first adapter."
 readme = "README.md"
 license = "MIT"
@@ -133,6 +133,7 @@ dev = [
     "alembic>=1.13",
     "mlflow>=3.18,<4",
     "pluggy>=1.7",
+    "hypothesis>=6.170",
 ]
 docs = [
     "mkdocs-material>=9.8.0",

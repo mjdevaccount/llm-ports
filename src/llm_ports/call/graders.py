@@ -18,7 +18,9 @@ Built-in graders, for structured outputs (a dict or pydantic value under a gramm
   `nullable={"items[].stop"}` names them, and `partial(schema_complete, nullable=...)` binds them
   into a table entry.
 - `numbers_from_inputs`: figures in the reply's prose that no part of the prompt rendered, digit
-  runs by value and spelled numbers alike (`numbers.loose`): the number law, per call.
+  runs by value and spelled numbers alike (`numbers.loose`): the number law, per call. A figure
+  that shows one prompt value again, coarser (rounded, in millions, as a percentage), is that
+  value (`numbers.rerenders`).
 - `echo`: the share of the reply's sentences copied verbatim from the prompt.
 - `cites_url`: the distinct http(s) URLs the reply carries, in any string field. A web-fetching
   tier's reply that cites nothing cannot be checked against its pages. Web calls only.
@@ -215,12 +217,15 @@ def numbers_from_inputs(prompt: str, value: Any, _role: Role) -> CallScore:
     """Count the distinct figures in the reply's prose that the prompt did not render.
 
     Digit runs compare by value, and spelled numbers count too (`numbers.loose`). The prompt's own
-    text licenses a spelled word, and '%' licenses 'percent'. Passes only at zero.
+    text licenses a spelled word, and '%' licenses 'percent'. A reply is free prose over raw
+    inputs, so a figure that re-renders one prompt value (`numbers.rerenders`: "0.59" for 0.5918,
+    "19.8M" for 19813893, "75%" for 0.7486) is licensed; a whole number with no percent sign or
+    scale after it is not. Passes only at zero.
 
-    Rationale: ADR-0003.
+    Rationale: ADR-0003, ADR-0027.
     """
     have = digits(prompt)
-    hits = sorted({n for s in prose(value) for n in loose(s, have, prompt)})
+    hits = sorted({n for s in prose(value) for n in loose(s, have, prompt, rerender=True)})
     return CallScore(
         "numbers_from_inputs", float(len(hits)), not hits, f"numbers no input rendered: {hits[:3]}" if hits else ""
     )

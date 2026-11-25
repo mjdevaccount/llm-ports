@@ -11,6 +11,8 @@ Invariants:
       does raise.
     - A re-ask happens when the reply has problems (its own, or `validate`'s) and
       `req.output_retries` re-asks remain; after the last one the value is kept with its problems.
+    - A re-ask asks `retry_message` for its text exactly once, as the real adapter does, so a
+      caller that counts its re-asks there counts the stub's too.
 """
 
 from __future__ import annotations
@@ -131,6 +133,7 @@ class StubGenerator:
 
     Attributes:
         requests: Every `GenRequest` received, in call order (a re-ask does not add one).
+        reasks: The message of every re-ask, in order: what the model would have been told.
     """
 
     def __init__(self, reply: Reply | Sequence[Any] | Any, *, model: str = STUB_MODEL) -> None:
@@ -144,6 +147,7 @@ class StubGenerator:
             self._reply = lambda _req, _out: reply
         self._model = model
         self.requests: list[GenRequest] = []
+        self.reasks: list[str] = []
 
     def _next(self, _req: GenRequest, _out: type[Any]) -> Any:
         script = self._script or []
@@ -182,8 +186,10 @@ class StubGenerator:
         validate: Validator[T] | None = None,
         retry_message: RetryMessage | None = None,
     ) -> Generated[T]:
-        """Answer `req`, re-asking while problems remain and re-asks are left; `retry_message` is unused."""
-        del retry_message
+        """Answer `req`, re-asking while problems remain and re-asks are left.
+
+        Each re-ask asks `retry_message` for its text, as an adapter does, and keeps it in `reasks`.
+        """
         self.requests.append(req)
         total: Usage | None = None
         last = max(0, req.output_retries)
@@ -202,6 +208,11 @@ class StubGenerator:
                 return _failed(req, failure("internal", reason=failure_reason(exc)), n, total, answered)
             problems = reply.problems + found
             if problems and n < last:
+                try:
+                    said = retry_message(problems) if retry_message is not None else "; ".join(map(str, problems))
+                except Exception as exc:  # a bug in the caller's message builder is never a model outage
+                    return _failed(req, failure("internal", reason=failure_reason(exc)), n, total, answered)
+                self.reasks.append(said)
                 continue
             return Generated(
                 value=reply.value,

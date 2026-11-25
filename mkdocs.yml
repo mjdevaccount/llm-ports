@@ -122,6 +122,8 @@ nav:
       - adr/0024-context-is-measured-not-estimated.md
       - adr/0025-otel-is-a-tracer-names-are-pinned.md
       - adr/0026-a-pack-has-an-identity-beside-its-content-sha.md
+      - adr/0027-a-reply-may-round-one-input-value.md
+      - adr/0028-a-role-may-make-a-grader-an-acceptance-gate.md
   - Design:
       - design/LEARNING-LOOP-CORE.md
       - design/EVAL-LABELS-CONSOLIDATION.md

@@ -158,3 +158,41 @@ async def test_cancelling_the_call_propagates_and_is_never_a_result() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert not [name for name, _ in seen if name in ("llm_deadline_expired", "llm_call_failed")]
+
+
+# -- a gate refusal that fails over is still counted (ADR-0028) -----------------------------------
+
+
+async def test_a_tier_refused_by_a_gate_reports_its_scores_before_the_fallback_answers() -> None:
+    """A table may list `invalid_output` in `fallback_on`. The refused tier's failed score reaches
+    `on_scores` with that tier's role; without it a counter of failed graders sees only the tier
+    that answered, and the refusal is invisible."""
+    listed = roles.load_tiers(_with(lambda r: r["tiers"]["local"].update(fallback_on=["invalid_output"])))
+    role = _role(listed, graders=("numbers_from_inputs",), gates=("numbers_from_inputs",))
+    gen = Tiers({LOCAL: "wait for a 15-minute retest", CLOUD: "held 14.88 of room"})
+    noted: list[tuple[str, str]] = []
+
+    async def on_scores(r: roles.Role, scores: tuple[Any, ...]) -> None:
+        noted.append((r.name, scores[0].reason))
+
+    res = await generate(role, prompt="room_down 14.878", generator=gen, hooks=Hooks(on_scores=on_scores))
+    assert res.outcome == "ok" and res.answered is not None and res.answered.tier == "cloud"
+    assert noted == [("t.fallback", "numbers no input rendered: ['15']"), ("t.fallback", "")]
+    assert [(a.tier, a.failure.kind) for a in res.attempts] == [("local", "invalid_output")]
+
+
+async def test_the_last_tier_of_a_chain_is_reported_once_even_when_its_refusal_is_listed() -> None:
+    def edit(raw: dict[str, Any]) -> None:
+        raw["tiers"]["local"].update(fallback_on=["invalid_output"])
+        raw["tiers"]["cloud"].update(fallback_on=["invalid_output"])
+
+    role = _role(roles.load_tiers(_with(edit)), graders=("numbers_from_inputs",), gates=("numbers_from_inputs",))
+    gen = Tiers({LOCAL: "a 15-minute retest", CLOUD: "a 30-minute retest"})
+    noted: list[str] = []
+
+    async def on_scores(_r: roles.Role, scores: tuple[Any, ...]) -> None:
+        noted.append(scores[0].reason)
+
+    res = await generate(role, prompt="room_down 14.878", generator=gen, hooks=Hooks(on_scores=on_scores))
+    assert res.outcome == "invalid" and res.answered is not None and res.answered.tier == "cloud"
+    assert noted == ["numbers no input rendered: ['15']", "numbers no input rendered: ['30']"], "each tier once"

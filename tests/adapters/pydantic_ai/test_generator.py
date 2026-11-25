@@ -298,3 +298,20 @@ async def test_model_settings_reach_the_wire_and_a_request_setting_overrides_the
 
 async def test_record_response_is_a_no_op_with_no_capture_open() -> None:
     await _generator._record_response(httpx.Response(200, json=_completion("x")))
+
+
+async def test_a_gate_re_ask_through_the_real_adapter_leaves_its_witness() -> None:
+    """The adapter asks for the re-ask message exactly when it re-asks, which is where
+    `call.generate` records a gate re-ask (ADR-0028). Both directions: a reply that passes first
+    time carries no witness."""
+    from llm_ports import call
+    from tests.conftest import Role
+
+    role = Role("test.adapter_gate", tier="local", graders=("numbers_from_inputs",), gates=("numbers_from_inputs",))
+    model, calls = _replies("wait for a 15-minute retest", "held 14.88 of room")
+    res = await call.generate(role, prompt="room_down 14.878", generator=PydanticAIGenerator(model))
+    assert (res.outcome, res.value, res.retries) == ("ok", "held 14.88 of room", 1) and len(calls) == 2
+    assert res.stamp[call.GATES_REASKED] == ("numbers_from_inputs",)
+    model, calls = _replies("held 14.88 of room")
+    res = await call.generate(role, prompt="room_down 14.878", generator=PydanticAIGenerator(model))
+    assert res.outcome == "ok" and len(calls) == 1 and call.GATES_REASKED not in res.stamp

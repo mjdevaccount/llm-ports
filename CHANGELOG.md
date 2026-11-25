@@ -7,6 +7,60 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-11-25
+
+### Added
+
+- **`Role.gates`: a grader can be an acceptance gate** (ADR-0028). A role names which of its
+  `graders` decide whether `call.generate` returns the reply. A reply failing a gate is re-asked
+  through the validator seam while `Role.output_retries` remain (the caller's own validator runs
+  first), with the grader and its reason named to the model. A reply that still fails is returned
+  `invalid` (`failure.kind == "invalid_output"`), with `value=None`, reason
+  `gate: <grader>: <reason>` and `stamp[call.GATES_FAILED]` naming the gates; the observation ends in error and
+  `llm_call_failed` is emitted. `stamp["scores"]` is kept and `Hooks.on_scores` still receives it,
+  so a counter of failed graders counts a refused reply as it counted an accepted one. A gate
+  whose grader the call drops for its inputs (an image, a web tier) is dropped with it. Empty by
+  default: every existing role behaves as before. `call.chat` and `call.stream` are not gated.
+  `call.GateProblem` is the problem a gate hands the validator seam.
+  - A gate is named by its key in the grader table and matched to its score by position in
+    `Role.graders`, so a built-in bound under another key gates as that key.
+  - A gate re-ask emits `llm_gate_reasked` and stamps `stamp[call.GATES_REASKED]` (also on the
+    observation's metadata): a reply the re-ask fixed still says an earlier one was refused.
+  - A tier whose refusal fails over (`invalid_output` in its `fallback_on`) has its scores
+    handed to `Hooks.on_scores` before the answering tier's.
+  - A gate the grader table does not hold is a `request_fault` before any wire request.
+  - A gate dropped with its grader stamps `stamp[call.GATES_DROPPED]` and emits
+    `llm_call_warning` (`setting="gates"`) once per process for the role: the reply was not
+    checked by that gate, and the result says so.
+- **`testing.StubGenerator.reasks`**: the message of every re-ask the stub sent. The stub now
+  asks `retry_message` for it, once per re-ask, as the pydantic-ai adapter does.
+- **`grounding.numbers.rerenders(run, after, allowed)`** and **`numbers.loose(..., rerender=True)`**
+  (ADR-0027): whether a digit run shows ONE allowed value again, coarser. Rounded to the decimals
+  it is written with ("0.59" for 0.5918), as a percentage ("75%" for 0.7486), or at a scale
+  ("19.8B" or "19.8 billion" for 19813893517). A whole number with no percent sign or scale after
+  it is never a rounding, and nothing computed from two values is licensed. A scale letter is a
+  capital or `k` ("15m" is a timeframe), and a whole value is never moved to a percentage (a `1`
+  is not "100%"). A scale after a run the inputs license as it stands needs an input showing
+  that value at that scale: beside a date's `20`, "20B" is named, and "-1.2 billion" passes
+  beside "-1.2B", as "about 20B" does beside "19.8B". Off by default. The law is stated once,
+  slowly, in `tests/grounding/test_number_law.py`; the reader is held equal to that statement on
+  generated replies, and the test fails when a clause is barely generated.
+
+### Changed
+
+- **`call.graders.numbers_from_inputs` licenses a re-rendering of one prompt value**
+  (`rerender=True`, ADR-0027). A reply that rounds an input no longer fails; one that invents a
+  figure or computes one still does. A consumer counting this grader's failures will see the
+  count fall to the replies that carry a figure no single input shows. `grounding.belt`,
+  `slots.belt`, `uncited` and `law_text` are unchanged.
+
+### Fixed
+
+- **`numbers.canon` reads a digit run with two points as written.** `1.2.0` became `1.2` and
+  `2026.11.20` became `2026.11.2`: a version or a date lost a zero that was never a decimal, so
+  an input `1.2.0` licensed a reply's "1.2" in every reader (`grounding.belt`, `slots.belt`,
+  `uncited`, `numbers_from_inputs`). Such a run is now licensed only as printed.
+
 ## [1.26.1] - 2026-11-20
 
 ### Fixed

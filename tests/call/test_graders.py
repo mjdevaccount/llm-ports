@@ -140,6 +140,39 @@ class TestEachGrader:
         bad = cg.numbers_from_inputs(PROMPT, {"why": "spot sat at 999 after a 42 point drop"}, ROLE)
         assert not bad.passed and bad.value == 2.0 and "999" in bad.reason
 
+    def test_numbers_from_inputs_licenses_one_input_value_shown_coarser_and_nothing_computed(self) -> None:
+        prompt = "realized_r 0.5918 | room_down 14.878 | net_gex -19813893517 | win_rate 0.7486 | vix 28.89"
+        rounded = {"why": "Realized 0.59R with 14.88 of room, -19.8B of gamma and a 75% win rate."}
+        assert cg.numbers_from_inputs(prompt, rounded, ROLE).passed
+        invented = cg.numbers_from_inputs(prompt, {"why": "Wait for a 15-minute retest below 28.00."}, ROLE)
+        assert not invented.passed and invented.value == 2.0 and "['15', '28']" in invented.reason
+
+    @pytest.mark.parametrize(
+        ("prompt", "reply", "named"),
+        [
+            # A level moved to a round figure is not a rounding of the input: 28.89 is 28.89 at two decimals.
+            ("vix 28.89 | spot 766.2", "Stand aside until VIX below 28.00 confirms.", "28"),
+            # A dropped digit is not a percent of the input: -26 is -26%, and -0.026 would be -2.6%.
+            ("pct_from_52w_high -26 | spot 766.2", "It sits -2.6% below its 52-week high.", "2.6"),
+            # A bare whole number is never a rounding, and no input holds a 15.
+            ("realized_r 0.5918 | minutes_from_anchor -48.1", "Wait for a 15-minute retest.", "15"),
+        ],
+    )
+    def test_numbers_from_inputs_must_fail_fixtures(self, prompt: str, reply: str, named: str) -> None:
+        # The three sentences the licence must never pass, verbatim from live replies (2026-11-25).
+        bad = cg.numbers_from_inputs(prompt, {"why": reply}, ROLE)
+        assert not bad.passed and bad.value == 1.0, bad.reason
+        assert f"'{named}'" in bad.reason, bad.reason
+
+    def test_numbers_from_inputs_licenses_a_marked_whole_number_and_never_a_bare_one(self) -> None:
+        # Rounding ONE input to fewer digits includes rounding it to none, but only where a percent
+        # sign or a scale says which value is meant. Bare, "716" for 715.87 is an invented level.
+        prompt = "net_gex -19813893517 | win_rate 0.7486 | chg_pct 13.49 | put_wall 715.87"
+        marked = {"why": "Gamma is -20B, the win rate 75% and the move 13 percent."}
+        assert cg.numbers_from_inputs(prompt, marked, ROLE).passed
+        bare = cg.numbers_from_inputs(prompt, {"why": "Support sits at 716 and the move was 13 wide."}, ROLE)
+        assert not bare.passed and bare.value == 2.0 and "['13', '716']" in bare.reason, bare.reason
+
     def test_numbers_from_inputs_reads_a_spelled_number_as_the_writers_belts_do(self) -> None:
         # A digit-free grammar made the model SPELL it ("nine one point seven million"): no input
         # rendered that figure, and the per-call grader must agree with slots.belt about it.

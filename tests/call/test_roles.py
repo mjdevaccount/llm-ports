@@ -43,6 +43,13 @@ def test_the_consumers_ladder_check_runs_and_can_refuse() -> None:
         roles.load_tiers(FIXTURES / "llm_tiers.toml", check_ladder=refuse)
 
 
+def test_a_gate_must_be_one_of_the_roles_graders() -> None:
+    assert Role("a.gated", tier="local", graders=("echo",), gates=("echo",)).gates == ("echo",)
+    assert Role("a.plain", tier="local", graders=("echo",)).gates == ()
+    with pytest.raises(ValueError, match=r"gates \['numbers_from_inputs'\] are not among its graders \['echo'\]"):
+        Role("a.ungraded", tier="local", graders=("echo",), gates=("numbers_from_inputs",))
+
+
 def test_the_base_class_has_no_table_so_cannot_be_instantiated() -> None:
     with pytest.raises(ValueError, match="unknown tier"):
         roles.Role("a.b", tier="local")

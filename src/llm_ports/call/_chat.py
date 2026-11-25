@@ -23,6 +23,7 @@ Invariants:
     - A tool that failed, an output the budget cut, and a run that hit `max_steps` each emit an
       event (`llm_tool_failed`, `llm_tool_truncated`, `llm_max_steps`) besides the trace.
     - No fallback chain: a conversation runs on the role's own tier.
+    - `Role.gates` do not apply: the role's graders score the turn and never refuse it (ADR-0028).
 
 Rationale: ADR-0001, ADR-0023, ADR-0024.
 """
@@ -285,7 +286,8 @@ async def stream[T](
                 if res is None:
                     res = _refusal(req, ports.failure("internal", reason="the Chat stream ended without Finished"))
                 res = _merged(res, pre, warns)
-                res = _settled(role, prompt, res, obs, h, {"steps": res.steps, **_tool_meta(done)})
+                # graded, never gated: a tool loop and a token stream have no single reply to refuse
+                res = _settled(role, prompt, res, obs, h, {"steps": res.steps, **_tool_meta(done)}, gate=False)
                 _raise_unless_ok(res)
         except _NotOk:
             _call_failed(h, role, res)
