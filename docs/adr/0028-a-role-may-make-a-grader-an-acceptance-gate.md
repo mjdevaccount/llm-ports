@@ -72,8 +72,13 @@ Chosen option 3.
   one. `Hooks.on_ok` does not see it. When a table lists `invalid_output` in a tier's
   `fallback_on`, the refused tier's scores are handed to `on_scores` too, before the answering
   tier's: the tier that answered did not fail, and the one that did must still be counted.
-- **A gate follows its grader.** A call that drops a grader for its inputs (an image, a web
-  tier's pages: `graders_for_inputs`) drops the gate with it.
+- **A gate follows its grader, and the result says when it left.** A call that drops a grader
+  for its inputs (an image, a web tier's pages: `graders_for_inputs`) drops the gate with it:
+  the grader cannot read what the model read, so its verdict would refuse honest replies. The
+  reply then goes back unchecked by that gate, which nothing outside the call could otherwise
+  tell from a pass, so the result carries `stamp[call.GATES_DROPPED]` naming the gates and
+  `llm_call_warning` (`setting="gates"`) is emitted once per process for the role. A consumer
+  that must never return an unchecked reply reads the stamp.
 - **A crashed gate refuses.** A grader that raises is a failed score (`CRASHED`), so it refuses;
   a gate that cannot run must not read as a pass.
 

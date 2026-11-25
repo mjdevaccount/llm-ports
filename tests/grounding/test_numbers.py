@@ -194,9 +194,59 @@ class TestRerenders:
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(numbers, "_between", counted)
             hits = numbers.loose(text, inputs, rerender=True)
-        assert len(values) == 5000 and len(seen) == 800, "two bisects a figure: itself, and moved by the marker"
+        assert len(values) == 5000 and len(seen) <= 1200, (
+            "at most three bisects a figure: as a percentage, moved, itself"
+        )
         assert max(seen) <= 2 and sum(seen) < 800, f"{sum(seen)} values looked at for 400 figures over 5000 inputs"
         assert len(hits) > 300, "and the invented ones are still named"
+
+    def test_inputs_clustered_inside_one_step_cost_one_look_a_figure(self) -> None:
+        """5000 inputs in [0, 1) all sit within half a step of a small whole number. A bare integer
+        is never a rounding, so it looks at none; a marked one stops at the first value that rounds."""
+        inputs = {f"0.{i:04d}" for i in range(5000)}
+        looked: list[int] = []
+        real = numbers._rounds_to
+
+        def counted(value: Any, shown: Any, step: Any) -> bool:
+            looked.append(1)
+            return real(value, shown, step)
+
+        text = " ".join(["0 1 2 3"] * 100 + ["1%", "0.5", "2 percent"] * 100)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(numbers, "_rounds_to", counted)
+            numbers.loose(text, inputs, rerender=True)
+        assert len(looked) <= 2 * 300, f"{len(looked)} values rounded for 700 figures over 5000 clustered inputs"
+
+    @pytest.mark.parametrize(
+        ("text", "inputs", "unlicensed"),
+        [
+            # an equal run licenses the run, never a magnitude: the letter needs an input at that scale
+            ("gamma is about 20B", "date 2026-11-20 spot 545.2", ["20B"]),
+            ("gamma is about 20bn", "date 2026-11-20 spot 545.2", ["20bn"]),
+            ("volume near 20K", "date 2026-11-20 spot 545.2", ["20K"]),
+            ("about $2B of notional", "2 DTE", ["2B"]),
+            ("a 0.6B gap", "ratio 0.5918", ["0.6B"]),  # a rounding is no licence for a scale either
+            # ... and the word does too, even when another figure in the inputs carries it
+            ("about 20 billion", "date 2026-11-20 cap 3.2 billion", ["billion"]),
+            # the input shows this value at this scale, as a letter or as a word: licensed both ways
+            ("net gex -1.2B", "net gex -1.2B", []),
+            ("net gex of -1.2 billion", "net gex -1.2B", []),
+            ("gex 1.2B", "gex 1.2 billion", []),
+            ("gex near 0.59B", "gex 0.5918B", []),
+            ("cap of 3.2 billion", "date 2026-11-20 cap 3.2 billion", []),
+            # a percentage the value already was keeps its word, with decimals or without
+            ("IV 18.4 percent", "iv 18.37", []),
+            ("IV 18 percent", "iv 18", []),
+        ],
+    )
+    def test_a_scale_after_a_licensed_run_needs_an_input_at_that_scale(
+        self, text: str, inputs: str, unlicensed: list[str]
+    ) -> None:
+        assert numbers.loose(text, numbers.digits(inputs), inputs, rerender=True) == unlicensed
+
+    def test_a_belt_over_printed_values_reads_no_scale(self) -> None:
+        """`rerender` off is the belt: values as code printed them, and a letter after one is a unit."""
+        assert numbers.loose("about 20B", {"20"}, "") == []
 
     def test_an_unreadable_allowed_run_is_skipped_never_raised(self) -> None:
         assert numbers.rerenders("0.59", "", {"1.2.3", "0.5918"}) is True

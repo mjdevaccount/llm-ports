@@ -29,6 +29,9 @@ All notable changes to this project are documented here. The format is based on
   - A tier whose refusal fails over (`invalid_output` in its `fallback_on`) has its scores
     handed to `Hooks.on_scores` before the answering tier's.
   - A gate the grader table does not hold is a `request_fault` before any wire request.
+  - A gate dropped with its grader stamps `stamp[call.GATES_DROPPED]` and emits
+    `llm_call_warning` (`setting="gates"`) once per process for the role: the reply was not
+    checked by that gate, and the result says so.
 - **`testing.StubGenerator.reasks`**: the message of every re-ask the stub sent. The stub now
   asks `retry_message` for it, once per re-ask, as the pydantic-ai adapter does.
 - **`grounding.numbers.rerenders(run, after, allowed)`** and **`numbers.loose(..., rerender=True)`**
@@ -37,7 +40,9 @@ All notable changes to this project are documented here. The format is based on
   ("19.8B" or "19.8 billion" for 19813893517). A whole number with no percent sign or scale after
   it is never a rounding, and nothing computed from two values is licensed. A scale letter is a
   capital or `k` ("15m" is a timeframe), and a whole value is never moved to a percentage (a `1`
-  is not "100%"). Off by default.
+  is not "100%"). A scale after a run the inputs license as it stands needs an input showing
+  that value at that scale: beside a date's `20`, "20B" is named, and "-1.2 billion" passes
+  beside "-1.2B". Off by default.
 
 ### Changed
 

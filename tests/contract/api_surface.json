@@ -344,6 +344,7 @@
  "llm_ports.call": [
   "AdmitHook",
   "DEADLINE_GRACE_S",
+  "GATES_DROPPED",
   "GATES_FAILED",
   "GATES_REASKED",
   "GateProblem",

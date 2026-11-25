@@ -473,8 +473,12 @@ async def generate[T](
     """
     h = hooks or Hooks()
     seen = graders_for_inputs(tuple(role.graders), has_images=bool(images), has_web=web)
+    dropped = tuple(g for g in role.gates if g not in seen)
     if seen != tuple(role.graders):
         role = replace(role, graders=seen, gates=tuple(g for g in role.gates if g in seen))
+    if dropped:  # the reply will not be checked by these gates: say so, on the result and once in the log
+        detail = f"{role.name}: gates {list(dropped)} not applied, their graders do not read this call's inputs"
+        _warn_once(h, f"gates:{role.name}:{dropped}", "gates", detail)
     loop = asyncio.get_running_loop()
     clocks = Deadline(total_s=role.resolved_timeout_s).start(loop.time())
     route = Route(role, clocks)
@@ -497,7 +501,7 @@ async def generate[T](
                     passed_on.append((tier_role, res.stamp["scores"]))
     except TimeoutError:
         route.expire(loop.time(), h.on_event or _log_event)
-    return await _finish(role, prompt, route, h, passed_on)
+    return await _finish(role, prompt, route, h, passed_on, dropped)
 
 
 async def _finish(
@@ -506,6 +510,7 @@ async def _finish(
     route: Route,
     h: Hooks,
     passed_on: Sequence[tuple[Role, tuple[CallScore, ...]]] = (),
+    dropped: tuple[str, ...] = (),
 ) -> Generated[Any]:
     """Stamp, report and return the route's result; an expiry with no result is a `timeout`.
 
@@ -520,6 +525,8 @@ async def _finish(
                 await h.on_scores(tier_role, scores)
     res = route.result if route.result is not None else timed_out(role, route)
     res = _stamped(role, res)
+    if dropped:
+        res = replace(res, stamp={**res.stamp, _gate.GATES_DROPPED: dropped})
     if route.result is None:
         _event(
             h,

@@ -67,6 +67,14 @@ Five limits keep the invented figure caught:
 "19.8 billion") and no other number word. It asks that of a run that equals an input too: beside
 a date's `20`, "-20 billion" is still 19813893517 shown coarser, and its "billion" is licensed.
 
+**A scale is a second claim, and an equal run does not make it.** When no value re-renders the
+figure at its scale, a run the inputs license as it stands (an equal run, or a plain rounding)
+keeps its scale only if an input shows THAT value AT that scale, as a letter or as a word:
+"-1.2B" and "-1.2 billion" both pass beside an input "-1.2B". Beside a date's `20`, "20B" is an
+invented magnitude and is named as `20B`; "20 billion" is named as `billion`, even when another
+figure in the inputs carries the word. A percentage of an equal value is not a scale and keeps
+its word ("18 percent" beside `18`, "18.4 percent" beside `18.37`).
+
 `rerender` is off by default. `numbers_from_inputs` turns it on; `grounding.belt`, `slots.belt`
 and `uncited` do not, because the figures they check were printed by code and a model has no
 reason to change one.
@@ -89,6 +97,17 @@ judgement of what a rounding is.
   0.045 to 0.055 or in 4.5 to 5.5.
 - Neutral: a capital scale letter is still read as a scale. "a 15M retest" is licensed by an
   input 15234567. Nothing on the page tells the two readings apart.
+- Bad: a scale the inputs spell another way is refused. "1M" for 999,999 fails (the run is not
+  the value at that scale to the decimals written), and so does "19.8MM".
+- Bad, and older than this decision: the law reads digit runs, so it refuses honest figures a
+  reader would accept, and each is a re-ask where the role gates. A clock without its leading
+  zero ("9:30" beside "09:30") names `9`. A numbered list ("1. ... 2. ...") names its markers. A
+  value quoted from a compact JSON array (`[540,545,550]` is ONE run, by the thousands-separator
+  rule) names `545`. A figure quoted from the system prompt is not in the prompt the grader
+  reads. Measure a role in the consumer's shadow before it gates on this grader.
+- Bad, and the other way: only the reply's prose is read. A number in a numeric field of a
+  structured reply (`{"level": 999.5}`) is never checked; a role whose figures live in typed
+  fields needs a grader over those fields, and this one is no gate for them.
 
 ### How much a dense prompt licenses
 

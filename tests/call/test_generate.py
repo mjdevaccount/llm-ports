@@ -386,13 +386,36 @@ class TestGates:
         assert len(seen) == 2 and res.outcome == "invalid", "kept with the caller's problems, then refused by the gate"
         assert res.problems == ("too short",), "the gate was not asked about a reply the caller refused"
 
-    async def test_a_gate_blind_to_the_calls_inputs_is_dropped_with_its_grader(self) -> None:
-        """An image or a web tier's pages are inputs no text grader sees: no grader, so no gate."""
+    async def test_a_gate_blind_to_the_calls_inputs_is_dropped_with_its_grader_and_says_so(self) -> None:
+        """An image or a web tier's pages are inputs no text grader sees: no grader, so no gate. The
+        reply goes back unchecked, so the result names the gate it skipped and the log says it once."""
+        warned: list[dict[str, Any]] = []
         for extra in ({"images": [(b"png", "image/png")]}, {"web": True}):
-            gen, _t, hooks, _e = _rig(INVENTED)
+            gen, _t, hooks, events = _rig(INVENTED)
             res = await call.generate(GATED, prompt=PROMPT, generator=gen, hooks=hooks, **extra)
             assert res.outcome == "ok" and [s.name for s in res.stamp["scores"]] == ["schema_complete", "echo"]
+            assert res.stamp[call.GATES_DROPPED] == ("numbers_from_inputs",), "an invented figure went back ok"
+            warned += [f for lvl, ev, f in events if ev == "llm_call_warning" and lvl == logging.WARNING]
+        assert [w["setting"] for w in warned] == ["gates"], "once a process for the role, not once a call"
+        assert "test.gated" in warned[0]["detail"] and "numbers_from_inputs" in warned[0]["detail"]
         assert GATED.gates == ("numbers_from_inputs",), "the role itself is untouched"
+
+    async def test_a_call_that_applies_every_gate_carries_no_dropped_stamp(self) -> None:
+        gen, _t, hooks, events = _rig(GROUNDED)
+        res = await call.generate(GATED, prompt=PROMPT, generator=gen, hooks=hooks)
+        assert res.outcome == "ok" and call.GATES_DROPPED not in res.stamp
+        assert not [ev for _lvl, ev, _f in events if ev == "llm_call_warning"]
+
+    async def test_a_re_ask_for_a_gate_and_another_problem_together_still_records_the_gate(self) -> None:
+        """A reply may carry a problem of its own AND fail a gate. The caller's message builder words
+        that re-ask, and the gate's part of it is still an event and a stamp."""
+        gen = StubGenerator([Reply.problems(INVENTED, ["too short"]), Reply.ok(GROUNDED)])
+        events: list[tuple[int, str, dict[str, Any]]] = []
+        hooks = self._hooks(RecordingTracer(), on_event=lambda lvl, ev, f: events.append((lvl, ev, dict(f))))
+        res = await call.generate(GATED, prompt=PROMPT, generator=gen, hooks=hooks)
+        assert res.outcome == "ok" and res.stamp[call.GATES_REASKED] == ("numbers_from_inputs",)
+        assert [f["gates"] for _lvl, ev, f in events if ev == "llm_gate_reasked"] == [["numbers_from_inputs"]]
+        assert "too short" in gen.reasks[0] and "numbers_from_inputs" in gen.reasks[0]
 
     async def test_a_crashed_gate_refuses_never_passes(self) -> None:
         def boom(*_a: Any) -> Any:

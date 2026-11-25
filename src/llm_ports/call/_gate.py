@@ -17,8 +17,10 @@ built-in under another key (`{"complete_nullable": partial(schema_complete, ...)
 still says `schema_complete`.
 
 Invariants:
-    - Pure, and never raises: a gate is a grader run by `graders.score_one`, which turns a crash
-      into a failed score.
+    - Never raises: a gate is a grader run by `graders.score_one`, which turns a crash into a
+      failed score. Scoring is pure; building a re-ask message records the re-ask (`Armed.reasked`).
+    - A gate whose grader does not read this call's inputs (images, a web reply) is not applied,
+      and the result says so: `stamp[GATES_DROPPED]`.
     - The caller's own validator runs first; a gate is asked only about a reply the caller accepts.
     - A reply that passes every gate is returned exactly as an ungated role's reply.
     - A gate with no score refuses: a gate that was not run never reads as a pass.
@@ -44,6 +46,11 @@ GATES_FAILED = "gates_failed"
 #: grader table keys in first-seen order, present exactly when a gate caused a re-ask. On an `ok`
 #: reply it is the only witness that an earlier reply of the same call was refused.
 GATES_REASKED = "gates_reasked"
+#: The stamp key naming the gates the call did NOT apply: `res.stamp[GATES_DROPPED]`, a tuple of
+#: grader table keys, present exactly when a gated role was called with inputs its gate's grader
+#: does not read (`graders.graders_for_inputs`: images, a web reply). The reply was not checked by
+#: those gates, and this is the only witness of it.
+GATES_DROPPED = "gates_dropped"
 
 
 @dataclass(frozen=True)
@@ -134,11 +141,13 @@ def armed[T](
         return own or failed(role, prompt, value, table)
 
     def message(problems: Sequence[Any]) -> str:
-        if problems and all(isinstance(p, GateProblem) for p in problems):
-            arm.reasked.append(tuple(problems))
+        gates = [p for p in problems if isinstance(p, GateProblem)]
+        if gates:  # recorded whenever a gate is among the reasons, whatever else the list holds
+            arm.reasked.append(tuple(gates))
             if on_reask is not None:
-                on_reask(problems)
-            return retry_text(problems)
+                on_reask(gates)
+        if gates and len(gates) == len(problems):
+            return retry_text(gates)
         return retry_message(problems) if retry_message is not None else "; ".join(map(str, problems))
 
     arm = Armed(check, message)
@@ -175,4 +184,4 @@ def refused[T](role: Role, res: Generated[T]) -> Generated[T]:
     )
 
 
-__all__ = ["GATES_FAILED", "GATES_REASKED", "GateProblem"]
+__all__ = ["GATES_DROPPED", "GATES_FAILED", "GATES_REASKED", "GateProblem"]

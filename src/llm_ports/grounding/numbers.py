@@ -196,35 +196,75 @@ def _between(values: Sequence[Decimal], lo: Decimal, hi: Decimal) -> Sequence[De
     return values[bisect_left(values, lo) : bisect_right(values, hi)]
 
 
+def _has(values: Sequence[Decimal], value: Decimal) -> bool:
+    at = bisect_left(values, value)
+    return at < len(values) and values[at] == value
+
+
 def _marker_used(run: str, after: str, values: Sequence[Decimal]) -> int | None:
     """Return how `run` re-renders one of the sorted `values`.
 
     None when it does not; else the length of the marker in `after` (the percent sign or scale)
     the licence needed, 0 for a plain rounding. Only a value within half a step of `run` can
-    round to it, so each rendering is one bisect, never a pass over every value.
+    round to it, so each rendering is one bisect and stops at the first value that rounds: never
+    a pass over every value, however densely the inputs cluster.
     """
     shown = _decimal(run)
     if shown is None:
         return None
     exponent = shown.as_tuple().exponent
     places = -exponent if isinstance(exponent, int) and exponent < 0 else 0
-    step = Decimal(1).scaleb(-places)
-    lo, hi = shown - step / 2, shown + step / 2
-    near = [v for v in _between(values, lo, hi) if _rounds_to(v, shown, step)]  # the value itself, rounded
     percent = _PERCENT.match(after)
     scale = None if percent else _SCALE.match(after)
     marker = percent or scale
+    if marker is None and not places:
+        return None  # a bare integer is never a rounding
+    step = Decimal(1).scaleb(-places)
+    lo, hi = shown - step / 2, shown + step / 2
+    one = Decimal(1)
     if marker is not None:
-        if percent is not None and not places and any(v >= 1 for v in near):
-            return marker.end()  # a whole percentage the value already was
-        shift = 2 if percent else -_SCALE_EXP[(scale.group(1) or scale.group(2)).lower()] if scale else 0
-        for base in _between(values, lo.scaleb(-shift), hi.scaleb(-shift)):
+        if percent is not None and any(_rounds_to(v, shown, step) for v in _between(values, max(lo, one), hi)):
+            return marker.end()  # a percentage the value already was: "18 percent" for 18, "18.4" for 18.37
+        shift = 2 if percent else -_exp(scale) if scale else 0
+        if percent is None and _has(values, shown.scaleb(-shift)):
+            return marker.end()  # the value itself at that scale, whatever its size
+        floor = lo if places else max(lo, one)  # a marked integer rounds a moved value of 1 or more only
+        for base in _between(values, floor.scaleb(-shift), hi.scaleb(-shift)):
             if percent is not None and base == base.to_integral_value():
                 continue  # times 100 shows a fraction; a whole value moved is an invented figure
-            moved = base.scaleb(shift)
-            if moved == shown or ((places or moved >= 1) and _rounds_to(moved, shown, step)):
+            if _rounds_to(base.scaleb(shift), shown, step):
                 return marker.end()
-    return 0 if places and near else None
+    if places and any(_rounds_to(v, shown, step) for v in _between(values, lo, hi)):
+        return 0  # the value itself, rounded
+    return None
+
+
+def _exp(scale: re.Match[str]) -> int:
+    return _SCALE_EXP[(scale.group(1) or scale.group(2)).lower()]
+
+
+def _scaled(text: str) -> dict[int, list[Decimal]]:
+    """Return the values `text` shows at a scale, sorted, by exponent: `{6: [1.2]}` for "-1.2M"."""
+    out: dict[int, list[Decimal]] = {}
+    for m in NUM.finditer(text):
+        after = text[m.end() : m.end() + _AFTER]
+        scale = None if _PERCENT.match(after) else _SCALE.match(after)
+        value = _decimal(m.group()) if scale is not None else None
+        if scale is not None and value is not None:
+            out.setdefault(_exp(scale), []).append(value)
+    return {e: sorted(v) for e, v in out.items()}
+
+
+def _shows(run: str, values: Sequence[Decimal]) -> bool:
+    """Return whether `run` is one of `values`, as printed or rounded to the decimals it has."""
+    shown = _decimal(run)
+    return shown is not None and (_has(values, shown) or _marker_used(run, "", values) == 0)
+
+
+def _inside(spans: Sequence[tuple[int, int]], at: int) -> bool:
+    """Return whether `at` falls in one of `spans`, which are in order and do not overlap."""
+    i = bisect_right(spans, (at, len(spans) and spans[-1][1])) - 1
+    return i >= 0 and spans[i][0] <= at < spans[i][1]
 
 
 def loose(text: str, allowed: set[str], words_ok: str = "", *, rerender: bool = False) -> list[str]:
@@ -255,17 +295,38 @@ def loose(text: str, allowed: set[str], words_ok: str = "", *, rerender: bool = 
     if "%" in ok:
         ok += "\npercent"
     out = []
-    marked: list[tuple[int, int]] = []  # the scale or percent word a re-rendering was licensed with
+    marked: list[tuple[int, int]] = []  # the scale or percent word a figure was licensed with
+    refused: list[tuple[int, int]] = []  # the scale word after a licensed run that no input showed it with
     values = _values(allowed) if rerender else []
+    scaled = _scaled(words_ok or "") if rerender else {}
     for m in NUM.finditer(body):
-        # asked of an equal run too: "20 billion" beside a bare 20 still needs its "billion" licensed
-        used = _marker_used(m.group(), body[m.end() : m.end() + _AFTER], values) if rerender else None
+        after = body[m.end() : m.end() + _AFTER]
+        used = _marker_used(m.group(), after, values) if rerender else None
         if used:
             marked.append((m.end(), m.end() + used))
-        elif used is None and canon(m.group()) not in allowed:
+            continue
+        if used is None and canon(m.group()) not in allowed:
             out.append(canon(m.group()))
-    words = (w for w in NUMBER_WORDS.finditer(body) if not any(a <= w.start() < b for a, b in marked))
-    return out + [w.group().lower() for w in words if w.group().lower() not in ok]
+            continue
+        # The run is licensed as it stands: an input shows it, or it rounds one. A scale after it is
+        # a second claim ("20M" beside a date's 20), licensed only by an input that shows this
+        # value AT this scale, as a letter or a word.
+        scale = _SCALE.match(after) if rerender and not _PERCENT.match(after) else None
+        if scale is None:
+            continue
+        span = (m.end(), m.end() + scale.end())
+        if _shows(m.group(), scaled.get(_exp(scale), ())):
+            marked.append(span)
+        elif scale.group(1):
+            out.append(canon(m.group()) + scale.group(1))  # a letter is no number word: name the figure
+        else:
+            refused.append(span)
+    tail = []
+    for w in NUMBER_WORDS.finditer(body):
+        word = w.group().lower()
+        if not _inside(marked, w.start()) and (word not in ok or _inside(refused, w.start())):
+            tail.append(word)
+    return out + tail
 
 
 def uncited(claim: str, spans: Iterable[tuple[str, str]]) -> list[str]:
