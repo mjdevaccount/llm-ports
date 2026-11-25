@@ -51,14 +51,14 @@ _JOIN = "[ \\u00a0-]?"
 #: of markdown italics (`_19.8B_`) ends one as a full stop does.
 _END = "(?![A-Za-z0-9])"
 #: What may follow a digit run that shows a fraction as a percentage: `75%`, `75 percent`.
-_PERCENT = re.compile(_JOIN + "(?:%|(?i:percent|pct)" + _END + ")")
+_PERCENT = re.compile(_JOIN + "(?:%|(?ai:percent|pct)" + _END + ")")
 #: What may follow a digit run that shows a value at a scale: a letter directly after the run
 #: (`19.8M`, `3k`, `2.1bn`) or a word after at most one joiner (`3.2 million`). The single
 #: letters are CAPITALS, plus `k`: a lower-case `m`, `b` or `t` after a digit is a unit or a
 #: timeframe ("15m retest", "5m chart"), and `mm` is millimetres. A spaced letter (`5 M`) is a
-#: unit too. The table is closed: `$20m`, `20 bn`, `20MM`, `20 mln` and `20 billions` are read as
+#: unit too. The words match ASCII letters only (a long s is no `s`). The table is closed: `$20m`, `20 bn`, `20MM`, `20 mln` and `20 billions` are read as
 #: no scale at all.
-_SCALE = re.compile("(?:(K|k|M|B|T|[Bb][Nn])|" + _JOIN + "((?i:thousand|million|billion|trillion)))" + _END)
+_SCALE = re.compile("(?:(K|k|M|B|T|[Bb][Nn])|" + _JOIN + "((?ai:thousand|million|billion|trillion)))" + _END)
 _SCALE_EXP = {"k": 3, "thousand": 3, "m": 6, "million": 6, "b": 9, "bn": 9, "billion": 9}
 _SCALE_EXP |= {"t": 12, "trillion": 12}
 #: How much text after a digit run `loose` hands to `rerenders`: room for " trillion".

@@ -140,6 +140,10 @@ judgement of what a rounding is.
   value quoted from a compact JSON array (`[540,545,550]` is ONE run, by the thousands-separator
   rule) names `545`. A figure quoted from the system prompt is not in the prompt the grader
   reads. Measure a role in the consumer's shadow before it gates on this grader.
+- Bad, and older than this decision: a spelled number inside underscore italics is not read.
+  Beside a date's `20`, "20 _billion_" and "_twenty billion_" pass: the number-word reader ends a
+  word at a word boundary, and an underscore is a word character. The marker after a digit run
+  is read through italics (`_19.8B_`); the spelled word is not yet.
 - Bad, and the other way: only the reply's prose is read. A number in a numeric field of a
   structured reply (`{"level": 999.5}`) is never checked; a role whose figures live in typed
   fields needs a grader over those fields, and this one is no gate for them.

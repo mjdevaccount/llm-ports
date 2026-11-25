@@ -321,8 +321,10 @@ def _replies(draw: st.DrawFn, prompt: Sequence[Figure]) -> list[Figure]:
 _WIDE = int(os.environ.get("LAW_EXAMPLES", "0"))
 _SETTINGS = settings(max_examples=_WIDE or 3000, deadline=None, derandomize=not _WIDE)
 _PROPERTY = settings(max_examples=_WIDE or 800, deadline=None, derandomize=not _WIDE)
-#: The fewest figures each clause decides over the differential's examples.
-_FLOOR = 60
+#: The fewest figures each clause decides over the differential's examples. The thinnest clause
+#: ("a scale refused, rounded") decides 83 on the locked hypothesis and 64 on the lowest the
+#: project allows; the examples are fixed per hypothesis version, so the floor leaves room for one.
+_FLOOR = 40
 
 
 def test_the_reader_names_what_the_statement_names() -> None:
@@ -341,6 +343,11 @@ def test_the_reader_names_what_the_statement_names() -> None:
     thin = {clause: reached[clause] for clause in REACHED if reached[clause] < _FLOOR}
     assert not thin, f"the generated replies barely reach {thin} of {sum(reached.values())} figures: {dict(reached)}"
     assert set(reached) <= set(REACHED), f"a clause REACHED does not list: {set(reached) - set(REACHED)}"
+
+
+def test_a_scale_word_is_ascii_letters() -> None:
+    """A long s folds to `s` under Unicode case-insensitive matching; it is no scale, and no crash."""
+    assert numbers.loose("20 thou\u017fand", {"20"}, "20", rerender=True) == ["thou\u017fand"]
 
 
 @_PROPERTY
