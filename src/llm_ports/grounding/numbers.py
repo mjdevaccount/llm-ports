@@ -44,15 +44,17 @@ NUMBER_WORDS = re.compile(
 DIGITS = re.compile(r"\d(?:[\d%:]|[.,]\d)*")
 
 
-#: What may follow a digit run that shows a fraction as a percentage: `75%`, `75 percent`. At most
-#: one plain space before it: a newline ends the figure.
-_PERCENT = re.compile(r"[ ]?(?:%|(?i:percent|pct)\b)")
+#: What may sit between a digit run and its percent or scale word: nothing, one space (plain or
+#: no-break) or one hyphen ("a 75-percent chance", "a 20-billion gap"). A newline ends the figure.
+_JOIN = "[ \\u00a0-]?"
+#: What may follow a digit run that shows a fraction as a percentage: `75%`, `75 percent`.
+_PERCENT = re.compile(_JOIN + r"(?:%|(?i:percent|pct)\b)")
 #: What may follow a digit run that shows a value at a scale: a letter directly after the run
-#: (`19.8M`, `3k`, `2.1bn`) or a word after at most one plain space (`3.2 million`). The single
+#: (`19.8M`, `3k`, `2.1bn`) or a word after at most one joiner (`3.2 million`). The single
 #: letters are CAPITALS, plus `k`: a lower-case `m`, `b` or `t` after a digit is a unit or a
 #: timeframe ("15m retest", "5m chart"), and `mm` is millimetres. A spaced letter (`5 M`) is a
 #: unit too.
-_SCALE = re.compile(r"(?:(K|k|M|B|T|[Bb][Nn])\b|[ ]?((?i:thousand|million|billion|trillion))\b)")
+_SCALE = re.compile(r"(?:(K|k|M|B|T|[Bb][Nn])\b|" + _JOIN + r"((?i:thousand|million|billion|trillion))\b)")
 _SCALE_EXP = {"k": 3, "thousand": 3, "m": 6, "million": 6, "b": 9, "bn": 9, "billion": 9}
 _SCALE_EXP |= {"t": 12, "trillion": 12}
 #: How much text after a digit run `loose` hands to `rerenders`: room for " trillion".
@@ -171,6 +173,9 @@ def rerenders(run: str, after: str, allowed: Iterable[str]) -> bool:
     integer is the rounding of some fraction, so licensing it would license an invented count.
     A marked integer rounds a value of magnitude 1 or more only.
 
+    The whole law, clause by clause, is `law` in `tests/grounding/test_number_law.py`; this
+    reader is held equal to it.
+
     Args:
         run: The digit run as written (`NUM`), separators and trailing zeros kept: the zeros say
             how many decimals it was rounded to.
@@ -221,14 +226,13 @@ def _marker_used(run: str, after: str, values: Sequence[Decimal]) -> int | None:
         return None  # a bare integer is never a rounding
     step = Decimal(1).scaleb(-places)
     lo, hi = shown - step / 2, shown + step / 2
-    one = Decimal(1)
     if marker is not None:
-        if percent is not None and any(_rounds_to(v, shown, step) for v in _between(values, max(lo, one), hi)):
-            return marker.end()  # a percentage the value already was: "18 percent" for 18, "18.4" for 18.37
+        floor = lo if places else max(lo, Decimal(1))  # a marked integer rounds a value of 1 or more only
+        if percent is not None and any(_rounds_to(v, shown, step) for v in _between(values, floor, hi)):
+            return marker.end()  # a percentage the value already was: "18 percent" for 18, "0.24" for 0.2409
         shift = 2 if percent else -_exp(scale) if scale else 0
         if percent is None and _has(values, shown.scaleb(-shift)):
             return marker.end()  # the value itself at that scale, whatever its size
-        floor = lo if places else max(lo, one)  # a marked integer rounds a moved value of 1 or more only
         for base in _between(values, floor.scaleb(-shift), hi.scaleb(-shift)):
             if percent is not None and base == base.to_integral_value():
                 continue  # times 100 shows a fraction; a whole value moved is an invented figure
@@ -312,13 +316,15 @@ def loose(text: str, allowed: set[str], words_ok: str = "", *, rerender: bool = 
         # a second claim ("20M" beside a date's 20), licensed only by an input that shows this
         # value AT this scale, as a letter or a word.
         scale = _SCALE.match(after) if rerender and not _PERCENT.match(after) else None
-        if scale is None:
+        if scale is None or _decimal(m.group()) is None:  # "1.2.3" is no number: it claims no magnitude
             continue
         span = (m.end(), m.end() + scale.end())
         if _shows(m.group(), scaled.get(_exp(scale), ())):
             marked.append(span)
-        elif scale.group(1):
-            out.append(canon(m.group()) + scale.group(1))  # a letter is no number word: name the figure
+        elif scale.group(1) or scale.group() == scale.group(2):
+            # A letter, or a word glued to the run ("20million"), is no number word the scan below
+            # can find: name the figure.
+            out.append(canon(m.group()) + scale.group())
         else:
             refused.append(span)
     tail = []

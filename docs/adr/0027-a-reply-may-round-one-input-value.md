@@ -61,7 +61,8 @@ Five limits keep the invented figure caught:
 - **A scale letter is a capital, or `k`.** A lower-case `m`, `b` or `t` directly after a digit
   is a timeframe or a unit ("a 15m retest", "the 5m chart"), and `mm` is millimetres. A letter
   after a space is a unit too.
-- **The marker sits on the figure's own line**, after at most one plain space.
+- **The marker sits on the figure's own line**, after at most one space or hyphen
+  ("75 percent", "a 20-billion gap").
 
 `loose` also licenses the scale or percent word the rendering needed ("billion" in
 "19.8 billion") and no other number word. It asks that of a run that equals an input too: beside
@@ -72,8 +73,20 @@ figure at its scale, a run the inputs license as it stands (an equal run, or a p
 keeps its scale only if an input shows THAT value AT that scale, as a letter or as a word:
 "-1.2B" and "-1.2 billion" both pass beside an input "-1.2B". Beside a date's `20`, "20B" is an
 invented magnitude and is named as `20B`; "20 billion" is named as `billion`, even when another
-figure in the inputs carries the word. A percentage of an equal value is not a scale and keeps
-its word ("18 percent" beside `18`, "18.4 percent" beside `18.37`).
+figure in the inputs carries the word, and a word glued to the run is named with it
+(`20million`). A percentage the value already was is not a scale and keeps its word, whatever
+the value's size ("18 percent" beside `18`, "18.4 percent" beside `18.37`, "0.24 percent" beside
+`0.2409`). A digit run that is not a number (`1.2.3`) is licensed only as printed, and what
+follows it marks nothing.
+
+**The law is stated once, as a test.** `tests/grounding/test_number_law.py` holds `law`: the
+clauses above, one a line, every input tried, over figures whose parts are known, so it parses
+nothing it judges. `loose(rerender=True)` must name exactly what `law` names, on a row for each
+sentence of this record and on generated replies (figures made from the prompt: one value moved,
+rounded each way, nudged a step, or summed with another). Four more properties hold there: a
+reply that quotes its prompt is licensed; more inputs never name more; a bare whole number is
+licensed only by an input that printed it; and with `rerender` off the reading is exact. A change
+to this law changes `law` first.
 
 `rerender` is off by default. `numbers_from_inputs` turns it on; `grounding.belt`, `slots.belt`
 and `uncited` do not, because the figures they check were printed by code and a model has no

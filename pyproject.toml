@@ -133,6 +133,7 @@ dev = [
     "alembic>=1.13",
     "mlflow>=3.18,<4",
     "pluggy>=1.7",
+    "hypothesis>=6.170",
 ]
 docs = [
     "mkdocs-material>=9.8.0",

@@ -42,7 +42,9 @@ All notable changes to this project are documented here. The format is based on
   capital or `k` ("15m" is a timeframe), and a whole value is never moved to a percentage (a `1`
   is not "100%"). A scale after a run the inputs license as it stands needs an input showing
   that value at that scale: beside a date's `20`, "20B" is named, and "-1.2 billion" passes
-  beside "-1.2B". Off by default.
+  beside "-1.2B". Off by default. The law is stated once, slowly, in
+  `tests/grounding/test_number_law.py`, and the reader is held equal to that statement on
+  generated replies.
 
 ### Changed
 
