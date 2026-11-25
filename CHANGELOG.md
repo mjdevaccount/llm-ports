@@ -42,9 +42,9 @@ All notable changes to this project are documented here. The format is based on
   capital or `k` ("15m" is a timeframe), and a whole value is never moved to a percentage (a `1`
   is not "100%"). A scale after a run the inputs license as it stands needs an input showing
   that value at that scale: beside a date's `20`, "20B" is named, and "-1.2 billion" passes
-  beside "-1.2B". Off by default. The law is stated once, slowly, in
-  `tests/grounding/test_number_law.py`, and the reader is held equal to that statement on
-  generated replies.
+  beside "-1.2B", as "about 20B" does beside "19.8B". Off by default. The law is stated once,
+  slowly, in `tests/grounding/test_number_law.py`; the reader is held equal to that statement on
+  generated replies, and the test fails when a clause is barely generated.
 
 ### Changed
 
@@ -53,6 +53,13 @@ All notable changes to this project are documented here. The format is based on
   figure or computes one still does. A consumer counting this grader's failures will see the
   count fall to the replies that carry a figure no single input shows. `grounding.belt`,
   `slots.belt`, `uncited` and `law_text` are unchanged.
+
+### Fixed
+
+- **`numbers.canon` reads a digit run with two points as written.** `1.2.0` became `1.2` and
+  `2026.11.20` became `2026.11.2`: a version or a date lost a zero that was never a decimal, so
+  an input `1.2.0` licensed a reply's "1.2" in every reader (`grounding.belt`, `slots.belt`,
+  `uncited`, `numbers_from_inputs`). Such a run is now licensed only as printed.
 
 ## [1.26.1] - 2026-11-20
 

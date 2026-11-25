@@ -47,14 +47,18 @@ DIGITS = re.compile(r"\d(?:[\d%:]|[.,]\d)*")
 #: What may sit between a digit run and its percent or scale word: nothing, one space (plain or
 #: no-break) or one hyphen ("a 75-percent chance", "a 20-billion gap"). A newline ends the figure.
 _JOIN = "[ \\u00a0-]?"
+#: Where a marker word or letter ends: before anything but a letter or a digit, so the underscore
+#: of markdown italics (`_19.8B_`) ends one as a full stop does.
+_END = "(?![A-Za-z0-9])"
 #: What may follow a digit run that shows a fraction as a percentage: `75%`, `75 percent`.
-_PERCENT = re.compile(_JOIN + r"(?:%|(?i:percent|pct)\b)")
+_PERCENT = re.compile(_JOIN + "(?:%|(?i:percent|pct)" + _END + ")")
 #: What may follow a digit run that shows a value at a scale: a letter directly after the run
 #: (`19.8M`, `3k`, `2.1bn`) or a word after at most one joiner (`3.2 million`). The single
 #: letters are CAPITALS, plus `k`: a lower-case `m`, `b` or `t` after a digit is a unit or a
 #: timeframe ("15m retest", "5m chart"), and `mm` is millimetres. A spaced letter (`5 M`) is a
-#: unit too.
-_SCALE = re.compile(r"(?:(K|k|M|B|T|[Bb][Nn])\b|" + _JOIN + r"((?i:thousand|million|billion|trillion))\b)")
+#: unit too. The table is closed: `$20m`, `20 bn`, `20MM`, `20 mln` and `20 billions` are read as
+#: no scale at all.
+_SCALE = re.compile("(?:(K|k|M|B|T|[Bb][Nn])|" + _JOIN + "((?i:thousand|million|billion|trillion)))" + _END)
 _SCALE_EXP = {"k": 3, "thousand": 3, "m": 6, "million": 6, "b": 9, "bn": 9, "billion": 9}
 _SCALE_EXP |= {"t": 12, "trillion": 12}
 #: How much text after a digit run `loose` hands to `rerenders`: room for " trillion".
@@ -123,12 +127,14 @@ def canon(run: str) -> str:
     """Return one digit run as its value reads.
 
     Thousands separators and trailing decimal zeros are dropped: "2.20" and "2.2" are one number,
-    "7.0" is "7", "1,234.50" is "1234.5". An integer keeps its zeros ("100").
+    "7.0" is "7", "1,234.50" is "1234.5". An integer keeps its zeros ("100"). A run with two
+    points ("1.2.0", "2026.11.20") is a version or a date, not a number: it has no trailing
+    decimal zeros to drop, and reads as written.
 
     Rationale: ADR-0003.
     """
     n = run.replace(",", "")
-    return n.rstrip("0").rstrip(".") if "." in n else n
+    return n.rstrip("0").rstrip(".") if n.count(".") == 1 else n
 
 
 def digits(text: str) -> set[str]:
@@ -217,15 +223,12 @@ def _marker_used(run: str, after: str, values: Sequence[Decimal]) -> int | None:
     shown = _decimal(run)
     if shown is None:
         return None
-    exponent = shown.as_tuple().exponent
-    places = -exponent if isinstance(exponent, int) and exponent < 0 else 0
     percent = _PERCENT.match(after)
     scale = None if percent else _SCALE.match(after)
     marker = percent or scale
+    places, step, lo, hi = _window(shown)
     if marker is None and not places:
         return None  # a bare integer is never a rounding
-    step = Decimal(1).scaleb(-places)
-    lo, hi = shown - step / 2, shown + step / 2
     if marker is not None:
         floor = lo if places else max(lo, Decimal(1))  # a marked integer rounds a value of 1 or more only
         if percent is not None and any(_rounds_to(v, shown, step) for v in _between(values, floor, hi)):
@@ -241,6 +244,14 @@ def _marker_used(run: str, after: str, values: Sequence[Decimal]) -> int | None:
     if places and any(_rounds_to(v, shown, step) for v in _between(values, lo, hi)):
         return 0  # the value itself, rounded
     return None
+
+
+def _window(shown: Decimal) -> tuple[int, Decimal, Decimal, Decimal]:
+    """Return the decimals `shown` is written with, that step, and the values within half a step."""
+    exponent = shown.as_tuple().exponent
+    places = -exponent if isinstance(exponent, int) and exponent < 0 else 0
+    step = Decimal(1).scaleb(-places)
+    return places, step, shown - step / 2, shown + step / 2
 
 
 def _exp(scale: re.Match[str]) -> int:
@@ -260,9 +271,19 @@ def _scaled(text: str) -> dict[int, list[Decimal]]:
 
 
 def _shows(run: str, values: Sequence[Decimal]) -> bool:
-    """Return whether `run` is one of `values`, as printed or rounded to the decimals it has."""
+    """Return whether `run` is one of `values`, as printed or rounded to the decimals it has.
+
+    The values are ones an input showed at the scale `run` is written with, so a whole `run` is
+    marked: it rounds a value of 1 or more ("20B" for an input's "19.8B", never "1B" for "0.6B").
+    """
     shown = _decimal(run)
-    return shown is not None and (_has(values, shown) or _marker_used(run, "", values) == 0)
+    if shown is None:
+        return False
+    if _has(values, shown):
+        return True
+    places, step, lo, hi = _window(shown)
+    floor = lo if places else max(lo, Decimal(1))
+    return any(_rounds_to(v, shown, step) for v in _between(values, floor, hi))
 
 
 def _inside(spans: Sequence[tuple[int, int]], at: int) -> bool:
@@ -304,29 +325,32 @@ def loose(text: str, allowed: set[str], words_ok: str = "", *, rerender: bool = 
     values = _values(allowed) if rerender else []
     scaled = _scaled(words_ok or "") if rerender else {}
     for m in NUM.finditer(body):
-        after = body[m.end() : m.end() + _AFTER]
-        used = _marker_used(m.group(), after, values) if rerender else None
+        run, end = m.group(), m.end()
+        after = body[end : end + _AFTER]
+        used = _marker_used(run, after, values) if rerender else None
         if used:
-            marked.append((m.end(), m.end() + used))
+            marked.append((end, end + used))
             continue
-        if used is None and canon(m.group()) not in allowed:
-            out.append(canon(m.group()))
-            continue
-        # The run is licensed as it stands: an input shows it, or it rounds one. A scale after it is
-        # a second claim ("20M" beside a date's 20), licensed only by an input that shows this
-        # value AT this scale, as a letter or a word.
         scale = _SCALE.match(after) if rerender and not _PERCENT.match(after) else None
-        if scale is None or _decimal(m.group()) is None:  # "1.2.3" is no number: it claims no magnitude
+        if scale is not None and _decimal(run) is None:
+            scale = None  # "1.2.3" is no number: it claims no magnitude
+        if scale is not None and _shows(run, scaled.get(_exp(scale), ())):
+            marked.append((end, end + scale.end()))  # an input shows this value AT this scale
             continue
-        span = (m.end(), m.end() + scale.end())
-        if _shows(m.group(), scaled.get(_exp(scale), ())):
-            marked.append(span)
-        elif scale.group(1) or scale.group() == scale.group(2):
-            # A letter, or a word glued to the run ("20million"), is no number word the scan below
-            # can find: name the figure.
-            out.append(canon(m.group()) + scale.group())
+        if used is None and canon(run) not in allowed:
+            out.append(canon(run))
+            continue
+        if scale is None:
+            continue
+        # The run is licensed as it stands: an input shows it, or it rounds one. The scale after it
+        # is a second claim ("20M" beside a date's 20) that no input licensed. A word the scan
+        # below reads is named there; a letter, a word glued to the run ("20million") or one the
+        # scan cannot read ("20 billion_") names the figure with its marker.
+        spoken = NUMBER_WORDS.match(body, end + scale.start(2)) if scale.start(2) > 0 else None
+        if spoken is not None and spoken.end() == end + scale.end():
+            refused.append((end, end + scale.end()))
         else:
-            refused.append(span)
+            out.append(canon(run) + scale.group())
     tail = []
     for w in NUMBER_WORDS.finditer(body):
         word = w.group().lower()

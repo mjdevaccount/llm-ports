@@ -391,10 +391,12 @@ class TestGates:
         reply goes back unchecked, so the result names the gate it skipped and the log says it once."""
         warned: list[dict[str, Any]] = []
         for extra in ({"images": [(b"png", "image/png")]}, {"web": True}):
-            gen, _t, hooks, events = _rig(INVENTED)
+            gen, tracer, hooks, events = _rig(INVENTED)
             res = await call.generate(GATED, prompt=PROMPT, generator=gen, hooks=hooks, **extra)
             assert res.outcome == "ok" and [s.name for s in res.stamp["scores"]] == ["schema_complete", "echo"]
             assert res.stamp[call.GATES_DROPPED] == ("numbers_from_inputs",), "an invented figure went back ok"
+            ended = tracer.generations[0].ended
+            assert ended is not None and ended["metadata"][call.GATES_DROPPED] == ["numbers_from_inputs"]
             warned += [f for lvl, ev, f in events if ev == "llm_call_warning" and lvl == logging.WARNING]
         assert [w["setting"] for w in warned] == ["gates"], "once a process for the role, not once a call"
         assert "test.gated" in warned[0]["detail"] and "numbers_from_inputs" in warned[0]["detail"]

@@ -493,7 +493,9 @@ async def generate[T](
                 req, pre, res = await prepared(tier_role, req, counter, h.on_event or _log_event)
                 if res is None:
                     gen = h.generator_for(tier_role.tier) if h.generator_for is not None else generator
-                    res = await _one(tier_role, req, prompt, output, gen, h, validate, retry_message, metadata, web)
+                    res = await _one(
+                        tier_role, req, prompt, output, gen, h, validate, retry_message, metadata, web, dropped
+                    )
                     res = finished(res, pre, h.on_event or _log_event, tier_role.name)
                 if not route.settle(tier_role, res):
                     break
@@ -552,6 +554,7 @@ async def _one[T](
     retry_message: RetryMessage | None,
     metadata: Mapping[str, Any] | None,
     web: bool,
+    dropped: tuple[str, ...] = (),
 ) -> Generated[T]:
     """One tier's call: the capability check, the admit hook, the trace, the generator, the graders and gates."""
     with llm_feature(role.category):
@@ -578,7 +581,10 @@ async def _one[T](
                 named = arm.gates_reasked
                 if named:  # the witness of a refused earlier reply, on the stamp and on the trace
                     res = replace(res, stamp={**res.stamp, _gate.GATES_REASKED: named})
-                res = _settled(role, prompt, res, obs, h, {_gate.GATES_REASKED: list(named)} if named else None)
+                seen = {_gate.GATES_REASKED: list(named)} if named else {}
+                if dropped:  # a gate this call did not apply: the trace says so, as the result does
+                    seen[_gate.GATES_DROPPED] = list(dropped)
+                res = _settled(role, prompt, res, obs, h, seen or None)
                 _raise_unless_ok(res)
         except _NotOk:
             _call_failed(h, role, res)

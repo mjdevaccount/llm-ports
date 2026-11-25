@@ -62,28 +62,39 @@ Five limits keep the invented figure caught:
   is a timeframe or a unit ("a 15m retest", "the 5m chart"), and `mm` is millimetres. A letter
   after a space is a unit too.
 - **The marker sits on the figure's own line**, after at most one space or hyphen
-  ("75 percent", "a 20-billion gap").
+  ("75 percent", "a 20-billion gap"), and ends before anything but a letter or a digit: the
+  underscore of markdown italics (`_19.8B_`) ends one as a full stop does.
 
 `loose` also licenses the scale or percent word the rendering needed ("billion" in
 "19.8 billion") and no other number word. It asks that of a run that equals an input too: beside
 a date's `20`, "-20 billion" is still 19813893517 shown coarser, and its "billion" is licensed.
 
+**An input shown at a scale is that value at that scale.** Beside an input "-1.2B", "-1.2B" and
+"-1.2 billion" both pass; beside "19.8B", so do "19.8 billion" and "about 20B", by the rounding
+rule above (a whole "1B" is not "0.6B").
+
 **A scale is a second claim, and an equal run does not make it.** When no value re-renders the
-figure at its scale, a run the inputs license as it stands (an equal run, or a plain rounding)
-keeps its scale only if an input shows THAT value AT that scale, as a letter or as a word:
-"-1.2B" and "-1.2 billion" both pass beside an input "-1.2B". Beside a date's `20`, "20B" is an
+figure at its scale and no input shows it at that scale, a run the inputs license as it stands
+(an equal run, or a plain rounding) does not carry the scale. Beside a date's `20`, "20B" is an
 invented magnitude and is named as `20B`; "20 billion" is named as `billion`, even when another
-figure in the inputs carries the word, and a word glued to the run is named with it
-(`20million`). A percentage the value already was is not a scale and keeps its word, whatever
-the value's size ("18 percent" beside `18`, "18.4 percent" beside `18.37`, "0.24 percent" beside
-`0.2409`). A digit run that is not a number (`1.2.3`) is licensed only as printed, and what
-follows it marks nothing.
+figure in the inputs carries the word; and a word the number-word reader cannot read on its own
+is named with the run (`20million`, `20 billion` for "20 billion_"). A percentage the value
+already was is not a scale and keeps its word, whatever the value's size ("18 percent" beside
+`18`, "18.4 percent" beside `18.37`, "0.24 percent" beside `0.2409`).
+
+**A digit run with two points is not a number.** `1.2.3` is a version and `2026.11.20` a date:
+each is licensed only as printed, what follows it marks nothing, and its trailing zero is not a
+decimal to drop, so an input `1.2.0` licenses neither "1.2" nor "120%". `canon` reads such a run
+as written for every reader, the belts included.
 
 **The law is stated once, as a test.** `tests/grounding/test_number_law.py` holds `law`: the
 clauses above, one a line, every input tried, over figures whose parts are known, so it parses
 nothing it judges. `loose(rerender=True)` must name exactly what `law` names, on a row for each
-sentence of this record and on generated replies (figures made from the prompt: one value moved,
-rounded each way, nudged a step, or summed with another). Four more properties hold there: a
+sentence of this record and on generated replies (figures made from the prompt: one run kept
+under another marker, one value rounded, shown at a scale, moved and nudged a step, or summed
+with another). The same test counts how many generated figures each clause decided and fails
+when one falls under a floor, so the comparison cannot go quiet where the law is. Four more
+properties hold there: a
 reply that quotes its prompt is licensed; more inputs never name more; a bare whole number is
 licensed only by an input that printed it; and with `rerender` off the reading is exact. A change
 to this law changes `law` first.
@@ -112,6 +123,17 @@ judgement of what a rounding is.
   input 15234567. Nothing on the page tells the two readings apart.
 - Bad: a scale the inputs spell another way is refused. "1M" for 999,999 fails (the run is not
   the value at that scale to the decimals written), and so does "19.8MM".
+- Bad: a scale the inputs carry in a LABEL is refused. Beside `{"net_gex_bn": -19.8}` or
+  "volume (millions): 20", the replies "-19.8bn" and "20 million" are named (`19.8bn`,
+  `million`): the law reads a scale after the figure, never in a key or a heading, and so does
+  not know these from "20B" beside a date's 20. Exact comparison passed them. A prompt that
+  prints the unit on the value ("-19.8bn") is read; measure a role with labelled units in shadow.
+- Bad: any one input is a magnitude, a year or a strike included. Beside a date `2026-11-20`,
+  "about 2K contracts" is 2026 shown in thousands and passes, as "2 thousand" does. It is the
+  rounding rule working on a value the law cannot know is a date.
+- Bad: the scale spellings are a closed table. `$20m`, `20 bn`, `20MM`, `20 mln` and
+  `20 billions` are read as no scale at all, so beside a date's `20` each passes as the run it
+  is. Exact comparison passed them too.
 - Bad, and older than this decision: the law reads digit runs, so it refuses honest figures a
   reader would accept, and each is a re-ask where the role gates. A clock without its leading
   zero ("9:30" beside "09:30") names `9`. A numbered list ("1. ... 2. ...") names its markers. A

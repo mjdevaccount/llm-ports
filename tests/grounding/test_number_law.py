@@ -13,6 +13,7 @@ Run it wider with `LAW_EXAMPLES=200000` (then the examples are random, not the f
 from __future__ import annotations
 
 import os
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_HALF_EVEN, ROUND_HALF_UP, ROUND_UP, Decimal, InvalidOperation
@@ -35,7 +36,7 @@ class After:
         word: The number word `text` holds standing alone ("billion" in " billion"); a letter, a
             sign and a word glued to the run ("3million") hold none.
         glued: What a refused scale is named with, after the run: the letter as written, or a
-            glued word.
+            word the number-word scan cannot read (glued to the run, or ended by an underscore).
     """
 
     text: str
@@ -62,6 +63,10 @@ _NONE = [After(t) for t in ("", " R", "m", "b", "t", "mm", "MM", "Kb", " M", " k
 _NONE += [After("\npercent", word="percent"), After("\nbillion", word="billion")]
 _NONE += [After("  million", word="million"), After(" bps", word="bps"), After(" hundred", word="hundred")]
 _NONE += [After(" -million", word="million"), After("--percent", word="percent")]
+# A marker ends before anything but a letter or a digit: the underscore of markdown italics ends
+# one, and then the word is no number word standing alone.
+_PCT += [After("%_", "percent"), After(" percent_", "percent")]
+_SCALES += [After("B_", "scale", 9, glued="B"), After(" billion_", "scale", 9, glued=" billion")]
 AFTER = _PCT + _SCALES + _NONE
 _BY_TEXT = {a.text: a for a in AFTER}
 
@@ -105,30 +110,41 @@ def _rounds(x: Decimal, shown: Decimal, places: int) -> bool:
     return gap * 2 == step and shown.scaleb(places) % 2 == 0  # a tie, rounded down to an even digit
 
 
+def _written(run: str) -> str:
+    """A prompt run as its value reads. A run with two points is no number: it reads as written."""
+    n = run.replace(",", "")
+    return n.rstrip("0").rstrip(".") if n.count(".") == 1 else n
+
+
+def judged(reply: Sequence[Figure], prompt: Sequence[Figure]) -> list[tuple[str, str, str]]:
+    """Return `(name, word, clause)` for each figure of `reply`: see `_figure`."""
+    printed = {_written(p.run) for p in prompt if p.run}
+    values = [v for p in prompt if p.run and (v := _number(p.run)) is not None]
+    at_scale = [(p.after.exp, v) for p in prompt if p.after.kind == "scale" and (v := _number(p.run)) is not None]
+    return [_figure(f, printed, values, at_scale) if f.run else ("", f.after.word, "a word") for f in reply]
+
+
 def law(reply: Sequence[Figure], prompt: Sequence[Figure]) -> list[str]:
     """Return what the law names in `reply`: unlicensed runs in order, then unlicensed words."""
     text = render(prompt).lower() + ("\npercent" if "%" in render(prompt) else "")
-    printed = {numbers.canon(p.run) for p in prompt if p.run}
-    values = [v for p in prompt if p.run and (v := _number(p.run)) is not None]
-    at_scale = [(p.after.exp, v) for p in prompt if p.after.kind == "scale" and (v := _number(p.run)) is not None]
     runs: list[str] = []
     words: list[str] = []
-    for f in reply:
-        run, spoken = _figure(f, text, printed, values, at_scale) if f.run else ("", f.after.word)
+    for run, spoken, _ in judged(reply, prompt):
         runs += [run] if run else []
         words += [spoken] if spoken and (spoken not in text or spoken.startswith("!")) else []
     return runs + [w.lstrip("!") for w in words]
 
 
 def _figure(
-    f: Figure, text: str, printed: set[str], values: list[Decimal], at_scale: list[tuple[int, Decimal]]
-) -> tuple[str, str]:
-    """Return `(name, word)` for one figure: the run's name when unlicensed, and the number word
-    left for the prompt's own words to license (`!word` when the law refuses it whatever they say)."""
-    name, after, shown = numbers.canon(f.run), f.after, _number(f.run)
+    f: Figure, printed: set[str], values: list[Decimal], at_scale: list[tuple[int, Decimal]]
+) -> tuple[str, str, str]:
+    """Return `(name, word, clause)` for one figure: the run's name when unlicensed, the number
+    word left for the prompt's own words to license (`!word` when the law refuses it whatever they
+    say), and which clause decided it (`REACHED` counts them over the generated replies)."""
+    name, after, shown = _written(f.run), f.after, _number(f.run)
     if shown is None:  # not a number: licensed only as printed, and what follows it marks nothing
-        return ("" if name in printed else name), after.word
-    places = len(f.run.partition(".")[2])  # the decimals written are the precision claimed
+        return ("", after.word, "no number, printed") if name in printed else (name, after.word, "no number, named")
+    places = len(f.run.replace(",", "").partition(".")[2])  # the decimals written are the precision claimed
 
     def near(x: Decimal) -> bool:
         return _rounds(x, shown, places)
@@ -138,24 +154,33 @@ def _figure(
 
     # 1. As it stands: an input printed this value, or (decimals written) one input rounds to it.
     #    A whole number is never a rounding.
-    stands = name in printed or (places > 0 and any(near(v) for v in values))
+    rounded = places > 0 and any(near(v) for v in values)
+    stands = "printed" if name in printed else "rounded" if rounded else ""
+    plain = ("", after.word, "stands, " + stands) if stands else (name, after.word, "named")
     if after.kind == "percent":
         # 2. A percentage: one input rounded, or one input WITH A FRACTIONAL PART times 100.
         if any(marked(v) or (v % 1 != 0 and marked(v.scaleb(2))) for v in values):
-            return "", ""
-        return ("" if stands else name), after.word  # else "percent" is a plain number word
+            return "", "", "a percentage"
+        return plain  # else "percent" is a plain number word
     if after.kind == "scale":
-        # 3. A scale: one input IS the figure at that scale, or rounds to it once divided.
+        # 3. A scale: one input IS the figure at that scale, or rounds to it once divided; or an
+        #    input shown AT that scale is the figure, or rounds to it.
         if any(v == shown.scaleb(after.exp) or marked(v.scaleb(-after.exp)) for v in values):
-            return "", ""
+            return "", "", "a scale, of an input"
+        if any(e == after.exp and (x == shown or marked(x)) for e, x in at_scale):
+            return "", "", "a scale, as an input shows it"
         if not stands:
-            return name, after.word
-        # 4. A scale is a second claim: a run licensed as it stands keeps it only when an input
-        #    shows THAT value AT that scale.
-        if any(e == after.exp and (x == shown or (places > 0 and near(x))) for e, x in at_scale):
-            return "", ""
-        return (name + after.glued, "") if after.glued else ("", "!" + after.word)
-    return ("" if stands else name), after.word
+            return plain
+        # 4. A scale is a second claim: a run licensed as it stands does not carry it.
+        clause = "a scale refused, " + stands
+        return (name + after.glued, "", clause) if after.glued else ("", "!" + after.word, clause)
+    return plain
+
+
+#: Every clause the generated replies must reach, often enough to mean something.
+REACHED = ["no number, printed", "no number, named", "stands, printed", "stands, rounded", "named"]
+REACHED += ["a percentage", "a scale, of an input", "a scale, as an input shows it"]
+REACHED += ["a scale refused, printed", "a scale refused, rounded", "a word"]
 
 
 def fast(reply: Sequence[Figure], prompt: Sequence[Figure]) -> list[str]:
@@ -201,8 +226,20 @@ CLAUSES: list[tuple[str, list[Figure], list[Figure], list[str]]] = [
     ("4 an input at that scale, as a letter", [fig("1.2", "B")], [fig("1.2", " billion")], []),
     ("4 an input at that scale, rounded", [fig("0.5918", "B")], [fig("0.59", "B")], []),
     ("4 an input at another scale", [fig("1.2", "M")], [fig("1.2", "B")], ["1.2B"]),
+    ("3 an input at that scale, to a whole number", [fig("19.8", "B")], [fig("20", "B")], []),
+    ("3 an input at that scale, in words", [fig("3.2", " billion")], [fig("3", " billion")], []),
+    ("3 a marked whole number, at-scale input below one", [fig("0.6", "B")], [fig("1", "B")], ["1"]),
+    ("3 any one input is a magnitude, a year too", [fig("2026")], [fig("2", "K")], []),
+    ("3 a marker ends at an underscore", [fig("19813893517")], [fig("19.8", "B_")], []),
+    ("3 the spellings are a closed table", [fig("20")], [fig("20", "MM")], []),
+    ("4 the word after a rounding", [fig("0.5918")], [fig("0.6", " billion")], ["billion"]),
+    ("4 a label is no scale", [word("net_gex_bn"), fig("19.8")], [fig("19.8", "bn")], ["19.8bn"]),
+    ("4 a word the scan cannot read", [fig("20")], [fig("20", " billion_")], ["20 billion"]),
     ("5 a spelled number needs the prompt's words", [fig("3")], [word("three")], ["three"]),
     ("5 not a number: as printed only", [fig("1.2.3")], [fig("1.2.3", "B"), fig("1.2", "")], ["1.2"]),
+    ("5 not a number: its zeros are no decimals", [fig("1.2.0")], [fig("120", "%"), fig("1.2", " R")], ["120", "1.2"]),
+    ("5 not a number: nothing rounds to it", [fig("3.14.0")], [fig("3.1"), fig("3.14.0")], ["3.1"]),
+    ("5 a comma in a run is dropped", [fig("1.2345")], [fig("1.2,3")], []),
 ]
 
 
@@ -216,7 +253,7 @@ def test_the_statement_and_the_reader_agree_with_the_adr(
 
 _PINNED = ["0", "1", "2", "20", "75", "100", "0.5", "0.5918", "0.7486", "0.004", "0.045", "13.49", "14.878"]
 _PINNED += ["18.37", "28.89", "715.87", "2.45", "2.55", "3000", "999999", "15234567", "19813893517", "1.0"]
-_PINNED += ["1,234.5", "1.2.3", "0.005", "1.5", "540,545,550"]
+_PINNED += ["1,234.5", "1.2.3", "0.005", "1.5", "540,545,550", "1.2.0", "3.14.0", "2026.11.20", "1.2,3", "2026"]
 _RUNS = st.one_of(
     st.sampled_from(_PINNED),
     st.integers(0, 10**12).map(str),
@@ -230,18 +267,46 @@ _PROMPTS = st.lists(
 )
 
 
+#: Runs with two points: a version, a date. No number, so licensed only as printed.
+_DOTTED = ["1.2.3", "1.2.0", "3.14.0", "2026.11.20", "10.0.0.1"]
+_HOW = ["made", "kept", "kept", "rounded", "rounded", "rounded", "scaled", "scaled", "dotted", "free", "word"]
+
+
 @st.composite
 def _replies(draw: st.DrawFn, prompt: Sequence[Figure]) -> list[Figure]:
-    """Figures a model could have made FROM the prompt: one value moved, rounded, nudged; a sum."""
-    values = [v for p in prompt if p.run and (v := _number(p.run)) is not None] or [Decimal(7)]
+    """Figures a model could have made FROM the prompt: one run kept under another marker, one
+    value rounded, one value shown at a scale, one value moved and nudged, a sum."""
+    sources = [p for p in prompt if p.run] or [fig("7")]
+    values = [v for p in sources if (v := _number(p.run)) is not None] or [Decimal(7)]
     out = []
     for _ in range(draw(st.integers(1, 4))):
-        how = draw(st.sampled_from(["made", "made", "made", "free", "word"]))
+        how = draw(st.sampled_from(_HOW))
         if how == "word":
             out.append(word(draw(st.sampled_from(["ten", "three", "billion", "million", "percent", "ighteen"]))))
             continue
         if how == "free":
             out.append(Figure(draw(_RUNS), draw(_AFTERS)))
+            continue
+        source = draw(st.sampled_from(sources))
+        after = draw(st.one_of(_AFTERS, st.sampled_from([source.after, _BY_TEXT[""], _BY_TEXT[" R"], *_SCALES[:4]])))
+        if how == "dotted":
+            out.append(Figure(draw(st.sampled_from(_DOTTED)), after))
+            continue
+        value = _number(source.run)
+        if how == "kept" or value is None:
+            out.append(Figure(source.run, after))
+            continue
+        rounding = draw(st.sampled_from([ROUND_HALF_UP, ROUND_HALF_EVEN, ROUND_HALF_EVEN, ROUND_DOWN]))
+        if how == "rounded":  # one input to fewer decimals, honestly or cut short
+            have = len(source.run.partition(".")[2])  # fewer decimals than the input has, when it has two
+            places = draw(st.integers(1, have - 1) if have > 1 else st.integers(0, 2))
+            out.append(Figure(format(value.quantize(Decimal(1).scaleb(-places), rounding), "f"), after))
+            continue
+        if how == "scaled":  # one input shown at a scale, under that scale's marker or another
+            scale = draw(st.sampled_from(_SCALES))
+            step = Decimal(1).scaleb(-draw(st.integers(0, 2)))
+            run = format(value.scaleb(-scale.exp).quantize(step, rounding), "f")
+            out.append(Figure(run, draw(st.sampled_from([scale, scale, scale, after]))))
             continue
         base = draw(st.sampled_from(values)) + draw(st.sampled_from([Decimal(0)] * 4 + values))
         moved = base.scaleb(draw(st.sampled_from([0, 0, 0, 2, 2, -3, -6, -9, -12, 1, -1])))
@@ -256,13 +321,26 @@ def _replies(draw: st.DrawFn, prompt: Sequence[Figure]) -> list[Figure]:
 _WIDE = int(os.environ.get("LAW_EXAMPLES", "0"))
 _SETTINGS = settings(max_examples=_WIDE or 3000, deadline=None, derandomize=not _WIDE)
 _PROPERTY = settings(max_examples=_WIDE or 800, deadline=None, derandomize=not _WIDE)
+#: The fewest figures each clause decides over the differential's examples.
+_FLOOR = 60
 
 
-@_SETTINGS
-@given(data=st.data(), prompt=_PROMPTS)
-def test_the_reader_names_what_the_statement_names(data: st.DataObject, prompt: list[Figure]) -> None:
-    reply = data.draw(_replies(prompt))
-    assert fast(reply, prompt) == law(reply, prompt), f"reply {render(reply)!r} over prompt {render(prompt)!r}"
+def test_the_reader_names_what_the_statement_names() -> None:
+    """The differential, and its own witness: a clause the generated replies barely reach is a
+    clause this test does not hold, so the count of each is asserted beside the equality."""
+    reached: Counter[str] = Counter()
+
+    @_SETTINGS
+    @given(data=st.data(), prompt=_PROMPTS)
+    def differ(data: st.DataObject, prompt: list[Figure]) -> None:
+        reply = data.draw(_replies(prompt))
+        reached.update(clause for _, _, clause in judged(reply, prompt))
+        assert fast(reply, prompt) == law(reply, prompt), f"reply {render(reply)!r} over prompt {render(prompt)!r}"
+
+    differ()
+    thin = {clause: reached[clause] for clause in REACHED if reached[clause] < _FLOOR}
+    assert not thin, f"the generated replies barely reach {thin} of {sum(reached.values())} figures: {dict(reached)}"
+    assert set(reached) <= set(REACHED), f"a clause REACHED does not list: {set(reached) - set(REACHED)}"
 
 
 @_PROPERTY
@@ -284,7 +362,7 @@ def test_a_bare_whole_number_is_licensed_only_by_an_input_that_printed_it(
     data: st.DataObject, prompt: list[Figure]
 ) -> None:
     n = data.draw(st.integers(0, 10**6).map(str))
-    printed = {numbers.canon(p.run) for p in prompt if p.run}
+    printed = {_written(p.run) for p in prompt if p.run}
     assert (fast([fig(n, " R")], prompt) == []) is (n in printed)
 
 
@@ -294,6 +372,4 @@ def test_the_belt_reading_is_exact_and_reads_no_marker(data: st.DataObject, prom
     reply, inputs = data.draw(_replies(prompt)), render(prompt)
     printed = numbers.digits(inputs)
     named = numbers.loose(render(reply), printed, inputs)
-    assert [n for n in named if n[0].isdigit()] == [
-        c for f in reply if f.run and (c := numbers.canon(f.run)) not in printed
-    ]
+    assert [n for n in named if n[0].isdigit()] == [c for f in reply if f.run and (c := _written(f.run)) not in printed]
