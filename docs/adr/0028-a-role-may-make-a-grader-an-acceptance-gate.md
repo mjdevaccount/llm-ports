@@ -44,18 +44,34 @@ Chosen option 3.
 
 - **`Role.gates`** is a tuple of grader names, each of which must be in `Role.graders`
   (`ValueError` otherwise). Empty by default.
+- **A gate is its key in the grader table.** A table may bind a built-in under another key
+  (`{"complete_nullable": partial(schema_complete, nullable=...)}`), and that grader's score
+  still says `schema_complete`. So a score is matched to its gate by its position in
+  `Role.graders`, never by `CallScore.name`, and the reason, the re-ask and
+  `stamp[call.GATES_FAILED]` name the gate by the key. A gate with no score refuses.
+- **A gate the table does not hold is a `request_fault`.** It could only crash, and a crashed
+  gate refuses: every reply would be refused after its re-ask. The call is refused before any
+  wire request, and `llm_call_failed` says which gate.
 - **A failing reply is re-asked.** `generate` adds the gates to the call's validator. The caller's
   validator runs first and its problems win; a reply it accepts is scored by the gates, and each
   failure is a problem naming the grader and its reason. The adapter re-asks while
   `Role.output_retries` remain, exactly as for any validator problem. The re-ask message for gate
   problems is the library's; any other problem list goes to the caller's `retry_message`.
+- **A re-ask leaves a witness.** A reply the re-ask fixed passes every score, so nothing on it
+  would say an earlier reply was refused. Each gate re-ask emits `llm_gate_reasked` (the role,
+  the gates, their reasons), and the result carries `stamp[call.GATES_REASKED]`, which is also
+  written on the observation's metadata. A `Generator` asks for the re-ask message exactly when
+  it sends a re-ask; that is where the re-ask is recorded, so the witness and the text the model
+  was sent cannot disagree.
 - **A reply that still fails is `invalid`.** After the graders score the kept reply, a failed gate
   turns `ok` into `invalid` (`failure.kind == "invalid_output"`), with `value=None`,
   reason `gate: <grader>: <the grader's reason>`, and `stamp[call.GATES_FAILED]` naming the gates.
   The observation ends in error with the same outcome, and `llm_call_failed` is emitted.
 - **The scores survive the refusal.** `stamp["scores"]` is kept and `Hooks.on_scores` is awaited
   with it, so a gauge of failed graders counts a refused reply exactly as it counted an accepted
-  one. `Hooks.on_ok` does not see it.
+  one. `Hooks.on_ok` does not see it. When a table lists `invalid_output` in a tier's
+  `fallback_on`, the refused tier's scores are handed to `on_scores` too, before the answering
+  tier's: the tier that answered did not fail, and the one that did must still be counted.
 - **A gate follows its grader.** A call that drops a grader for its inputs (an image, a web
   tier's pages: `graders_for_inputs`) drops the gate with it.
 - **A crashed gate refuses.** A grader that raises is a failed score (`CRASHED`), so it refuses;
@@ -63,7 +79,8 @@ Chosen option 3.
 
 `invalid` is in no tier's default `fallback_on`, so a refusal does not fail over unless the table
 says so. `call.chat` and `call.stream` are not gated: a tool loop and a token stream have no
-single reply to refuse before it is returned.
+single reply to refuse before it is returned. They grade the turn with the role's graders, as
+before, and never refuse it.
 
 A gate is only as good as its grader. A role should gate on a grader whose failures, read on that
 role's own replies, are failures: gating on a grader that fails honest replies turns a noisy score

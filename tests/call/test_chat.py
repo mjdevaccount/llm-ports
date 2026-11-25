@@ -9,7 +9,7 @@ from llm_ports import call, ports
 from llm_ports.call import roles
 from llm_ports.call.context import TrimPolicy
 from llm_ports.ports import Counted, Finished, Message, Part, TextDelta, Tool, ToolOutput
-from llm_ports.testing import RecordingTracer, StubChat, StubGenerator, ToolCall, Turn
+from llm_ports.testing import RecordingTracer, Reply, StubChat, StubGenerator, ToolCall, Turn
 
 RAW: dict[str, Any] = {
     "schema_version": 2,
@@ -236,3 +236,23 @@ def test_chat_request_for_resolves_the_role() -> None:
     )
     assert (req.model, req.max_steps, req.tool_output_chars, req.label) == ("small-chat", 3, 10, "c.req")
     assert call.chat_request_for(R("c.req", tier="chat"), messages=[], max_steps=5).max_steps == 5
+
+
+async def test_a_conversation_is_graded_and_never_gated() -> None:
+    """`Role.gates` belong to `call.generate` (ADR-0028): a turn that fails the gate's grader is
+    returned `ok` with the failed score, and the same reply through `generate` is refused."""
+    role = R("c.gated", tier="chat", graders=("numbers_from_inputs",), gates=("numbers_from_inputs",))
+    noted: list[list[bool]] = []
+
+    async def on_scores(_r: roles.Role, scores: tuple[Any, ...]) -> None:
+        noted.append([s.passed for s in scores])
+
+    hooks, events = _hooks(on_scores=on_scores)
+    stub = StubChat([Turn.reply("wait for a 15-minute retest")])
+    res = await call.chat(role, messages=[_user("room_down 14.878")], chat=stub, hooks=hooks)
+    assert res.outcome == "ok" and res.value == "wait for a 15-minute retest"
+    assert call.GATES_FAILED not in res.stamp and noted == [[False]]
+    assert _names(events) == ["llm_call_graded"], "measured, and no llm_call_failed"
+    gen = StubGenerator([Reply.ok("wait for a 15-minute retest"), Reply.ok("wait for a 15-minute retest")])
+    refused = await call.generate(role, prompt="room_down 14.878", generator=gen)
+    assert refused.outcome == "invalid" and refused.stamp[call.GATES_FAILED] == ("numbers_from_inputs",)

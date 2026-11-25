@@ -46,19 +46,26 @@ A digit run is licensed when some allowed value renders as it:
 - **Rounding.** The value rounded, half up or half even, to the decimals the run is written with,
   when it has at least one: "0.59" for 0.5918, "14.88" for 14.878. The run's trailing zeros are
   its precision, so "28.00" is not 28.89.
-- **A percentage.** A run followed by `%`, "percent" or "pct" may show the value times 100 ("75%"
-  for 0.7486) or the value itself rounded ("13.5%" for 13.49).
-- **A scale.** A run followed directly by `K`, `M`, `B` or `T`, or by "thousand", "million",
-  "billion" or "trillion", may show the value divided by it: "19.8B" for 19813893517. A letter
-  after a space is a unit, not a scale.
+- **A percentage.** A run followed by `%`, "percent" or "pct" may show a value that has a
+  fractional part, times 100 ("75%" for 0.7486), or the value itself rounded ("13.5%" for 13.49).
+- **A scale.** A run followed directly by `K`, `k`, `M`, `B`, `T` or `bn`, or by "thousand",
+  "million", "billion" or "trillion", may show the value divided by it: "19.8B" for 19813893517.
 
-Two limits keep the invented figure caught:
+Five limits keep the invented figure caught:
 
 - **A whole number with no marker is never a rounding.** "15" is licensed only by an input 15.
 - **A marked whole number rounds a magnitude of 1 or more.** "0%" is not 0.004.
+- **A whole value is never moved to a percentage.** "100%" is not a `1` in the inputs, and
+  "200%" is not a `2`: a step number or a day count would license either. The cost is that
+  "100%" for a probability printed as `1.0` fails, and is re-asked where the role gates.
+- **A scale letter is a capital, or `k`.** A lower-case `m`, `b` or `t` directly after a digit
+  is a timeframe or a unit ("a 15m retest", "the 5m chart"), and `mm` is millimetres. A letter
+  after a space is a unit too.
+- **The marker sits on the figure's own line**, after at most one plain space.
 
 `loose` also licenses the scale or percent word the rendering needed ("billion" in
-"19.8 billion") and no other number word.
+"19.8 billion") and no other number word. It asks that of a run that equals an input too: beside
+a date's `20`, "-20 billion" is still 19813893517 shown coarser, and its "billion" is licensed.
 
 `rerender` is off by default. `numbers_from_inputs` turns it on; `grounding.belt`, `slots.belt`
 and `uncited` do not, because the figures they check were printed by code and a model has no
@@ -80,6 +87,26 @@ judgement of what a rounding is.
   role gates on the grader; the alternative licenses the invented count.
 - Neutral: a marked whole number is looser than an unmarked one. "5%" is licensed by an input in
   0.045 to 0.055 or in 4.5 to 5.5.
+- Neutral: a capital scale letter is still read as a scale. "a 15M retest" is licensed by an
+  input 15234567. Nothing on the page tells the two readings apart.
+
+### How much a dense prompt licenses
+
+The law asks whether SOME input renders as the figure, so the more values a prompt carries, the
+more made-up figures land on one. Measured on synthetic prompts of 150 values, 40,000 made-up
+figures per shape, the share that passes:
+
+| a made-up figure | 50 probabilities, 50 values in 1 to 100, 50 strikes | 150 values in 0 to 800 |
+|---|---|---|
+| a whole percentage, "37%" | 63% | 16% |
+| one decimal below 1, "0.4" | 98% | 1% |
+| two decimals below 1, "0.41" | 40% | 0.3% |
+| two decimals below 800, "512.37" | 0.2% | 0.2% |
+| a bare whole number, "512" | 0.1% | 0% |
+
+A gate on this grader keeps out an invented level, count or price. It does not keep out an
+invented probability on a prompt that already carries fifty of them: such a role needs a slot
+grammar (ADR-0004), where the model cites the value and never writes it.
 
 ### Option 1, rejected
 

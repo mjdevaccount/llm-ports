@@ -12,9 +12,10 @@ the `Generator` call. Every `ok` reply is scored by the graders its role names; 
 written on the observation and carried under `stamp["scores"]`, then handed to `on_scores` (a
 gauge) and `on_ok` (a sampler). A grader the role also names in `gates` is an acceptance gate: a
 reply that fails it is re-asked through the validator while re-asks remain, then returned
-`invalid` (ADR-0028). Feature code carries no model literal, no timeout and no framework
-import: the role carries them, and the `Generator` is passed in (an adapter, a test stub, a
-recording replay).
+`invalid` (ADR-0028). A gate re-ask emits `llm_gate_reasked` and is stamped
+(`stamp["gates_reasked"]`), so a reply the re-ask fixed still says an earlier one was refused.
+Feature code carries no model literal, no timeout and no framework import: the role carries
+them, and the `Generator` is passed in (an adapter, a test stub, a recording replay).
 
 The hooks are where a consumer's own planes plug in: a category switchboard, a tracing backend, a
 metrics sink, an LLM-judge sampler. Every hook is optional. With none, the path is role,
@@ -33,8 +34,10 @@ Invariants:
     - A deadline expiry is a `timeout` result; a caller's cancellation propagates.
     - Fallback starts only after the tier's own wire policy gave up, and only for a listed kind.
     - A non-`ok`, non-`gated` outcome ends the observation in error and emits `llm_call_failed`.
-    - A reply a gate refused is never `ok`: its scores are still written, counted and stamped.
       `_NotOk` is raised inside the trace block only and never escapes.
+    - A reply a gate refused is never `ok`: its scores are still written, counted and stamped,
+      and handed to `on_scores` even when the refusal fails over to another tier.
+    - A gate that names no grader in the table is a `request_fault` before any wire request.
     - A caller whose ledger is an `except` uses `require_ok`.
     - The observation's metadata carries the failure kind, the cost and its source, who answered,
       the unified finish, the attempt count and every usage bucket; an unknown stays None.
@@ -97,10 +100,12 @@ class Hooks:
         trace: Opens the call's observation; without one, a sink-less tracer is used.
         graders: The grader table by name; None means `call.graders.GRADERS`.
         on_scores: Awaited with the role and its scores whenever a reply was graded, a reply a
-            gate refused included (its outcome is `invalid`; the scores say why).
+            gate refused included (its outcome is `invalid`; the scores say why). A tier whose
+            refusal failed over is reported with that tier's role, before the answering tier's.
         on_ok: Called with the role, prompt and result after an `ok` reply.
-        on_event: Receives `llm_call_failed`, `llm_call_graded`, `llm_fallback` and
-            `llm_deadline_expired`; without one, they go to the stdlib logger `llm_ports.call`.
+        on_event: Receives `llm_call_failed`, `llm_call_graded`, `llm_gate_reasked`,
+            `llm_fallback` and `llm_deadline_expired`; without one, they go to the stdlib logger
+            `llm_ports.call`.
         generator_for: Tier name to the `Generator` that serves it (e.g.
             `call.providers.Backends.generator_for`), for a fallback tier on another provider.
             None runs every tier on the `generator` passed to `generate` (the model id is on the
@@ -285,6 +290,20 @@ def _unsupported(role: Role, req: GenRequest, output: type[Any], web: bool, h: H
     return Generated(value=None, outcome="request_fault", model=req.model, reason=reason[:REASON_MAX])
 
 
+def _ungated(role: Role, req: GenRequest, h: Hooks) -> Generated[Any] | None:
+    """Return the `request_fault` result when a gate names no grader in the table, else None.
+
+    Nothing is sent. Such a gate can only crash, and a crashed gate refuses: every reply of the
+    role would be refused after its re-ask, at two requests each.
+    """
+    lost = _gate.unknown(role, h.graders)
+    if not lost:
+        return None
+    reason = f"gate: role {role.name!r} gates on {lost}, which the grader table does not hold"
+    _event(h, logging.WARNING, "llm_call_failed", role=role.name, outcome="request_fault", reason=reason)
+    return Generated(value=None, outcome="request_fault", model=req.model, reason=reason[:REASON_MAX])
+
+
 def _stamped[T](role: Role, res: Generated[T]) -> Generated[T]:
     """Stamp the fingerprint of the tier table that routed the call (`stamp["tiers"]`)."""
     fp = role.resolved_tier.table_fingerprint
@@ -349,16 +368,20 @@ def _settled[T](
     obs: Observation,
     h: Hooks,
     extra: Mapping[str, Any] | None = None,
+    *,
+    gate: bool = True,
 ) -> Generated[T]:
     """The reply written on its observation, then graded when it is `ok` and the role has graders.
 
     A graded reply that fails one of the role's gates comes back `invalid` (`_gate.refused`).
+    `gate=False` grades and never refuses: the conversation path, which has no single reply to
+    refuse before it is returned (ADR-0028).
     """
     res = _observed(role, res, obs, extra)
     if res.outcome != "ok" or not role.graders:
         return res
     graded = _grade(role, prompt, res, obs, h)
-    res = _gate.refused(role, graded)
+    res = _gate.refused(role, graded) if gate else graded
     if res is not graded:  # refused: the observation says so, not the `ok` it was written with
         named = {_gate.GATES_FAILED: list(res.stamp[_gate.GATES_FAILED])}
         obs.update(metadata={**_trace_metadata(role, res, extra), **named})
@@ -455,6 +478,7 @@ async def generate[T](
     loop = asyncio.get_running_loop()
     clocks = Deadline(total_s=role.resolved_timeout_s).start(loop.time())
     route = Route(role, clocks)
+    passed_on: list[tuple[Role, tuple[CallScore, ...]]] = []  # a graded tier whose refusal failed over
     try:
         async with asyncio.timeout_at(clocks.at + DEADLINE_GRACE_S):
             for tier_role in chain_of(role):
@@ -469,13 +493,31 @@ async def generate[T](
                     res = finished(res, pre, h.on_event or _log_event, tier_role.name)
                 if not route.settle(tier_role, res):
                     break
+                if res.stamp.get("scores"):
+                    passed_on.append((tier_role, res.stamp["scores"]))
     except TimeoutError:
         route.expire(loop.time(), h.on_event or _log_event)
-    return await _finish(role, prompt, route, h)
+    return await _finish(role, prompt, route, h, passed_on)
 
 
-async def _finish(role: Role, prompt: str, route: Route, h: Hooks) -> Generated[Any]:
-    """Stamp, report and return the route's result; an expiry with no result is a `timeout`."""
+async def _finish(
+    role: Role,
+    prompt: str,
+    route: Route,
+    h: Hooks,
+    passed_on: Sequence[tuple[Role, tuple[CallScore, ...]]] = (),
+) -> Generated[Any]:
+    """Stamp, report and return the route's result; an expiry with no result is a `timeout`.
+
+    A tier in `passed_on` was graded and refused by a gate, and its refusal failed over: its
+    scores are reported first, so a counter of failed graders sees them whichever tier answers.
+    The last tier of a chain is the route's result and is reported once, by `_report`.
+    """
+    last = route.result.stamp.get("scores") if route.result is not None else None
+    if h.on_scores is not None:
+        for tier_role, scores in passed_on:
+            if scores is not last:
+                await h.on_scores(tier_role, scores)
     res = route.result if route.result is not None else timed_out(role, route)
     res = _stamped(role, res)
     if route.result is None:
@@ -506,16 +548,30 @@ async def _one[T](
 ) -> Generated[T]:
     """One tier's call: the capability check, the admit hook, the trace, the generator, the graders and gates."""
     with llm_feature(role.category):
-        refused = _unsupported(role, req, output, web, h) or _gated(role, req, h)
+        refused = _unsupported(role, req, output, web, h) or _ungated(role, req, h) or _gated(role, req, h)
         if refused is not None:
             return _stamped(role, refused)
         res: Generated[T] | None = None
         trace = h.trace or _null_trace
+
+        def reasked(problems: Sequence[_gate.GateProblem]) -> None:
+            _event(
+                h,
+                logging.INFO,
+                "llm_gate_reasked",
+                role=role.name,
+                gates=[p.grader for p in problems],
+                reasons={p.grader: p.reason for p in problems},
+            )
+
         try:
-            check, message = _gate.armed(role, prompt, h.graders, validate, retry_message)
+            arm = _gate.armed(role, prompt, h.graders, validate, retry_message, reasked)
             async with trace(role, req, prompt, {"role": role.name, **(metadata or {})}) as obs:
-                res = await generator.generate(req, output, validate=check, retry_message=message)
-                res = _settled(role, prompt, res, obs, h)
+                res = await generator.generate(req, output, validate=arm.validate, retry_message=arm.retry_message)
+                named = arm.gates_reasked
+                if named:  # the witness of a refused earlier reply, on the stamp and on the trace
+                    res = replace(res, stamp={**res.stamp, _gate.GATES_REASKED: named})
+                res = _settled(role, prompt, res, obs, h, {_gate.GATES_REASKED: list(named)} if named else None)
                 _raise_unless_ok(res)
         except _NotOk:
             _call_failed(h, role, res)

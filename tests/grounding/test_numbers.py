@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from llm_ports.grounding import numbers
@@ -134,6 +136,67 @@ class TestRerenders:
         assert numbers.loose("about 19.8 billion", {"19813893517"}, rerender=True) == []
         assert numbers.loose("about 14.88 million", {"14.878"}, rerender=True) == ["million"], "an invented scale"
         assert numbers.loose("19.8 billion, then a billion more", {"19813893517"}, rerender=True) == ["billion"]
+
+    @pytest.mark.parametrize(
+        ("text", "inputs", "unlicensed"),
+        [
+            # timeframe and unit shorthand is not a scale: only a capital letter, or `k`, is
+            ("wait for a 15m retest", "volume 15234567", ["15"]),
+            ("on the 5m chart", "volume 5234567", ["5"]),
+            ("a 5mm gap", "volume 5234567", ["5"]),
+            ("down 2b", "net 2000000000", ["2"]),
+            ("volume 15.2M, 3k lots, 2.1bn notional", "15234567 3000 2100000000", []),
+            # times 100 shows a fraction; a whole input moved is an invented figure
+            ("a 100% chance", "step 1. read the tape", ["100"]),
+            ("up 200%", "2 DTE", ["200"]),
+            ("up 200.0%", "2 DTE", ["200"]),
+            ("75% of sessions, 150% of the range", "p_up 0.7486 ratio 1.5", []),
+            # a newline ends the figure: the marker is on the next line, so it marks nothing
+            ("was 75" + chr(10) + "percent of", "p_up 0.7486", ["75", "percent"]),
+            ("19.8" + chr(10) + "billion", "net 19813893517", ["19.8", "billion"]),
+            ("was 75 percent of", "p_up 0.7486", []),
+        ],
+    )
+    def test_a_marker_is_read_narrowly(self, text: str, inputs: str, unlicensed: list[str]) -> None:
+        assert numbers.loose(text, numbers.digits(inputs), inputs, rerender=True) == unlicensed
+
+    @pytest.mark.parametrize(
+        ("text", "inputs", "unlicensed"),
+        [
+            # the run equals another input (a date's 20, a dte of 75) and re-renders the one meant
+            ("net gex is -20 billion", "date 2026-11-20 net_gex -19813893517", []),
+            ("about 75 percent", "dte 75 p_up 0.7486", []),
+            ("about 75 pct", "dte 75 p_up 0.7486", []),
+            # and with no input for the scale to re-render, the scale word is still invented
+            ("about 20 billion", "date 2026-11-20", ["billion"]),
+            ("about 20 thousand", "date 2026-11-20 lots 21000", ["thousand"]),
+        ],
+    )
+    def test_an_equal_run_still_has_its_marker_licensed_by_the_value_it_renders(
+        self, text: str, inputs: str, unlicensed: list[str]
+    ) -> None:
+        assert numbers.loose(text, numbers.digits(inputs), inputs, rerender=True) == unlicensed
+
+    def test_a_long_prompt_and_a_long_reply_are_checked_in_bounded_time(self) -> None:
+        """Each figure is one bisect over the sorted inputs, not a pass over all of them. Read as a
+        count of the values looked at, so the bound does not depend on the machine."""
+        inputs = {f"{i}.{i % 97:02d}" for i in range(5000)}
+        values = numbers._values(inputs)
+        seen: list[int] = []
+        real = numbers._between
+
+        def counted(vals: Any, lo: Any, hi: Any) -> Any:
+            got = real(vals, lo, hi)
+            seen.append(len(got))
+            return got
+
+        text = " ".join(f"{i}.{(i * 7) % 100:02d}%" for i in range(0, 4000, 10))
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(numbers, "_between", counted)
+            hits = numbers.loose(text, inputs, rerender=True)
+        assert len(values) == 5000 and len(seen) == 800, "two bisects a figure: itself, and moved by the marker"
+        assert max(seen) <= 2 and sum(seen) < 800, f"{sum(seen)} values looked at for 400 figures over 5000 inputs"
+        assert len(hits) > 300, "and the invented ones are still named"
 
     def test_an_unreadable_allowed_run_is_skipped_never_raised(self) -> None:
         assert numbers.rerenders("0.59", "", {"1.2.3", "0.5918"}) is True

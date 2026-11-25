@@ -22,11 +22,22 @@ All notable changes to this project are documented here. The format is based on
   whose grader the call drops for its inputs (an image, a web tier) is dropped with it. Empty by
   default: every existing role behaves as before. `call.chat` and `call.stream` are not gated.
   `call.GateProblem` is the problem a gate hands the validator seam.
+  - A gate is named by its key in the grader table and matched to its score by position in
+    `Role.graders`, so a built-in bound under another key gates as that key.
+  - A gate re-ask emits `llm_gate_reasked` and stamps `stamp[call.GATES_REASKED]` (also on the
+    observation's metadata): a reply the re-ask fixed still says an earlier one was refused.
+  - A tier whose refusal fails over (`invalid_output` in its `fallback_on`) has its scores
+    handed to `Hooks.on_scores` before the answering tier's.
+  - A gate the grader table does not hold is a `request_fault` before any wire request.
+- **`testing.StubGenerator.reasks`**: the message of every re-ask the stub sent. The stub now
+  asks `retry_message` for it, once per re-ask, as the pydantic-ai adapter does.
 - **`grounding.numbers.rerenders(run, after, allowed)`** and **`numbers.loose(..., rerender=True)`**
   (ADR-0027): whether a digit run shows ONE allowed value again, coarser. Rounded to the decimals
   it is written with ("0.59" for 0.5918), as a percentage ("75%" for 0.7486), or at a scale
   ("19.8B" or "19.8 billion" for 19813893517). A whole number with no percent sign or scale after
-  it is never a rounding, and nothing computed from two values is licensed. Off by default.
+  it is never a rounding, and nothing computed from two values is licensed. A scale letter is a
+  capital or `k` ("15m" is a timeframe), and a whole value is never moved to a percentage (a `1`
+  is not "100%"). Off by default.
 
 ### Changed
 

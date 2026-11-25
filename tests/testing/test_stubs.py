@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from llm_ports import ports
-from llm_ports.ports import Chunk
+from llm_ports.ports import Chunk, GenRequest
 from llm_ports.testing import STUB_MODEL, Reply, StubCiter, StubGenerator
 
 SPAN = Chunk(id="a", text="SPY closed at 580.5, up 3%", title="Close")
@@ -44,3 +46,31 @@ async def test_the_stub_reports_its_own_model_as_the_one_that_answered() -> None
     assert named.answered is not None and named.answered.model == "fake-8b"
     failed = await StubGenerator(ports.failure("server")).generate(ports.GenRequest("small-chat", "p"), str)
     assert failed.answered is not None and failed.answered.model == STUB_MODEL
+
+
+async def test_a_re_ask_asks_retry_message_for_its_text_once_and_keeps_it() -> None:
+    """The stub runs the adapter's seam: a caller that counts re-asks in `retry_message` counts
+    the stub's. No re-ask, no call."""
+    asked: list[tuple[str, ...]] = []
+
+    def message(problems: Any) -> str:
+        asked.append(tuple(problems))
+        return "fix: " + problems[0]
+
+    req = GenRequest(model="m", prompt="p", output_retries=1)
+    gen = StubGenerator([Reply.ok(""), Reply.ok("fine")])
+    res = await gen.generate(req, str, validate=lambda v: [] if v else ["empty"], retry_message=message)
+    assert (res.value, res.retries) == ("fine", 1) and asked == [("empty",)] and gen.reasks == ["fix: empty"]
+    kept = StubGenerator([Reply.ok(""), Reply.ok("")])
+    res = await kept.generate(req, str, validate=lambda v: [] if v else ["empty"])
+    assert res.problems == ("empty",) and kept.reasks == ["empty"], "one re-ask, then kept: the default text"
+    once = StubGenerator([Reply.ok("fine")])
+    await once.generate(req, str, validate=lambda v: [] if v else ["empty"], retry_message=message)
+    assert once.reasks == [] and len(asked) == 1
+
+    def broken(_problems: Any) -> str:
+        raise RuntimeError("message bug")
+
+    script = [Reply.ok(""), Reply.ok("fine")]
+    res = await StubGenerator(script).generate(req, str, validate=lambda _v: ["bad"], retry_message=broken)
+    assert res.failure is not None and res.failure.kind == "internal"
