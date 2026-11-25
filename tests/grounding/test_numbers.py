@@ -76,3 +76,66 @@ def test_shorten_never_leaves_part_of_a_number() -> None:
 def test_shorten_refuses_a_width_with_no_room_before_the_placeholder() -> None:
     with pytest.raises(ValueError, match="no room"):
         numbers.shorten("anything", 1)
+
+
+class TestRerenders:
+    """One input value shown again, coarser: licensed. Anything else: not. Both directions."""
+
+    @pytest.mark.parametrize(
+        ("run", "after", "value"),
+        [
+            ("0.59", " R", "0.5918"),  # rounded to the decimals written
+            ("14.88", " points", "14.878"),
+            ("60.67", "", "60.666"),
+            ("0.24", "% away", "0.2409"),  # a rounded value that already was a percentage
+            ("13.5", "%", "13.49"),
+            ("13", " percent", "13.49"),
+            ("75", "% of sessions", "0.7486"),  # a fraction shown as a percentage
+            ("74.9", "pct", "0.7486"),
+            ("19.8", "B in gamma", "19813893517"),  # a scale letter directly after the run
+            ("19.8", " billion", "19813893517"),
+            ("20", "B", "19813893517"),
+            ("3", "k", "3000"),  # exact at the scale
+            ("1.2", "M", "1234567"),
+            ("2.5", "", "2.45"),  # half up
+            ("2.4", "", "2.45"),  # half even
+        ],
+    )
+    def test_a_coarser_rendering_of_one_value_is_licensed(self, run: str, after: str, value: str) -> None:
+        assert numbers.rerenders(run, after, {value}), f"{run}{after!r} shows {value}"
+        assert numbers.loose(f"it was {run}{after}", {value}, rerender=True) == []
+        assert numbers.loose(f"it was {run}{after}", {value}) != [], "the belt reading stays exact"
+
+    @pytest.mark.parametrize(
+        ("run", "after", "value"),
+        [
+            ("15", "-minute retest", "14.878"),  # a bare integer is never a rounding
+            ("48", " minutes", "48.1"),
+            ("28.00", "", "28.89"),  # the decimals written are the precision claimed
+            ("0.7", "", "0.5918"),
+            ("21.99", "", "21.9963"),  # truncation is not rounding: 21.9963 rounds to 22.00
+            ("2.6", "%", "26"),  # a slipped decimal point is not a scale
+            ("36", "%", "34.3"),  # nor is arithmetic over inputs
+            ("19.8", " m", "19813893517"),  # a spaced letter is a unit
+            ("19.8", "M", "19813893517"),  # the wrong scale
+            ("0", "%", "0.004"),  # a marked integer rounds a magnitude of 1 or more only
+            ("1.2.3", "", "1.2"),  # a digit run that is not a number
+        ],
+    )
+    def test_an_invented_or_computed_figure_is_not(self, run: str, after: str, value: str) -> None:
+        assert not numbers.rerenders(run, after, {value})
+
+    def test_loose_names_the_invented_figure_and_keeps_the_rounded_ones(self) -> None:
+        allowed = numbers.digits("realized_r 0.5918, room_down 14.878, vix 28.89, net_gex -19813893517")
+        text = "Realized 0.59R with 14.88 of room and -19.8B of gamma; wait for a 15-minute retest below 28.00."
+        assert numbers.loose(text, allowed, rerender=True) == ["15", "28"]
+
+    def test_the_scale_word_is_licensed_only_when_the_rendering_needed_it(self) -> None:
+        assert numbers.loose("about 19.8 billion", {"19813893517"}, rerender=True) == []
+        assert numbers.loose("about 14.88 million", {"14.878"}, rerender=True) == ["million"], "an invented scale"
+        assert numbers.loose("19.8 billion, then a billion more", {"19813893517"}, rerender=True) == ["billion"]
+
+    def test_an_unreadable_allowed_run_is_skipped_never_raised(self) -> None:
+        assert numbers.rerenders("0.59", "", {"1.2.3", "0.5918"}) is True
+        assert numbers.rerenders("0.59", "", {"1.2.3"}) is False
+        assert numbers.rerenders("1.5", "", {"9" * 40}) is False  # more digits than the context holds

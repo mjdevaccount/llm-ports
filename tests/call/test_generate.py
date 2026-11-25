@@ -14,12 +14,12 @@ from typing import Any
 import pytest
 
 from llm_ports import call
-from llm_ports.call import _generate
+from llm_ports.call import _gate, _generate
 from llm_ports.call import graders as call_graders
 from llm_ports.observability import current_feature
 from llm_ports.ports import Generated, GenRequest
 from llm_ports.ports.outcomes import GenerationFailed
-from llm_ports.testing import RecordingTracer, StubGenerator
+from llm_ports.testing import RecordingTracer, Reply, StubGenerator
 from tests.conftest import Role
 
 GRADERS = ("schema_complete", "numbers_from_inputs", "echo")
@@ -221,6 +221,133 @@ class TestGraders:
         assert scores["echo"].value == call_graders.CRASHED and "RuntimeError: grader bug" in scores["echo"].reason
         assert res.outcome == "ok" and len(tracer.generations[0].scores) == 2
         assert call_graders.GRADERS["echo"] is call_graders.echo, "the package table is never mutated"
+
+
+GATED = Role("test.gated", tier="local", graders=GRADERS, gates=("numbers_from_inputs",))
+INVENTED = {"summary": "wait for a 15-minute retest"}
+GROUNDED = {"summary": "held 14.88 of room"}
+PROMPT = "room_down 14.878"
+
+
+class TestGates:
+    """A grader the role names in `gates` decides whether the reply is returned. Both directions:
+    the same reply is `ok` on the ungated role and refused on the gated one, and a reply the gate
+    passes is returned exactly as an ungated role's."""
+
+    @staticmethod
+    def _hooks(tracer: RecordingTracer, **more: Any) -> call.Hooks:
+        return call.Hooks(trace=call.tracer_trace(tracer), **more)
+
+    async def test_a_failed_gate_is_re_asked_and_the_fixed_reply_is_ok(self) -> None:
+        gen, tracer = StubGenerator([Reply.ok(INVENTED), Reply.ok(GROUNDED)]), RecordingTracer()
+        offered: list[Any] = []
+        res = await call.generate(
+            GATED, prompt=PROMPT, generator=gen, hooks=self._hooks(tracer, on_ok=lambda *a: offered.append(a))
+        )
+        gen.assert_spent()
+        assert (res.outcome, res.value, res.retries, res.problems) == ("ok", GROUNDED, 1, ())
+        assert all(s.passed for s in res.stamp["scores"]) and call.GATES_FAILED not in res.stamp
+        assert len(offered) == 1 and tracer.generations[0].ended is not None
+        assert tracer.generations[0].ended["level"] == "DEFAULT"
+
+    async def test_a_reply_still_failing_after_the_re_ask_is_refused_and_still_counted(self) -> None:
+        gen, tracer = StubGenerator([Reply.ok(INVENTED), Reply.ok(INVENTED)]), RecordingTracer()
+        noted: list[tuple[str, tuple[Any, ...]]] = []
+        offered: list[Any] = []
+        events: list[tuple[str, dict[str, Any]]] = []
+
+        async def on_scores(role: Role, scores: tuple[Any, ...]) -> None:
+            noted.append((role.name, scores))
+
+        hooks = self._hooks(
+            tracer,
+            on_scores=on_scores,
+            on_ok=lambda *a: offered.append(a),
+            on_event=lambda _lvl, ev, f: events.append((ev, dict(f))),
+        )
+        res = await call.generate(GATED, prompt=PROMPT, generator=gen, hooks=hooks)
+        gen.assert_spent()
+        assert (res.outcome, res.value) == ("invalid", None), "a refused reply carries no value to store"
+        assert res.failure is not None and res.failure.kind == "invalid_output"
+        assert res.reason == "gate: numbers_from_inputs: numbers no input rendered: ['15']"
+        assert res.stamp[call.GATES_FAILED] == ("numbers_from_inputs",)
+        failed = [s.name for s in res.stamp["scores"] if not s.passed]
+        assert failed == ["numbers_from_inputs"], "the post-hoc score is still stamped"
+        assert noted == [("test.gated", res.stamp["scores"])], (
+            "and still handed to on_scores: the counter keeps counting"
+        )
+        assert offered == [], "on_ok never sees a refused reply"
+        assert [e[0] for e in events] == ["llm_call_graded", "llm_call_failed"]
+        assert events[1][1]["outcome"] == "invalid" and events[1][1]["kind"] == "invalid_output"
+        ended = tracer.generations[0].ended
+        assert ended is not None and ended["level"] == "ERROR"
+        assert ended["metadata"]["outcome"] == "invalid" and ended["metadata"][call.GATES_FAILED] == [
+            "numbers_from_inputs"
+        ]
+        assert ("test.gated.numbers_from_inputs", 1.0) == tracer.generations[0].scores[1][:2]
+
+    async def test_the_same_reply_on_the_ungated_role_is_ok(self) -> None:
+        gen, _t, hooks, _e = _rig(INVENTED)
+        res = await call.generate(GRADED, prompt=PROMPT, generator=gen, hooks=hooks)
+        assert res.outcome == "ok" and res.value == INVENTED and res.retries == 0
+
+    async def test_a_grader_that_is_not_a_gate_never_refuses(self) -> None:
+        """`schema_complete` fails here and is only a grader on this role: measured, not refused."""
+        gen, _t, hooks, events = _rig({"summary": ""})
+        res = await call.generate(GATED, prompt=PROMPT, generator=gen, hooks=hooks)
+        assert res.outcome == "ok" and res.retries == 0
+        assert [e[2]["failed"] for e in events] == [["schema_complete"]]
+
+    async def test_no_re_asks_left_refuses_on_the_first_reply(self) -> None:
+        role = Role("test.gated_once", tier="local", graders=GRADERS, gates=("numbers_from_inputs",), output_retries=0)
+        gen, _t, hooks, _e = _rig(INVENTED)
+        res = await call.generate(role, prompt=PROMPT, generator=gen, hooks=hooks)
+        assert res.outcome == "invalid" and res.retries == 0 and len(gen.requests) == 1
+
+    async def test_the_callers_validator_runs_first_and_its_problems_win(self) -> None:
+        seen: list[Any] = []
+
+        def validate(value: dict[str, str]) -> list[str]:
+            seen.append(value)
+            return ["too short"] if len(value["summary"]) < 12 else []
+
+        gen, _t, hooks, _e = _rig({"summary": "15"})
+        res = await call.generate(GATED, prompt=PROMPT, output=dict, generator=gen, hooks=hooks, validate=validate)
+        assert len(seen) == 2 and res.outcome == "invalid", "kept with the caller's problems, then refused by the gate"
+        assert res.problems == ("too short",), "the gate was not asked about a reply the caller refused"
+
+    async def test_a_gate_blind_to_the_calls_inputs_is_dropped_with_its_grader(self) -> None:
+        """An image or a web tier's pages are inputs no text grader sees: no grader, so no gate."""
+        for extra in ({"images": [(b"png", "image/png")]}, {"web": True}):
+            gen, _t, hooks, _e = _rig(INVENTED)
+            res = await call.generate(GATED, prompt=PROMPT, generator=gen, hooks=hooks, **extra)
+            assert res.outcome == "ok" and [s.name for s in res.stamp["scores"]] == ["schema_complete", "echo"]
+        assert GATED.gates == ("numbers_from_inputs",), "the role itself is untouched"
+
+    async def test_a_crashed_gate_refuses_never_passes(self) -> None:
+        def boom(*_a: Any) -> Any:
+            raise RuntimeError("grader bug")
+
+        role = Role("test.gated_boom", tier="local", graders=("echo",), gates=("echo",))
+        gen, tracer, _h, _e = _rig({"summary": "fine"})
+        hooks = self._hooks(tracer, graders={**call_graders.GRADERS, "echo": boom})
+        res = await call.generate(role, prompt=PROMPT, generator=gen, hooks=hooks)
+        assert res.outcome == "invalid" and "grader raised RuntimeError" in (res.reason or "")
+
+    def test_the_re_ask_names_the_gate_and_a_caller_problem_goes_to_the_callers_message(self) -> None:
+        check, message = _gate.armed(GATED, PROMPT, None, None, lambda problems: f"caller: {problems}")
+        assert check is not None and message is not None
+        problems = check(INVENTED)
+        assert [str(p) for p in problems] == ["numbers_from_inputs: numbers no input rendered: ['15']"]
+        assert "numbers_from_inputs: numbers no input rendered: ['15']" in message(problems)
+        assert message(["too short"]) == "caller: ['too short']"
+        assert check(GROUNDED) == []
+
+    def test_an_ungated_role_keeps_the_callers_validator_untouched(self) -> None:
+        def validate(_v: Any) -> list[str]:
+            return []
+
+        assert _gate.armed(GRADED, PROMPT, None, validate, None) == (validate, None)
 
 
 async def test_an_ok_reply_is_offered_to_on_ok_with_its_observation() -> None:

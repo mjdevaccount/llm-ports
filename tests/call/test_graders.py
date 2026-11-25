@@ -140,6 +140,13 @@ class TestEachGrader:
         bad = cg.numbers_from_inputs(PROMPT, {"why": "spot sat at 999 after a 42 point drop"}, ROLE)
         assert not bad.passed and bad.value == 2.0 and "999" in bad.reason
 
+    def test_numbers_from_inputs_licenses_one_input_value_shown_coarser_and_nothing_computed(self) -> None:
+        prompt = "realized_r 0.5918 | room_down 14.878 | net_gex -19813893517 | win_rate 0.7486 | vix 28.89"
+        rounded = {"why": "Realized 0.59R with 14.88 of room, -19.8B of gamma and a 75% win rate."}
+        assert cg.numbers_from_inputs(prompt, rounded, ROLE).passed
+        invented = cg.numbers_from_inputs(prompt, {"why": "Wait for a 15-minute retest below 28.00."}, ROLE)
+        assert not invented.passed and invented.value == 2.0 and "['15', '28']" in invented.reason
+
     def test_numbers_from_inputs_reads_a_spelled_number_as_the_writers_belts_do(self) -> None:
         # A digit-free grammar made the model SPELL it ("nine one point seven million"): no input
         # rendered that figure, and the per-call grader must agree with slots.belt about it.

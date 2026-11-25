@@ -108,7 +108,10 @@ an unknown kind, an unresolved URL key or a secret that resolves to nothing;
 - `trace(role, req, prompt, meta)`: an async context manager yielding an `Observation`;
   `tracer_trace(tracer)` builds one over any `Tracer` adapter (Langfuse, OpenTelemetry,
   `testing.RecordingTracer`).
-- `graders`: the grader table (default `call.graders.GRADERS`); add your own.
+- `graders`: the grader table (default `call.graders.GRADERS`); add your own. A grader the role
+  also names in `Role.gates` is an acceptance gate: a reply failing it is re-asked, then returned
+  `invalid` with no value
+  ([ADR-0028](adr/0028-a-role-may-make-a-grader-an-acceptance-gate.md)).
 - `on_scores(role, scores)`: persist or count grader scores.
 - `on_ok(role, prompt, res)`: for example, sample the reply for an LLM judge.
 - `on_event(level, event, fields)`: structured events; the default writes to the stdlib logger

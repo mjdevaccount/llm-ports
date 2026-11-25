@@ -10,7 +10,9 @@ Per call, the role resolves to one `GenRequest` (`request_for`), the category is
 a switched-off category is not an error. Otherwise one trace observation (the `trace` hook) wraps
 the `Generator` call. Every `ok` reply is scored by the graders its role names; each score is
 written on the observation and carried under `stamp["scores"]`, then handed to `on_scores` (a
-gauge) and `on_ok` (a sampler). Feature code carries no model literal, no timeout and no framework
+gauge) and `on_ok` (a sampler). A grader the role also names in `gates` is an acceptance gate: a
+reply that fails it is re-asked through the validator while re-asks remain, then returned
+`invalid` (ADR-0028). Feature code carries no model literal, no timeout and no framework
 import: the role carries them, and the `Generator` is passed in (an adapter, a test stub, a
 recording replay).
 
@@ -31,12 +33,13 @@ Invariants:
     - A deadline expiry is a `timeout` result; a caller's cancellation propagates.
     - Fallback starts only after the tier's own wire policy gave up, and only for a listed kind.
     - A non-`ok`, non-`gated` outcome ends the observation in error and emits `llm_call_failed`.
+    - A reply a gate refused is never `ok`: its scores are still written, counted and stamped.
       `_NotOk` is raised inside the trace block only and never escapes.
     - A caller whose ledger is an `except` uses `require_ok`.
     - The observation's metadata carries the failure kind, the cost and its source, who answered,
       the unified finish, the attempt count and every usage bucket; an unknown stays None.
 
-Rationale: ADR-0001, ADR-0019, ADR-0020, ADR-0021, ADR-0022.
+Rationale: ADR-0001, ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0028.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from llm_ports import ports
+from llm_ports.call import _gate
 from llm_ports.call._fallback import Route, chain_of, timed_out
 from llm_ports.call._preflight import finished, prepared
 from llm_ports.call.graders import CallGrader, CallScore, graders_for_inputs, score_all
@@ -92,7 +96,8 @@ class Hooks:
         admit: Runs before any trace opens; a returned reason makes the outcome `gated`.
         trace: Opens the call's observation; without one, a sink-less tracer is used.
         graders: The grader table by name; None means `call.graders.GRADERS`.
-        on_scores: Awaited with the role and its scores whenever a reply was graded.
+        on_scores: Awaited with the role and its scores whenever a reply was graded, a reply a
+            gate refused included (its outcome is `invalid`; the scores say why).
         on_ok: Called with the role, prompt and result after an `ok` reply.
         on_event: Receives `llm_call_failed`, `llm_call_graded`, `llm_fallback` and
             `llm_deadline_expired`; without one, they go to the stdlib logger `llm_ports.call`.
@@ -324,6 +329,19 @@ def _result_metadata(res: Generated[Any]) -> dict[str, Any]:
     }
 
 
+def _trace_metadata(role: Role, res: Generated[Any], extra: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The observation metadata of one reply: the role, how it ended, and the result contract."""
+    return {
+        "role": role.name,
+        "outcome": res.outcome,
+        "retries": res.retries,
+        "finish_reason": res.finish_reason,
+        "problems": len(res.problems),
+        **_result_metadata(res),
+        **(extra or {}),
+    }
+
+
 def _settled[T](
     role: Role,
     prompt: str,
@@ -332,10 +350,20 @@ def _settled[T](
     h: Hooks,
     extra: Mapping[str, Any] | None = None,
 ) -> Generated[T]:
-    """The reply written on its observation, then graded when it is `ok` and the role has graders."""
+    """The reply written on its observation, then graded when it is `ok` and the role has graders.
+
+    A graded reply that fails one of the role's gates comes back `invalid` (`_gate.refused`).
+    """
     res = _observed(role, res, obs, extra)
-    if res.outcome == "ok" and role.graders:
-        res = _grade(role, prompt, res, obs, h)
+    if res.outcome != "ok" or not role.graders:
+        return res
+    graded = _grade(role, prompt, res, obs, h)
+    res = _gate.refused(role, graded)
+    if res is not graded:  # refused: the observation says so, not the `ok` it was written with
+        named = {_gate.GATES_FAILED: list(res.stamp[_gate.GATES_FAILED])}
+        obs.update(metadata={**_trace_metadata(role, res, extra), **named})
+        if isinstance(obs, PortObservation):
+            obs.attach(res)
     return res
 
 
@@ -372,15 +400,7 @@ def _observed[T](
     obs.update(
         output=_trace_output(res.value),
         usage_details=dict(res.usage or {}),
-        metadata={
-            "role": role.name,
-            "outcome": res.outcome,
-            "retries": res.retries,
-            "finish_reason": res.finish_reason,
-            "problems": len(res.problems),
-            **_result_metadata(res),
-            **(extra or {}),
-        },
+        metadata=_trace_metadata(role, res, extra),
     )
     if isinstance(obs, PortObservation):
         obs.attach(res)
@@ -415,7 +435,8 @@ async def generate[T](
 
     The path and the hooks are described in the module docstring. `web=True` says the role's tier
     fetches pages the prompt never rendered: like an image, an input no text grader sees, so
-    `call.graders.TEXT_ONLY_GRADERS` are dropped for this call. The role itself is unchanged.
+    `call.graders.TEXT_ONLY_GRADERS` are dropped for this call, as a grader and as a gate. The
+    role itself is unchanged.
     `counter` counts the prompt for the role's pre-flight (`Role.context`, ADR-0024); the role's
     `cache_prefix` is translated by the tier's `cache` capability.
 
@@ -430,7 +451,7 @@ async def generate[T](
     h = hooks or Hooks()
     seen = graders_for_inputs(tuple(role.graders), has_images=bool(images), has_web=web)
     if seen != tuple(role.graders):
-        role = replace(role, graders=seen)
+        role = replace(role, graders=seen, gates=tuple(g for g in role.gates if g in seen))
     loop = asyncio.get_running_loop()
     clocks = Deadline(total_s=role.resolved_timeout_s).start(loop.time())
     route = Route(role, clocks)
@@ -483,7 +504,7 @@ async def _one[T](
     metadata: Mapping[str, Any] | None,
     web: bool,
 ) -> Generated[T]:
-    """One tier's call: the capability check, the gate, the trace, the generator, the graders."""
+    """One tier's call: the capability check, the admit hook, the trace, the generator, the graders and gates."""
     with llm_feature(role.category):
         refused = _unsupported(role, req, output, web, h) or _gated(role, req, h)
         if refused is not None:
@@ -491,8 +512,9 @@ async def _one[T](
         res: Generated[T] | None = None
         trace = h.trace or _null_trace
         try:
+            check, message = _gate.armed(role, prompt, h.graders, validate, retry_message)
             async with trace(role, req, prompt, {"role": role.name, **(metadata or {})}) as obs:
-                res = await generator.generate(req, output, validate=validate, retry_message=retry_message)
+                res = await generator.generate(req, output, validate=check, retry_message=message)
                 res = _settled(role, prompt, res, obs, h)
                 _raise_unless_ok(res)
         except _NotOk:

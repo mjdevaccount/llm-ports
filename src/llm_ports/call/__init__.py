@@ -6,6 +6,7 @@ Submodules: `context` (budgets, trimming, the cache plan), `roles`, `models` (wh
 
 from llm_ports.call import context, graders, models, providers, resilience, roles, schema
 from llm_ports.call._chat import TurnOptions, chat, chat_request_for, stream
+from llm_ports.call._gate import GATES_FAILED, GateProblem
 from llm_ports.call._generate import (
     DEADLINE_GRACE_S,
     OUTPUT_TRACE_MAX,
@@ -21,8 +22,10 @@ from llm_ports.call._generate import (
 
 __all__ = [
     "DEADLINE_GRACE_S",
+    "GATES_FAILED",
     "OUTPUT_TRACE_MAX",
     "AdmitHook",
+    "GateProblem",
     "Hooks",
     "TraceHook",
     "TurnOptions",

@@ -2146,7 +2146,7 @@ wheels = [
 
 [[package]]
 name = "llm-ports"
-version = "1.26.1"
+version = "1.27.0"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

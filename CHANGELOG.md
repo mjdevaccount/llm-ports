@@ -7,6 +7,35 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-11-25
+
+### Added
+
+- **`Role.gates`: a grader can be an acceptance gate** (ADR-0028). A role names which of its
+  `graders` decide whether `call.generate` returns the reply. A reply failing a gate is re-asked
+  through the validator seam while `Role.output_retries` remain (the caller's own validator runs
+  first), with the grader and its reason named to the model. A reply that still fails is returned
+  `invalid` (`failure.kind == "invalid_output"`), with `value=None`, reason
+  `gate: <grader>: <reason>` and `stamp[call.GATES_FAILED]` naming the gates; the observation ends in error and
+  `llm_call_failed` is emitted. `stamp["scores"]` is kept and `Hooks.on_scores` still receives it,
+  so a counter of failed graders counts a refused reply as it counted an accepted one. A gate
+  whose grader the call drops for its inputs (an image, a web tier) is dropped with it. Empty by
+  default: every existing role behaves as before. `call.chat` and `call.stream` are not gated.
+  `call.GateProblem` is the problem a gate hands the validator seam.
+- **`grounding.numbers.rerenders(run, after, allowed)`** and **`numbers.loose(..., rerender=True)`**
+  (ADR-0027): whether a digit run shows ONE allowed value again, coarser. Rounded to the decimals
+  it is written with ("0.59" for 0.5918), as a percentage ("75%" for 0.7486), or at a scale
+  ("19.8B" or "19.8 billion" for 19813893517). A whole number with no percent sign or scale after
+  it is never a rounding, and nothing computed from two values is licensed. Off by default.
+
+### Changed
+
+- **`call.graders.numbers_from_inputs` licenses a re-rendering of one prompt value**
+  (`rerender=True`, ADR-0027). A reply that rounds an input no longer fails; one that invents a
+  figure or computes one still does. A consumer counting this grader's failures will see the
+  count fall to the replies that carry a figure no single input shows. `grounding.belt`,
+  `slots.belt`, `uncited` and `law_text` are unchanged.
+
 ## [1.26.1] - 2026-11-20
 
 ### Fixed

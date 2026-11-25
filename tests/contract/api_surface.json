@@ -344,6 +344,8 @@
  "llm_ports.call": [
   "AdmitHook",
   "DEADLINE_GRACE_S",
+  "GATES_FAILED",
+  "GateProblem",
   "Hooks",
   "OUTPUT_TRACE_MAX",
   "TraceHook",
@@ -642,6 +644,7 @@
   "law_text",
   "loose",
   "redact",
+  "rerenders",
   "shorten",
   "spelled",
   "uncited"

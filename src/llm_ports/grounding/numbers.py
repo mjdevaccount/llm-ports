@@ -4,11 +4,15 @@ A figure in model output is licensed when an input rendered the same value, as d
 out. `loose` is the check; `law_text` is the same law stated for a model judge. Every reader goes
 through this module, so a rule and a reader can disagree about judgement but never about the law.
 
+A reader of free prose may also license a figure that shows ONE input value again, coarser
+(`rerenders`): rounded to fewer decimals, in thousands, millions or billions, or as a percentage.
+No arithmetic over two values is ever licensed.
+
 Invariants:
     - Pure: no I/O.
     - Digit runs compare by value (`canon`), never by string.
 
-Rationale: ADR-0003.
+Rationale: ADR-0003, ADR-0027.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal, InvalidOperation
 
 #: A digit run with optional thousands or decimal separators: `1,234.5`, `740`, `0.62`.
 NUM = re.compile(r"\d+(?:[.,]\d+)*")
@@ -36,6 +41,17 @@ NUMBER_WORDS = re.compile(
 #: A digit run as a model may read it: `25bp`, `14:00`, `3.1%` and `5,000` are each one match, so
 #: masking a clock or a percentage leaves no half a number behind.
 DIGITS = re.compile(r"\d(?:[\d%:]|[.,]\d)*")
+
+
+#: What may follow a digit run that shows a fraction as a percentage: `75%`, `75 percent`.
+_PERCENT = re.compile(r"\s?(?:%|percent\b|pct\b)", re.IGNORECASE)
+#: What may follow a digit run that shows a value in thousands: a letter directly after the run
+#: (`19.8B`, `3k`) or a word (`3.2 million`). A spaced letter (`5 m`) is a unit, not a scale.
+_SCALE = re.compile(r"(?:(k|mm|m|bn|b|t)\b|\s?(thousand|million|billion|trillion)\b)", re.IGNORECASE)
+_SCALE_EXP = {"k": 3, "thousand": 3, "m": 6, "mm": 6, "million": 6, "b": 9, "bn": 9, "billion": 9}
+_SCALE_EXP |= {"t": 12, "trillion": 12}
+#: How much text after a digit run `loose` hands to `rerenders`: room for " trillion".
+_AFTER = 12
 
 
 def redact(text: str, *, hole: str, pattern: re.Pattern[str] = NUM) -> str:
@@ -118,7 +134,86 @@ def spelled(text: str) -> set[str]:
     return {w.lower() for w in NUMBER_WORDS.findall(text or "")}
 
 
-def loose(text: str, allowed: set[str], words_ok: str = "") -> list[str]:
+def _decimal(run: str) -> Decimal | None:
+    try:
+        return Decimal(run.replace(",", ""))
+    except InvalidOperation:  # "1.2.3" is a digit run and not a number
+        return None
+
+
+def _rounds_to(value: Decimal, shown: Decimal, step: Decimal) -> bool:
+    try:
+        return shown in (value.quantize(step, ROUND_HALF_UP), value.quantize(step, ROUND_HALF_EVEN))
+    except InvalidOperation:  # more digits than the decimal context holds
+        return False
+
+
+def rerenders(run: str, after: str, allowed: Iterable[str]) -> bool:
+    """Return whether `run` shows one licensed value again, coarser.
+
+    Pure. Three renderings of ONE value are recognised, and nothing computed from two:
+
+    - rounding: the value rounded (half up or half even) to the decimals `run` is written with,
+      when `run` has at least one decimal ("0.59" for 0.5918, "14.88" for 14.878);
+    - a percentage: `run` followed by `%`, "percent" or "pct" shows the value times 100
+      ("75%" for 0.7486), or the value itself rounded ("13.5%" for 13.49);
+    - a scale: `run` followed directly by `K`, `M`, `B` or `T`, or by "thousand", "million",
+      "billion" or "trillion", shows the value divided by it ("19.8B" for 19813893517).
+
+    An integer `run` with no percent sign or scale after it is never a rounding: every small
+    integer is the rounding of some fraction, so licensing it would license an invented count.
+    A marked integer rounds a value of magnitude 1 or more only.
+
+    Args:
+        run: The digit run as written (`NUM`), separators and trailing zeros kept: the zeros say
+            how many decimals it was rounded to.
+        after: The text directly after the run; only its first characters are read.
+        allowed: Licensed digit runs, canonical (see `digits`).
+
+    Returns:
+        True when some value in `allowed` renders as `run`. An equal value is not a re-rendering:
+        `loose` licenses it before asking. `loose` also licenses the scale or percent word the
+        re-rendering needed ("billion" in "19.8 billion"), and no other.
+
+    Rationale: ADR-0027.
+    """
+    return _marker_used(run, after, allowed) is not None
+
+
+def _marker_used(run: str, after: str, allowed: Iterable[str]) -> int | None:
+    """Return how `run` re-renders an allowed value.
+
+    None when it does not; else the length of the marker in `after` (the percent sign or scale)
+    the licence needed, 0 for a plain rounding.
+    """
+    shown = _decimal(run)
+    if shown is None:
+        return None
+    exponent = shown.as_tuple().exponent
+    places = -exponent if isinstance(exponent, int) and exponent < 0 else 0
+    step = Decimal(1).scaleb(-places)
+    percent = _PERCENT.match(after)
+    scale = None if percent else _SCALE.match(after)
+    marker = percent or scale
+    shift = 2 if percent else -_SCALE_EXP[(scale.group(1) or scale.group(2)).lower()] if scale else 0
+    plain = None
+    for known in allowed:
+        base = _decimal(known)
+        if base is None:
+            continue
+        if places and _rounds_to(base, shown, step):
+            plain = 0  # the value itself, rounded to a decimal: no marker needed
+        if marker is None:
+            continue
+        # a whole percentage the value already was, or the value moved by the marker
+        whole = percent is not None and not places and abs(base) >= 1 and _rounds_to(base, shown, step)
+        moved = base.scaleb(shift)
+        if whole or moved == shown or ((places or abs(moved) >= 1) and _rounds_to(moved, shown, step)):
+            return marker.end()
+    return plain
+
+
+def loose(text: str, allowed: set[str], words_ok: str = "", *, rerender: bool = False) -> list[str]:
     """Return every figure in `text` that no input licensed.
 
     The number law in one place: a digit run whose value (`canon`) is not in `allowed`, then a
@@ -131,18 +226,32 @@ def loose(text: str, allowed: set[str], words_ok: str = "") -> list[str]:
         words_ok: A lower-cased substring haystack for spelled numbers. Join several inputs on a
             newline: a number word holds no whitespace, so a join never glues two halves into one.
             An input that shows `%` also licenses "percent".
+        rerender: Also license a digit run that shows one allowed value again, coarser
+            (`rerenders`): for free prose over raw inputs, where a model rounds what it reads.
+            Off by default: a belt over values code printed compares them as printed.
 
     Returns:
         The unlicensed figures in order of appearance, digit runs first, repeats kept. Empty when
         every number is licensed.
 
-    Rationale: ADR-0003.
+    Rationale: ADR-0003, ADR-0027.
     """
+    body = text or ""
     ok = (words_ok or "").lower()
     if "%" in ok:
         ok += "\npercent"
-    out = [canon(n) for n in NUM.findall(text or "") if canon(n) not in allowed]
-    return out + [w.lower() for w in NUMBER_WORDS.findall(text or "") if w.lower() not in ok]
+    out = []
+    marked: list[tuple[int, int]] = []  # the scale or percent word a re-rendering was licensed with
+    for m in NUM.finditer(body):
+        if canon(m.group()) in allowed:
+            continue
+        used = _marker_used(m.group(), body[m.end() : m.end() + _AFTER], allowed) if rerender else None
+        if used is None:
+            out.append(canon(m.group()))
+        elif used:
+            marked.append((m.end(), m.end() + used))
+    words = (w for w in NUMBER_WORDS.finditer(body) if not any(a <= w.start() < b for a, b in marked))
+    return out + [w.group().lower() for w in words if w.group().lower() not in ok]
 
 
 def uncited(claim: str, spans: Iterable[tuple[str, str]]) -> list[str]:
@@ -252,6 +361,7 @@ __all__ = [
     "law_text",
     "loose",
     "redact",
+    "rerenders",
     "shorten",
     "spelled",
     "uncited",
