@@ -46,7 +46,7 @@ DIGITS = re.compile(r"\d(?:[\d%:]|[.,]\d)*")
 #: What may follow a digit run that shows a fraction as a percentage: `75%`, `75 percent`.
 _PERCENT = re.compile(r"\s?(?:%|percent\b|pct\b)", re.IGNORECASE)
 #: What may follow a digit run that shows a value in thousands: a letter directly after the run
-#: (`19.8B`, `3k`) or a word (`3.2 million`). A spaced letter (`5 m`) is a unit, not a scale.
+#: (`19.8M`, `3k`) or a word (`3.2 million`). A spaced letter (`5 m`) is a unit, not a scale.
 _SCALE = re.compile(r"(?:(k|mm|m|bn|b|t)\b|\s?(thousand|million|billion|trillion)\b)", re.IGNORECASE)
 _SCALE_EXP = {"k": 3, "thousand": 3, "m": 6, "mm": 6, "million": 6, "b": 9, "bn": 9, "billion": 9}
 _SCALE_EXP |= {"t": 12, "trillion": 12}
@@ -158,7 +158,7 @@ def rerenders(run: str, after: str, allowed: Iterable[str]) -> bool:
     - a percentage: `run` followed by `%`, "percent" or "pct" shows the value times 100
       ("75%" for 0.7486), or the value itself rounded ("13.5%" for 13.49);
     - a scale: `run` followed directly by `K`, `M`, `B` or `T`, or by "thousand", "million",
-      "billion" or "trillion", shows the value divided by it ("19.8B" for 19813893517).
+      "billion" or "trillion", shows the value divided by it ("19.8M" for 19813893).
 
     An integer `run` with no percent sign or scale after it is never a rounding: every small
     integer is the rounding of some fraction, so licensing it would license an invented count.

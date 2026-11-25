@@ -219,7 +219,7 @@ def numbers_from_inputs(prompt: str, value: Any, _role: Role) -> CallScore:
     Digit runs compare by value, and spelled numbers count too (`numbers.loose`). The prompt's own
     text licenses a spelled word, and '%' licenses 'percent'. A reply is free prose over raw
     inputs, so a figure that re-renders one prompt value (`numbers.rerenders`: "0.59" for 0.5918,
-    "19.8B" for 19813893517, "75%" for 0.7486) is licensed; a whole number with no percent sign or
+    "19.8M" for 19813893, "75%" for 0.7486) is licensed; a whole number with no percent sign or
     scale after it is not. Passes only at zero.
 
     Rationale: ADR-0003, ADR-0027.
