@@ -274,7 +274,7 @@ def _shows(run: str, values: Sequence[Decimal]) -> bool:
     """Return whether `run` is one of `values`, as printed or rounded to the decimals it has.
 
     The values are ones an input showed at the scale `run` is written with, so a whole `run` is
-    marked: it rounds a value of 1 or more ("20B" for an input's "19.8B", never "1B" for "0.6B").
+    marked: it rounds a value of 1 or more ("20M" for an input's "19.8M", never "1M" for "0.6M").
     """
     shown = _decimal(run)
     if shown is None:
