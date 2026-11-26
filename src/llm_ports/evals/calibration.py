@@ -177,6 +177,58 @@ def verdict(results: Sequence[Mapping[str, Any]], *, floor: float = 0.0) -> tupl
 
 
 @dataclass(frozen=True)
+class Reading:
+    """One floor of `Floors` read against an `Agreement`.
+
+    Attributes:
+        name: `"n"`, `"kappa"` or `"kappa_low"`.
+        value: What the agreement holds there; None where it is undefined.
+        floor: The least `value` that clears it.
+        met: Whether `value` is defined and at least `floor`.
+    """
+
+    name: str
+    value: float | None
+    floor: float
+    met: bool
+
+
+@dataclass(frozen=True)
+class Floors:
+    """The agreement a judge must show before its verdicts may act, as one rule.
+
+    Attributes:
+        min_labelled: The fewest pairs that can earn trust.
+        min_kappa: The floor on kappa's point estimate.
+        min_kappa_low: The floor on the 95% interval's lower end, read beside the point: a point the
+            sample cannot hold is not agreement. None leaves the interval unread.
+
+    Invariants:
+        - An undefined kappa or interval never clears its floor.
+        - `readings` lists every floor in the order `trust` checks them, met or not.
+    """
+
+    min_labelled: int = MIN_LABELLED
+    min_kappa: float = MIN_KAPPA
+    min_kappa_low: float | None = None
+
+    def readings(self, agr: Agreement) -> tuple[Reading, ...]:
+        """Return each floor read against `agr`: the sample, the point, then (when set) the low end."""
+
+        def read(name: str, value: float | None, floor: float) -> Reading:
+            return Reading(name, value, floor, value is not None and value >= floor)
+
+        out = [read("n", agr.n, self.min_labelled), read("kappa", agr.kappa, self.min_kappa)]
+        if self.min_kappa_low is not None:
+            out.append(read("kappa_low", agr.kappa_low, self.min_kappa_low))
+        return tuple(out)
+
+    def clears(self, agr: Agreement) -> bool:
+        """Return True when `agr` meets every floor."""
+        return all(r.met for r in self.readings(agr))
+
+
+@dataclass(frozen=True)
 class Trust:
     """Whether a judge's verdicts may be acted on, with the numbers that decided it.
 
@@ -205,12 +257,15 @@ def trust(
     min_kappa: float = MIN_KAPPA,
     bound: Literal["point", "low"] = "point",
     require_seeded: bool = True,
+    min_kappa_low: float | None = None,
 ) -> Trust:
     """Return whether a judge is trusted, from its agreement with a human and its seeded-bad replay.
 
     Checked in order, the first failure deciding: at least `min_labelled` pairs; the seeded-bad
     replay `CALIBRATED` (or absent with `require_seeded=False`); kappa at least `min_kappa`, read
-    as the point estimate (`bound="point"`) or the 95% interval's lower end (`bound="low"`).
+    as the point estimate (`bound="point"`) or the 95% interval's lower end (`bound="low"`); and,
+    when `min_kappa_low` is given, the interval's lower end at least that too (`Floors`: both
+    floors at once, the rule a consumer reads elsewhere through `Floors.clears`).
 
     Args:
         pairs: `(judge, human)` labels of the same real replies, `"yes"` for pass / good
@@ -220,6 +275,8 @@ def trust(
         min_kappa: The agreement floor.
         bound: Which kappa the floor reads.
         require_seeded: Whether a missing replay leaves the judge untrusted.
+        min_kappa_low: A second floor on the interval's lower end, read beside `min_kappa`; None
+            reads one floor only, as before.
 
     Returns:
         The `Trust`. Never raises.
@@ -255,6 +312,9 @@ def trust(
         shown += f" [{agr.kappa_low:.2f}, {agr.kappa_high:.2f}]"
     if k is None or k < min_kappa:
         return out(False, f"kappa {shown} under {min_kappa} ({bound}): failed {ff}/{len(good)} human-good replies")
+    low = Floors(min_labelled, min_kappa, min_kappa_low).readings(agr)[2:]
+    if low and not low[0].met:
+        return out(False, f"kappa {shown} under {min_kappa_low} (low): failed {ff}/{len(good)} human-good replies")
     return out(True, f"kappa {shown} over {agr.n}" + ("; seeded-bad all caught" if replay is not None else ""))
 
 
@@ -267,7 +327,9 @@ __all__ = [
     "MIN_LABELLED",
     "PLACEHOLDER",
     "YES",
+    "Floors",
     "Pairs",
+    "Reading",
     "Trust",
     "cohen_kappa",
     "gwet_ac1",
