@@ -20,25 +20,39 @@ so the caller records that the judge could not run, and why.
 A call that sent images is judged with them (`images=`, beside the port's text-only signature),
 as pydantic-evals multimodal Input.
 
+The judge's model request rides the same wire-retry loop as every other adapter
+(`adapters._retry.WireRetry`, ADR-0021): a rate-limited, overloaded or server-failed request is
+re-sent on `policy=` (default `WirePolicy.default()`), classified by the shared table
+(`adapters._classify.classify_core`, which reads the status off pydantic-ai's error by duck type,
+so this adapter imports no other). Before 1.31 the judge was the one adapter outside it: a single
+429 from a one-slot server ended the sample. An unreadable verdict (`verdict_of`'s ValueError) is
+`internal` and never retried.
+
 Invariants:
     - `PydanticEvalsJudge.judge` raises when the judging model could not answer, as the port
       requires; the caller decides what an unjudged sample means.
     - No default verdict exists anywhere in this module.
+    - One retry owner: the model source's SDK retries stay 0; this loop is the only re-send.
 
 Rationale: ADR-0001.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 
 from llm_ports._extras import extra
+from llm_ports.adapters._classify import Classifier, WireFacts, classify_core
+from llm_ports.adapters._retry import Judged, WireRetry
 from llm_ports.call.models import translate_settings
 from llm_ports.call.roles import Role
-from llm_ports.ports import JudgeVerdict
+from llm_ports.observability import EventHook, log_events
+from llm_ports.ports import JudgeVerdict, WirePolicy
+from llm_ports.ports.outcomes import exception_chain
 
 with extra("evals"):
     from pydantic_ai.messages import BinaryContent
@@ -136,16 +150,41 @@ class PydanticEvalsJudge:
     `role` carries the judge's model name and sampling (`Role.model_settings()`). Exactly one of
     `model` and `model_for` is required.
 
+    Args:
+        role: The judge's model name and sampling.
+        model: A fixed pydantic-ai `Model`.
+        model_for: A per-request model factory (the caller's transport).
+        policy: How a failed judge request is re-sent; None is `WirePolicy.default()`.
+        deadline_s: The seconds one `judge` call may spend, retry waits included; a wait that
+            would end past it is not taken. None for no bound (the caller's own timeout rules).
+        extra: Classifiers consulted before the shared table, in order.
+        on_event: Receives `llm_wire_retry` / `llm_deadline_expired`; without one they go to the
+            stdlib logger `llm_ports.adapters.pydantic_evals`.
+
     Raises:
         ValueError: When neither or both of `model` and `model_for` are given.
     """
 
-    def __init__(self, role: Role, *, model: Model | None = None, model_for: JudgeModelFor | None = None) -> None:
+    def __init__(
+        self,
+        role: Role,
+        *,
+        model: Model | None = None,
+        model_for: JudgeModelFor | None = None,
+        policy: WirePolicy | None = None,
+        deadline_s: float | None = None,
+        extra: Sequence[Classifier] = (),
+        on_event: EventHook | None = None,
+    ) -> None:
         if (model is None) == (model_for is None):
             raise ValueError("PydanticEvalsJudge: pass exactly one of model= or model_for=")
         self._role = role
         self._model = model
         self._model_for = model_for
+        self._policy = policy if policy is not None else WirePolicy.default()
+        self._deadline_s = deadline_s
+        self._extra = tuple(extra)
+        self._emit: EventHook = on_event or log_events("llm_ports.adapters.pydantic_evals")
 
     @property
     def model_name(self) -> str:
@@ -157,8 +196,8 @@ class PydanticEvalsJudge:
     ) -> JudgeVerdict:
         """Grade `output` against `rubric`, with `prompt` and any `images` as the judged input.
 
-        A failure of the judging model's call propagates: the caller decides what an unjudged
-        sample means.
+        A failure of the judging model's call propagates once the wire-retry policy gives up:
+        the caller decides what an unjudged sample means.
 
         Raises:
             ValueError: When the reply lacks a score or a verdict, or its reason is unreadable
@@ -167,11 +206,32 @@ class PydanticEvalsJudge:
         Rationale: ADR-0001.
         """
         inputs = judge_inputs(prompt, images)
+        loop = asyncio.get_running_loop()
+        deadline_at = loop.time() + self._deadline_s if self._deadline_s is not None else None
+        wire = WireRetry(
+            self._policy, model=self.model_name, deadline_at=deadline_at, emit=self._emit, label=self._role.name
+        )
+        return await wire.run(lambda: self._once(inputs, output, rubric), self._classify)
+
+    async def _once(self, inputs: str | list[Any], output: Any, rubric: str) -> JudgeVerdict:
+        """One judge request: a fresh model from the source per try, so each try is its own request."""
         if self._model is not None:
             return await self._run(self._model, inputs, output, rubric)
         assert self._model_for is not None
         async with self._model_for() as model:
             return await self._run(model, inputs, output, rubric)
+
+    def _classify(self, outcome: Any) -> Judged:
+        """The shared table's verdict on one try: its `Failure` and the response headers it carried."""
+        if not isinstance(outcome, BaseException):
+            return None, {}
+        headers: Mapping[str, str] = {}
+        for e in exception_chain(outcome):
+            got = getattr(e, "headers", None)
+            if isinstance(got, Mapping) and got:
+                headers = {str(k).lower(): str(v) for k, v in got.items()}
+                break
+        return classify_core(outcome, WireFacts(headers=headers), extra=self._extra), headers
 
     def _settings(self) -> dict[str, Any]:
         """The role's settings, with `thinking` spelled the way the judge's model takes it.

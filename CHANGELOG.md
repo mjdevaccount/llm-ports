@@ -7,6 +7,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-11-26
+
+### Fixed
+
+- **The judge rides the shared wire-retry loop** (ADR-0021). `PydanticEvalsJudge` was the one
+  adapter outside `WireRetry`: its model source's SDK retries are 0 by design, so a single 429
+  from a one-slot server (`max_parallel_requests=1`) ended the sample as unjudged. Each judge
+  request is now sent through `WireRetry`, classified by the shared table (`classify_core`, which
+  reads the status off pydantic-ai's error by duck type, so the adapter still imports no other).
+  A verdict the judge could not read (`internal`), a refused request and a spent policy are not
+  re-sent; a `model_for` source is entered once per try.
+
+### Added
+
+- **`PydanticEvalsJudge(policy=, deadline_s=, extra=, on_event=)`.** `policy` defaults to
+  `WirePolicy.default()`, as the generator's does; `deadline_s` bounds one `judge` call including
+  its waits (a wait that would end past it is not taken, `llm_deadline_expired`); `on_event`
+  receives `llm_wire_retry`. A caller that wants one send passes `WirePolicy.none()`.
+
 ## [1.30.0] - 2026-11-26
 
 ### Added
