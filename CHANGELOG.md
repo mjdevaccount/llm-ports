@@ -25,6 +25,7 @@ All notable changes to this project are documented here. The format is based on
   `WirePolicy.default()`, as the generator's does; `deadline_s` bounds one `judge` call including
   its waits (a wait that would end past it is not taken, `llm_deadline_expired`); `on_event`
   receives `llm_wire_retry`. A caller that wants one send passes `WirePolicy.none()`.
+- **The `evals` extra carries `tenacity>=9`**, the loop's engine, as `pydantic-ai` and `http` do.
 
 ## [1.30.0] - 2026-11-26
 
