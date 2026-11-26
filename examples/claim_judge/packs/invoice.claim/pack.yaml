@@ -1,0 +1,5 @@
+id: invoice.claim
+version: 1.0.0
+role: invoice.claim
+templates:
+  prompt: prompt.j2

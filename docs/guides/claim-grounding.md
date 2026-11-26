@@ -53,6 +53,34 @@ A breaking figure is `contradicted` whatever the judge said. A holding figure co
 label but never overturns an ungrounded one: the op certifies the figure, not the words around it.
 The figures the number law refuses come back as `refused`, a hint for the judge, never a ruling.
 
+## Judging claim by claim
+
+A judge asked about a whole reply at once has nothing to point at. `evals.claim_judge.grade`
+asks it about one claim at a time, and only about the claims code cannot settle (ADR-0031):
+
+1. `decompose.leaves(reply)` makes each JSON scalar one claim at its path (`items[0].name`); an
+   empty list or null is one claim that nothing applies; prose is one claim per sentence.
+2. `decompose.facts_from_text(input)` numbers the Input's lines `F1`, `F2`, ... so a verdict can
+   cite what it checked.
+3. `Policy.prematch` settles what code can. A `quote` or `extract` value found verbatim
+   (`decompose.occurs`) is `supported`, and so is a bare figure the number law licenses. Nothing
+   else is ruled, and code never rules a claim ungrounded; what code saw rides to the judge as hints.
+4. Each remaining claim gets one call. A `classify` value or a stated absence is asked only
+   whether a fact contradicts it (`question_for`); everything else gets the four labels. The
+   grammar (`verdict_schema`) asks for the cited ids and the quote before the label.
+5. `read_verdict` abstains on a quote that is not in the facts, and on a `contradicted` with no
+   quote. `aggregate` applies the case rule; `CaseRuling.counts()` says how many claims code
+   settled, the judge ruled and the judge abstained on.
+
+The consumer's contract is a `Policy`: `kind_of` (its field map), `material_of`, `question_of`,
+`pre` (its own stronger match, or a field definition passed as a hint) and `allowed`
+(`decompose.enums(schema)`). `GenerateClaimJudge` renders the consumer's own claim pack with
+`claim_slots` and calls the consumer's own `generate`, so its gate, trace and retry apply.
+
+```{.python title="examples/claim_judge/main.py"}
+--8<-- "examples/claim_judge/main.py"
+```
+
 ## Example
 
 ```{.python title="examples/claim_grounding.py"}

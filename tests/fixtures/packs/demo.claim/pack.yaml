@@ -1,0 +1,5 @@
+id: demo.claim
+version: 1.0.0
+role: test.claim
+templates:
+  prompt: prompt.j2

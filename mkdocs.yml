@@ -126,6 +126,8 @@ nav:
       - adr/0027-a-reply-may-round-one-input-value.md
       - adr/0028-a-role-may-make-a-grader-an-acceptance-gate.md
       - adr/0029-a-judge-is-measured-claim-by-claim.md
+      - adr/0030-a-derived-figure-is-rechecked-in-code.md
+      - adr/0031-a-judge-is-asked-one-claim-at-a-time.md
   - Design:
       - design/LEARNING-LOOP-CORE.md
       - design/EVAL-LABELS-CONSOLIDATION.md
