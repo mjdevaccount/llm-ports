@@ -13,3 +13,9 @@
 ::: llm_ports.grounding.slots
     options:
       show_root_heading: false
+
+## `llm_ports.grounding.derive`
+
+::: llm_ports.grounding.derive
+    options:
+      show_root_heading: false

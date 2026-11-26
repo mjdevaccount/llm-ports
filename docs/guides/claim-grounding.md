@@ -39,6 +39,20 @@ changed when the judge's prompt was reworded.
 claim a rule licenses is grounded though no Input sentence states it. The library carries no
 domain rule of its own.
 
+## Arithmetic is code's, not the judge's
+
+A `derived` claim carries its operation as an op chain, `expr = numeric = result`
+(`abs(a - b) / a * 100 = abs(120.0 - 114.0) / 120.0 * 100 = 5.0`). `grounding.derive.recheck`
+evaluates it in a closed grammar (numbers, names, `+ - * /`, `abs`, `sqrt`, comparison chains),
+holds it to its written result and to the facts, and judges the figure the reply shows:
+`holds`, `breaks`, `abstain` (outside the claim's tolerance, inside `band` times it) or
+`unchecked` (code cannot read it). Model-written text is never executed (ADR-0030).
+
+`evals.settle.settle(claim, allowed=..., facts=...)` turns that into a ruling on a labelled claim.
+A breaking figure is `contradicted` whatever the judge said. A holding figure confirms a grounded
+label but never overturns an ungrounded one: the op certifies the figure, not the words around it.
+The figures the number law refuses come back as `refused`, a hint for the judge, never a ruling.
+
 ## Example
 
 ```{.python title="examples/claim_grounding.py"}

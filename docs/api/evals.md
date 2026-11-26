@@ -37,3 +37,9 @@
 ::: llm_ports.evals.claims
     options:
       show_root_heading: false
+
+## `llm_ports.evals.settle`
+
+::: llm_ports.evals.settle
+    options:
+      show_root_heading: false
