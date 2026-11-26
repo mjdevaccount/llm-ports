@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-11-26
+
+### Added
+
+- **`evals.claims`: a judge is measured claim by claim** (ADR-0029). Four claim labels
+  (`supported`, `derived`, `not_in_input`, `contradicted`) with a per-claim `material` flag;
+  `case_label` fails a case on a material ungrounded claim only. `read_cases` loads gold cases
+  from JSON lines of any family carrying the core keys (facts as a list or a mapping, other keys
+  kept in `extra`, `rule_aliases` for renamed rule ids), reporting a bad row as a named problem.
+  `agreement` scores `(judged, gold)` claim labels per label one-against-the-rest, plus
+  `grounded`, each with Cohen's kappa and its 95% interval; `split` assigns train / dev / test by a
+  stable hash of the case id; `flips` counts verdicts a reworded prompt changed; `fact_table`
+  renders facts as `<id> <text>` lines.
+- **`judge.rubric(rules=...)`**: the consumer's inference rules reach the judge as law 5. With
+  none passed the rubric text is unchanged.
+
 ## [1.27.0] - 2026-11-25
 
 ### Added

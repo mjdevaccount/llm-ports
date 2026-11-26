@@ -483,6 +483,27 @@
   "trust",
   "verdict"
  ],
+ "llm_ports.evals.claims": [
+  "CASE_KEYS",
+  "CASE_LABELS",
+  "CLAIM_KEYS",
+  "Case",
+  "CaseLabel",
+  "Claim",
+  "ClaimLabel",
+  "Fact",
+  "GROUNDED",
+  "LABELS",
+  "Loaded",
+  "Split",
+  "agreement",
+  "case_label",
+  "check",
+  "fact_table",
+  "flips",
+  "read_cases",
+  "split"
+ ],
  "llm_ports.evals.golden": [
   "Generate",
   "GeneratorFor",

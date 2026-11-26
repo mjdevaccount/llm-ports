@@ -71,6 +71,22 @@ class TestRubric:
             assert law in r
         assert "spelled out" in r and "is the model's ANSWER" in r
 
+    def test_inference_rules_become_law_five_only_when_passed(self) -> None:
+        """The consumer's rules reach the judge as law 5, listed; with none the rubric is the four laws."""
+        plain = _rubric()
+        assert "INFERENCE RULES" not in plain and "Pass only when all four hold." in plain
+        ruled = js.rubric(
+            ROLE,
+            platform="ACME support platform",
+            mode="graded",
+            today=DAY,
+            tz_label="UTC",
+            rules=("R1: an order total is the sum of its line items", "R2: a refund is never a sale"),
+        )
+        assert "5. INFERENCE RULES" in ruled and "Pass only when every law holds." in ruled
+        assert "   - R1: an order total is the sum of its line items\n   - R2: a refund is never a sale\n" in ruled
+        assert ruled.index("4. GROUNDED") < ruled.index("5. INFERENCE RULES") < ruled.index("Pass only")
+
     def test_the_shape_reads_graders_pack_or_grammar(self) -> None:
         assert "prose or a structured object" in _rubric(PROSE_ROLE)
         assert "under a strict grammar" in _rubric(PROSE_ROLE, js.Seen(schema={"type": "object"}))
