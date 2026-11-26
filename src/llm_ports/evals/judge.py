@@ -174,6 +174,18 @@ def _today_law(today: dt.date, tz_label: str) -> str:
     )
 
 
+def _rules_law(rules: Sequence[str]) -> str:
+    """Law 5, the consumer's inference rules, or nothing when it passes none."""
+    if not rules:
+        return ""
+    listed = "\n".join(f"   - {r}" for r in rules)
+    return (
+        "5. INFERENCE RULES: the platform's own rules for what follows from the Input. A claim that one of "
+        "them licenses is grounded, though no Input sentence says it; a claim one of them refuses fails "
+        "law 4. Name the rule id in the reason when it decides.\n" + listed + "\n"
+    )
+
+
 def rubric(
     role: Role,
     seen: Seen | None = None,
@@ -183,6 +195,7 @@ def rubric(
     today: dt.date,
     tz_label: str,
     examples: numbers.LawExamples | None = None,
+    rules: Sequence[str] = (),
 ) -> str:
     """Return the judge's instruction for one reply from `role`.
 
@@ -197,6 +210,9 @@ def rubric(
         today: The judge's calendar date.
         tz_label: The label of the clock `today` was read on.
         examples: Domain words the number law names as not figures; none by default.
+        rules: The consumer's inference rules, one per entry (`"R1: a total is the sum of its
+            parts"`). A claim that follows from the Input by one of them is grounded; a claim one
+            of them refuses is not. None by default, and then the rubric is the four laws alone.
 
     Returns:
         The rubric text.
@@ -223,7 +239,9 @@ def rubric(
         + (" or from the web the role read" if seen.web else "")
         + "; a confident claim with no support fails. Choosing a grammar value the Input reasonably supports "
         "is grounded, even where a reader could choose another.\n"
-        "Pass only when all four hold. Score 1.0 for a clean reply, 0.0 for one that invents numbers or "
+        + _rules_law(rules)
+        + ("Pass only when all four hold. " if not rules else "Pass only when every law holds. ")
+        + "Score 1.0 for a clean reply, 0.0 for one that invents numbers or "
         "echoes, in between for partial honesty. In the reason, name the law broken and quote the "
         "offending fragment in under 30 words."
     )

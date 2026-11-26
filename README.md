@@ -99,6 +99,13 @@ evidence each cites; `print_gate` answers whether it may be shown to an audience
 refusal when it may not.
 ([ADR-0006](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0006-data-rights-in-prov-o-terms.md))
 
+**A judge is measured, claim by claim.** A model judge earns trust from agreement with a reference
+(Cohen's kappa with its interval), and is measured per claim under four labels (`supported`,
+`derived`, `not_in_input`, `contradicted`), so a report says which mistake it makes: refusing an
+inference reads differently from missing an invention.
+([ADR-0012](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0012-a-judge-earns-trust-from-labels.md),
+[ADR-0029](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0029-a-judge-is-measured-claim-by-claim.md))
+
 **One observation per call.** A call is traced as one generation, opened once and ended once, with
 unmeasured usage flagged rather than recorded as zero.
 ([ADR-0007](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0007-one-observation-lifecycle.md))
