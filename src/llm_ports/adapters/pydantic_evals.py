@@ -47,7 +47,6 @@ from typing import Any, cast
 
 from llm_ports._extras import extra
 from llm_ports.adapters._classify import Classifier, WireFacts, classify_core
-from llm_ports.adapters._retry import Judged, WireRetry
 from llm_ports.call.models import translate_settings
 from llm_ports.call.roles import Role
 from llm_ports.observability import EventHook, log_events
@@ -62,6 +61,9 @@ with extra("evals"):
     from pydantic_evals.evaluators import EvaluatorContext, LLMJudge
     from pydantic_evals.evaluators.evaluator import EvaluationReason
     from pydantic_evals.otel import SpanTreeRecordingError
+
+    # tenacity (the loop's engine) rides the `evals` extra, so a missing one names THIS install line.
+    from llm_ports.adapters._retry import Judged, WireRetry
 
 JudgeModelFor = Callable[[], AbstractAsyncContextManager[Model]]
 

@@ -51,8 +51,9 @@ pydantic-ai = ["pydantic-ai-slim[openai]>=2.64,<3", "httpx2>=2.12", "httpx>=0.27
 # `adapters.http`: the reranker, the grounder client and the index-ordered transport.
 http = ["httpx>=0.27", "tenacity>=9"]
 # `adapters.pydantic_evals` (the Judge on pydantic-evals' LLMJudge). pydantic-evals pins
-# pydantic-ai-slim to its own version, so it moves with the `pydantic-ai` extra.
-evals = ["pydantic-evals>=2.64,<3"]
+# pydantic-ai-slim to its own version, so it moves with the `pydantic-ai` extra. tenacity: the
+# judge rides the one wire-retry loop (`adapters._retry`, ADR-0021) since 1.31.
+evals = ["pydantic-evals>=2.64,<3", "tenacity>=9"]
 # `adapters.genai_prices` (the Pricer on genai-prices' dated price table, ADR-0019).
 prices = ["genai-prices>=0.2.3"]
 # `adapters.lettucedetect` with the REAL model (torch + transformers, hundreds of MB). The module

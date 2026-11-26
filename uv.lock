@@ -2252,6 +2252,7 @@ all = [
 ]
 evals = [
     { name = "pydantic-evals" },
+    { name = "tenacity" },
 ]
 forecast = [
     { name = "optuna" },
@@ -2397,6 +2398,7 @@ requires-dist = [
     { name = "scoringrules", marker = "extra == 'scoringrules'", specifier = ">=0.11" },
     { name = "sqlalchemy", marker = "extra == 'mlflow'", specifier = ">=2.0" },
     { name = "sqlglot", marker = "extra == 'sql'", specifier = ">=30.22" },
+    { name = "tenacity", marker = "extra == 'evals'", specifier = ">=9" },
     { name = "tenacity", marker = "extra == 'http'", specifier = ">=9" },
     { name = "tenacity", marker = "extra == 'pydantic-ai'", specifier = ">=9" },
     { name = "venn-abers", marker = "extra == 'venn-abers'", specifier = ">=1.5.4" },
