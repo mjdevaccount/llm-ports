@@ -138,6 +138,41 @@ class TestTrust:
         assert cal.trust(p, replay=_CLEAN, min_kappa=0.6).trusted
         assert not cal.trust(p, replay=_CLEAN, min_kappa=0.6, bound="low").trusted
 
+    def test_two_floors_need_the_point_and_the_low_end(self) -> None:
+        p = _pairs(9, 2, 1, 8)  # the point clears 0.6, the interval's low end does not reach 0.4
+        a = cal.Agreement.of(p)
+        assert a.kappa is not None and a.kappa >= 0.6 and a.kappa_low is not None and a.kappa_low < 0.4
+        t = cal.trust(p, replay=_CLEAN, min_kappa=0.6, min_kappa_low=0.4)
+        assert not t.trusted and "(low)" in t.why and "under 0.4" in t.why
+        assert cal.trust(p, replay=_CLEAN, min_kappa=0.6, min_kappa_low=a.kappa_low).trusted
+
+    def test_the_point_floor_is_read_first(self) -> None:
+        t = cal.trust(_pairs(3, 11, 0, 6), replay=_CLEAN, min_kappa=0.6, min_kappa_low=0.0)
+        assert not t.trusted and "(point)" in t.why
+
+    def test_trust_and_floors_agree(self) -> None:
+        for pairs in (_pairs(9, 2, 1, 8), _pairs(12, 1, 1, 10), _pairs(3, 11, 0, 6), _pairs(25, 0, 0, 0), []):
+            f = cal.Floors(min_labelled=20, min_kappa=0.6, min_kappa_low=0.4)
+            t = cal.trust(pairs, replay=_CLEAN, min_labelled=20, min_kappa=0.6, min_kappa_low=0.4)
+            assert t.trusted == f.clears(cal.Agreement.of(pairs)), pairs
+
     def test_one_sided_labels_never_clear_the_floor(self) -> None:
         t = cal.trust(_pairs(25, 0, 0, 0), replay=_CLEAN)
         assert not t.trusted and "undefined" in t.why
+
+
+class TestFloors:
+    def test_every_floor_is_read_in_order(self) -> None:
+        a = cal.Agreement(n=30, agree=0.9, kappa=0.7, ac1=0.8, kappa_low=0.35, kappa_high=0.9)
+        r = cal.Floors(min_labelled=20, min_kappa=0.6, min_kappa_low=0.4).readings(a)
+        assert [(x.name, x.met) for x in r] == [("n", True), ("kappa", True), ("kappa_low", False)]
+        assert not cal.Floors(20, 0.6, 0.4).clears(a) and cal.Floors(20, 0.6).clears(a)
+
+    def test_an_undefined_statistic_never_clears(self) -> None:
+        a = cal.Agreement(n=30, agree=1.0, kappa=None, ac1=None)
+        assert not cal.Floors(20, 0.0).clears(a)
+        assert not cal.Floors(20, 0.0, 0.0).clears(cal.Agreement(n=30, agree=0.9, kappa=0.7, ac1=0.8))
+
+    def test_too_few_pairs_never_clear(self) -> None:
+        a = cal.Agreement(n=19, agree=1.0, kappa=1.0, ac1=1.0, kappa_low=0.9, kappa_high=1.0)
+        assert [x.met for x in cal.Floors(20, 0.6, 0.4).readings(a)] == [False, True, True]

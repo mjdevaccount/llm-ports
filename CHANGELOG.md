@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-11-26
+
+### Added
+
+- **`evals.calibration.Floors`: the agreement a judge must show, as one rule.** `min_labelled`,
+  `min_kappa` (the point) and an optional `min_kappa_low` (the 95% interval's lower end, read
+  beside the point). `readings(agreement)` lists each floor with its value and whether it is met,
+  in the order `trust` checks them; `clears(agreement)` is all of them. An undefined statistic
+  never clears. A consumer that reads trust off a stored `Agreement` (a learn-loop row, a per-item
+  board) calls `Floors.clears` instead of restating the rule beside `trust`.
+- **`trust(min_kappa_low=...)`**: the second floor in the same call. The point floor is read
+  first; a judge that clears it and misses the low end is untrusted with `(low)` in its reason.
+  None (the default) reads one floor, as before.
+
 ## [1.29.0] - 2026-11-26
 
 ### Added
