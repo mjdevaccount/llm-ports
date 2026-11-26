@@ -558,6 +558,10 @@
   "refute_slots",
   "verdicts_schema"
  ],
+ "llm_ports.evals.settle": [
+  "Settled",
+  "settle"
+ ],
  "llm_ports.forecast": [
   "BestVoice",
   "Bin",
@@ -656,6 +660,17 @@
   "numbers",
   "retry_message",
   "slots"
+ ],
+ "llm_ports.grounding.derive": [
+  "COMMENT",
+  "Recheck",
+  "SEPARATOR",
+  "Tolerance",
+  "VERDICTS",
+  "Value",
+  "Verdict",
+  "evaluate",
+  "recheck"
  ],
  "llm_ports.grounding.numbers": [
   "DIGITS",

@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-11-26
+
+### Added
+
+- **`grounding.derive`: a derived figure is re-checked in code** (ADR-0030). `recheck` reads an
+  op chain (`expr = numeric = result`, or a bare comparison), evaluates it in a closed `ast`
+  grammar (numbers, names, `+ - * /`, unary signs, `abs`, `sqrt`, `< <= > >=` chains), holds the
+  chain to its written result and, given the facts, to them; then judges the shown figure:
+  `holds` (the value, a licensed rendering, or within `Tolerance`), `abstain` (inside `band` times
+  the tolerance), `breaks`, or `unchecked` (anything code cannot read). `evaluate` is the grammar
+  on its own.
+- **`evals.settle`: code's ruling on a labelled claim** (ADR-0030). A breaking op makes the claim
+  `contradicted`; a holding op confirms a grounded label and never overturns an ungrounded one;
+  the figures the number law refuses ride along as `refused`, a hint and never a ruling.
+
 ## [1.28.0] - 2026-11-26
 
 ### Added

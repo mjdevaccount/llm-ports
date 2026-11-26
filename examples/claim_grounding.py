@@ -1,4 +1,4 @@
-"""Measure a judge claim by claim: gold cases, a judge's labels, agreement per label with its interval.
+"""Measure a judge claim by claim: gold cases, a judge's labels, agreement per label, and code's recheck.
 
 No model runs here. The "judge" is a table of labels a judge returned, so the example shows the
 measurement itself: which mistake class the judge makes, not just how often it is wrong.
@@ -7,6 +7,9 @@ measurement itself: which mistake class the judge makes, not just how often it i
 import json
 
 from llm_ports.evals import claims
+from llm_ports.evals.settle import settle
+from llm_ports.grounding import numbers
+from llm_ports.grounding.derive import Tolerance, recheck
 
 GOLD = [
     {
@@ -75,3 +78,20 @@ assert claims.case_label(case.claims) == "pass" and claims.case_label(as_judged)
 # Splits are stable: the same case is always in the same split.
 assert claims.split("invoice-0") == claims.split("invoice-0")
 print("splits:", sorted({claims.split(c.case_id) for c in loaded.cases}))
+
+# Arithmetic is code's: the judge names the op, code recomputes it and rules where it can.
+
+total = "subtotal + tax = 90.00 + 10.00 = 100.00"
+facts = {"subtotal": 90.0, "tax": 10.0}
+assert recheck(total, "100.00", facts=facts).verdict == "holds"
+assert recheck(total, "110.00", facts=facts).verdict == "breaks"  # a planted wrong total
+assert recheck(total, "100.4", tol=Tolerance(absolute=0.25)).verdict == "abstain"  # too close to call
+assert recheck("weekday(2026-03-02) = Monday").verdict == "unchecked"  # outside the grammar: never guessed
+
+# A judge that calls the wrong total `derived` is overruled; the right one is confirmed.
+wrong = claims.Claim("C1", "Total 110.00", "the total is 110.00", "derived", op=total, extra={"shown": "110.00"})
+right = claims.Claim("C1", "Total 100.00", "the total is 100.00", "derived", op=total, extra={"shown": "100.00"})
+allowed = numbers.digits(GOLD[0]["input"])
+assert settle(wrong, allowed=allowed, facts=facts).label == "contradicted"
+assert settle(right, allowed=allowed, facts=facts).label == "derived"
+print("recheck:", recheck(total, "110.00", facts=facts).reason)

@@ -102,9 +102,11 @@ refusal when it may not.
 **A judge is measured, claim by claim.** A model judge earns trust from agreement with a reference
 (Cohen's kappa with its interval), and is measured per claim under four labels (`supported`,
 `derived`, `not_in_input`, `contradicted`), so a report says which mistake it makes: refusing an
-inference reads differently from missing an invention.
+inference reads differently from missing an invention. A derived figure is re-checked in code (`grounding.derive`), so a
+judge never has the last word on arithmetic.
 ([ADR-0012](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0012-a-judge-earns-trust-from-labels.md),
-[ADR-0029](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0029-a-judge-is-measured-claim-by-claim.md))
+[ADR-0029](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0029-a-judge-is-measured-claim-by-claim.md),
+[ADR-0030](https://github.com/mjdevaccount/llm-ports/blob/main/docs/adr/0030-a-derived-figure-is-rechecked-in-code.md))
 
 **One observation per call.** A call is traced as one generation, opened once and ended once, with
 unmeasured usage flagged rather than recorded as zero.
