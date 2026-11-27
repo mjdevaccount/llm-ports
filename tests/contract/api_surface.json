@@ -387,6 +387,7 @@
   "ECHO_MAX_SHARE",
   "ECHO_MIN_CHARS",
   "GRADERS",
+  "GROUNDED_MIN_FIGURES",
   "NULLISH",
   "TEXT_ONLY_GRADERS",
   "WEB_ONLY_GRADERS",
@@ -403,7 +404,8 @@
   "prose",
   "schema_complete",
   "score_all",
-  "score_one"
+  "score_one",
+  "ungrounded_refusals"
  ],
  "llm_ports.call.models": [
   "CAPABILITIES",
