@@ -16,12 +16,12 @@ rng = random.Random(1)
 
 # 1. A forecast is a record of what a voice said, kept with its evidence.
 said = Forecast(
-    author="desk",
-    subject="SPY",
+    author="station-a",
+    subject="river-level",
     kind="range",
     forecast_time=datetime(2026, 3, 2, 14, 30, tzinfo=UTC),
     resolve_time=datetime(2026, 3, 2, 21, 0, tzinfo=UTC),
-    text="SPY holds 560-566 into the close",
+    text="The river holds 560-566 cm into the evening",
     probability=0.68,
 )
 
@@ -57,7 +57,7 @@ print(f"'likely': a={pa:.2f} b={pb:.2f} c={pc:.2f} (pooled {hedges.pooled_['like
 # 5. Pool two voices in log-odds; the equal-weight pool is the baseline a learned combiner
 #    (adapters.river) has to beat. Combiners speak River's protocol: x is voice -> probability.
 pool = LogitPool()
-both = pool.predict_proba_one({"desk": fitted(0.68), "author-a": pa}).get(True)
+both = pool.predict_proba_one({"station-a": fitted(0.68), "author-a": pa}).get(True)
 assert both is not None and min(fitted(0.68), pa) < both < max(fitted(0.68), pa)
 print(f"pooled: {both:.2f}; ece of the calibrated voice {ece(reliability(happened, fitted.predict(stated))):.3f}")
 assert said.resolve_time - said.forecast_time < timedelta(days=1)

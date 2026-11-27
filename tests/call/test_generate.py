@@ -73,13 +73,13 @@ async def test_ok_traces_one_generation_under_the_category() -> None:
     gen, tracer, hooks, events = _rig(
         Generated(value="fine", outcome="ok", model="small-chat", usage={"input": 3, "output": 4})
     )
-    res = await call.generate(ROLE, prompt="say it", generator=gen, hooks=hooks, metadata={"symbol": "SPY"})
+    res = await call.generate(ROLE, prompt="say it", generator=gen, hooks=hooks, metadata={"region": "NYC"})
     assert res.outcome == "ok" and res.value == "fine"
     assert gen.features == ["test.facade"], "the category is the feature for the whole call"  # type: ignore[attr-defined]
     assert current_feature() is None, "and is reset after it"
     (g,) = tracer.generations
     assert g.opened["name"] == "test.facade" and g.opened["model"] == "small-chat"
-    assert g.opened["prompt_name"] == "test.pack" and g.opened["metadata"] == {"role": "test.facade", "symbol": "SPY"}
+    assert g.opened["prompt_name"] == "test.pack" and g.opened["metadata"] == {"role": "test.facade", "region": "NYC"}
     assert g.ended is not None and g.ended["level"] == "DEFAULT"
     assert g.ended["usage"] == {"input": 3, "output": 4} and g.ended["output"] == "fine"
     assert res.stamp["generation"] is not None and events == []
@@ -226,7 +226,7 @@ class TestGraders:
 GATED = Role("test.gated", tier="local", graders=GRADERS, gates=("numbers_from_inputs",))
 INVENTED = {"summary": "wait for a 15-minute retest"}
 GROUNDED = {"summary": "held 14.88 of room"}
-PROMPT = "room_down 14.878"
+PROMPT = "headroom 14.878"
 
 
 class TestGates:

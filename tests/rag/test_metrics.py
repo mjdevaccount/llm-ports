@@ -1,5 +1,5 @@
 """retrieval_metrics: hit@k / MRR over an ANY-OF relevant set, agree@k Jaccard, and the parity gate's
-rounded tolerance. Moved from trade-data (scripts/rag_eval.py and usecases/rag_email_parity.py each
+rounded tolerance. Moved from the first consumer (a retrieval eval script and a parity check each
 computed hit@k; one implementation now, v0.9.0)."""
 
 from __future__ import annotations

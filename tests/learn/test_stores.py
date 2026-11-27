@@ -19,14 +19,14 @@ def _now() -> datetime:
 
 async def _exercise_ledger(ledger: RunLedger) -> None:
     v = g.decide("k", [g.check("ok", True)])
-    first = await ledger.append("k", subject="SPY", params={"w": 1}, metrics={VERDICT_KEY: v.as_dict()})
+    first = await ledger.append("k", subject="NYC", params={"w": 1}, metrics={VERDICT_KEY: v.as_dict()})
     assert first.ok
     nothing = g.could_not_run("k", "store down")
-    assert (await ledger.append("k", subject="SPY", params={}, metrics={VERDICT_KEY: nothing.as_dict()})).ok
-    assert (await ledger.append("k", subject="QQQ", params={}, metrics={})).ok
-    newest = await ledger.latest("k", subject="SPY")
+    assert (await ledger.append("k", subject="NYC", params={}, metrics={VERDICT_KEY: nothing.as_dict()})).ok
+    assert (await ledger.append("k", subject="SFO", params={}, metrics={})).ok
+    newest = await ledger.latest("k", subject="NYC")
     assert newest.ok and newest.row is not None and newest.row.decision == "could_not_run"
-    decisive = await ledger.latest("k", subject="SPY", decisions=("pass", "fail"))
+    decisive = await ledger.latest("k", subject="NYC", decisions=("pass", "fail"))
     assert decisive.row is not None and decisive.row.params == {"w": 1} and decisive.row.verdict == v
     assert (await ledger.latest("k")).row is not None
     none_yet = await ledger.latest("other")
@@ -63,7 +63,7 @@ async def test_an_unwritable_ledger_is_unavailable(tmp_path: Path) -> None:
 EX = [
     Example("a", "1", "good", "human", at=T0, ref={"trace": "t1"}),
     Example("a", "2", "bad", "judge", by="9b"),
-    Example("b", "SPY@d", 0.012, "outcome", at=T0),
+    Example("b", "NYC@d", 0.012, "outcome", at=T0),
 ]
 
 
@@ -72,7 +72,7 @@ async def _exercise_store(store: WritableExampleStore) -> None:
     got = await store.examples(["a"])
     assert got.ok and {e.subject for e in got.examples} == {"1", "2"}
     assert {e.subject for e in (await store.examples(["a", "b"], source="human")).examples} == {"1"}
-    assert {e.subject for e in (await store.examples(["a", "b"], since=T0)).examples} == {"1", "SPY@d"}
+    assert {e.subject for e in (await store.examples(["a", "b"], since=T0)).examples} == {"1", "NYC@d"}
 
 
 async def test_memory_store() -> None:

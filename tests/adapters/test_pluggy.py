@@ -150,7 +150,7 @@ def test_not_strict_names_every_stage_and_the_rest_still_load() -> None:
 
 
 def test_a_pack_refused_by_the_registry_is_stage_register() -> None:
-    reg = ActionRegistry("main", clocks=("trading",))  # the good pack's actions use the wall clock
+    reg = ActionRegistry("main", clocks=("office",))  # the good pack's actions use the wall clock
     loads = load_packs(reg, entry_points=[_ep("reports", f"{PACKS}.good")], on_event=Events(), strict=False)
     assert (loads[0].outcome, loads[0].stage) == ("failed", "join")
     with pytest.raises(PackLoadError) as caught:

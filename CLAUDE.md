@@ -52,7 +52,9 @@ core and no vendor module.
   new named outcome, not an exception.
 - **Docstrings state the contract** (Google style, `ruff` `D` rules): what it does, `Args`,
   `Returns`, `Raises` or "never raises", `Invariants`. No history, no incident dates, no consumer,
-  host or service names: the pre-commit hook rejects deployment vocabulary in `src/llm_ports/`.
+  host or service names: the pre-commit hooks reject deployment vocabulary in `src/llm_ports/` and market or
+  deployment vocabulary in docs, tests, examples, README and CHANGELOG (selftest:
+  `tests/contract/test_vocabulary_gate.py`; a new term gets a line in its planted fixture).
   Full rules: `CONTRIBUTING.md` §Docstrings.
 - **History has two homes:** what changed goes in `CHANGELOG.md` (Keep a Changelog, under
   `Unreleased`); why, with evidence, goes in a new `docs/adr/NNNN-title.md` (MADR). A docstring

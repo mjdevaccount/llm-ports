@@ -1,18 +1,18 @@
 # One system for LLM evaluation, judging and labelled data
 
-Status: SUPERSEDED in scope by `LEARNING-LOOP-CORE.md` (2026-11-07), which owns the decisions; this file stays as the detail of the LLM-label loop, amended there. Originally DESIGN, 2026-11-07. Scope: every repo of the estate that grades, judges or labels LLM
-output. Owner of the decision: this file. Inventory read from each repo's `origin/main` with
-`git ls-files` / `git grep` and from the box (Langfuse API, `quant.prompt_eval_run`) on
-2026-11-07 ~04:40Z.
+Status: SUPERSEDED in scope by `LEARNING-LOOP-CORE.md` (2026-11-07), which owns the decisions; this file stays as the detail of the LLM-label loop, amended there. Originally DESIGN, 2026-11-07. Scope: every codebase in the first consumer's deployment that grades, judges or labels LLM
+output. Owner of the decision: this file. The inventory was read from each codebase's main branch
+with `git ls-files` / `git grep` and from the deployment host (the Langfuse API and the consumer's
+eval-run table) on 2026-11-07 ~04:40Z.
 
 ## Why
 
-The box judge (a 9B model) agrees with a human at kappa ~0.19 on a 20-reply hand-graded set and
-fails 10 of 14 replies a human graded good. No judge, small or large, can be shown calibrated per
-role on that set: those 20 replies are almost the whole human-labelled corpus, about two per role
-across 34 registered roles. Models will not get better here until the labelled data grows, and
-that data is spread over eight homes in three repos. The work is: one system first, then grow the
-labels on it.
+The deployed judge (a small self-hosted model) agrees with a human at kappa ~0.19 on a 20-reply
+hand-graded set and fails 10 of 14 replies a human graded good. No judge, small or large, can be
+shown calibrated per role on that set: those 20 replies are almost the whole human-labelled
+corpus, about two per role across 34 registered roles. Models will not get better here until the
+labelled data grows, and that data is spread over eight homes in three codebases. The work is: one
+system first, then grow the labels on it.
 
 ## The decision
 
@@ -20,17 +20,17 @@ labels on it.
 
 | part | home | holds |
 |---|---|---|
-| mechanics | **llm-ports** `llm_ports.evals` (+ its ports and adapters) | everything that is not about EDGE: judging, golden runs, calibration statistics, the deterministic board, and (new) the labelled-example model, coverage and the label store port |
-| storage + labelling UI | **Langfuse** on the box (v4.72.0, already deployed, already holds traces, judge scores and 3 datasets) | every label: verdict labels as scores on the production generation, reference outputs as dataset items |
-| configuration | **trade-data** `service/evals/` + `service/platform/llm_judge_rules.py` | EDGE's roles, rubrics, graders, golden pack data, which roles get queued and how many, the jobs and gauges that run it |
+| mechanics | **llm-ports** `llm_ports.evals` (+ its ports and adapters) | everything that is not about one consumer: judging, golden runs, calibration statistics, the deterministic board, and (new) the labelled-example model, coverage and the label store port |
+| storage + labelling UI | **Langfuse** on the deployment host (v4.72.0, already deployed, already holds traces, judge scores and 3 datasets) | every label: verdict labels as scores on the production generation, reference outputs as dataset items |
+| configuration | **the consumer application** (its evals package and its judge rules) | the consumer's roles, rubrics, graders, golden pack data, which roles get queued and how many, the jobs and gauges that run it |
 
 "We already have one" is right: llm-ports 1.4.0 already holds the judge (`evals.judge`, with
 `JudgeLane`), golden-set runs (`evals.golden`), calibration (`evals.calibration`: kappa, AC1,
 seeded-bad replies), the deterministic board (`GauntletEvaluator`), the judge adapter
-(`adapters.pydantic_evals`) and replay recording (`adapters.pydantic_ai.replay`); trade-data pins
-it (`pyproject.toml:50`, `==1.4.0`). What the library does NOT have is any notion of a **label**:
-nothing models "a human (or a stronger model) said this reply is good", nothing counts labels per
-role, nothing puts a reply in front of a labeller. That gap is the whole build.
+(`adapters.pydantic_evals`) and replay recording (`adapters.pydantic_ai.replay`); the consumer
+pins it (`==1.4.0`). What the library does NOT have is any notion of a **label**: nothing models
+"a human (or a stronger model) said this reply is good", nothing counts labels per role, nothing
+puts a reply in front of a labeller. That gap is the whole build.
 
 ## Inventory
 
@@ -48,81 +48,79 @@ role, nothing puts a reply in front of a labeller. That gap is the whole build.
 | `adapters/langfuse/` | tracer + prompt source | keep; gains `labels.py` |
 | `docs/guides/judge-and-refute.md` | judge guide | keep; links the new labels guide |
 
-### trade-data — EDGE configuration stays, generic duplicates go
+### The consumer application — its configuration stays, generic duplicates go
 
-Read from trade-data `origin/main` 6e941731. The earlier slice (llm-ports#39, 1.4.0) already
-switched most of it: `service/platform/llm_judge.py:89` runs `JudgeLane`,
-`service/evals/pack_golden.py:33` delegates to `golden`, `scripts/judge_kappa.py:32`,
-`scripts/llm_judge_calibrate.py:52` and `service/platform/llm_judge_trust.py:41` call
-`calibration`, `service/evals/recorded_model.py:19` calls `replay.recording`. What is left:
+The earlier slice (llm-ports#39, 1.4.0) already switched most of it: the consumer's judge runs
+`JudgeLane`, its pack-golden runner delegates to `golden`, its kappa and calibration scripts and
+its judge-trust gate call `calibration`, and its recorded model calls `replay.recording`. What is
+left:
 
-**Generic, still in trade-data -> moves to llm-ports, then deleted (PR 1 + PR 2):**
+**Generic, still in the consumer -> moves to llm-ports, then deleted (PR 1 + PR 2):**
 
-| piece | lines | what it does | goes to |
+| piece | size | what it does | goes to |
 |---|---|---|---|
-| `scripts/_langfuse_run.py` | 76 | records a graded eval as a Langfuse dataset experiment (`run_experiment`), exits 2 when the SDK silently dropped an item | `llm_ports.adapters.langfuse.experiments` (`run`, `record_rows`, a dropped item = a named outcome, not a shrunken ratio). Callers `day_brief_eval.py`, `narrator_eval.py`, `eval_prompts.py` import it from there |
-| `service/evals/autopsy_graders.py` `citations_resolve` (:84) | ~15 | the cited-keys-resolve grader | `golden.citations_resolve` (already in llm-ports, same contract) |
+| a Langfuse experiment helper | 76 lines | records a graded eval as a Langfuse dataset experiment (`run_experiment`), exits 2 when the SDK silently dropped an item | `llm_ports.adapters.langfuse.experiments` (`run`, `record_rows`, a dropped item = a named outcome, not a shrunken ratio). Its three eval-script callers import it from there |
+| a local `citations_resolve` grader | ~15 lines | the cited-keys-resolve grader | `golden.citations_resolve` (already in llm-ports, same contract) |
 
 **Dead or duplicated -> deleted (PR 2):**
 
 | piece | why |
 |---|---|
-| `evals/` (promptfoo: `promptfooconfig.yaml`, `gen_dataset.py`/`.sql`, `providers/box.js`, `asserts/`, `cases/`, `prompts/`, `README.md`) | a second harness (Node) for `post.axes`; nothing invokes it (no Makefile, CI or Windmill reference); hard-codes a box IP. `post.axes` is covered by the call graders on every reply and by the sampled judge |
-| `scripts/triage_bakeoff.py` | its own copy of the triage scorer (:81, duplicates `scripts/_triage_score.py`); nothing invokes it |
-| `scripts/ai_spike_cite.py` | scratch spike with its own pydantic-evals judge (:208); nothing invokes it |
-| `docs/churn_golden_sample.jsonl` | an unlabelled copy (every `gold` null) of the churn sample; nothing reads it |
+| a promptfoo harness (config, dataset builder, a provider shim, asserts, cases, prompts) | a second harness (Node) for one role; nothing invokes it (no Makefile, CI or scheduler reference); hard-codes a host IP. That role is covered by the call graders on every reply and by the sampled judge |
+| a triage bake-off script | its own copy of the triage scorer; nothing invokes it |
+| a citation spike script | scratch spike with its own pydantic-evals judge; nothing invokes it |
+| an unlabelled sample file | a copy (every `gold` null) of the extraction sample; nothing reads it |
 
-**EDGE-specific -> stays as configuration and data (graders, rubrics, golden sets, schedules):**
+**Consumer-specific -> stays as configuration and data (graders, rubrics, golden sets, schedules):**
 
 | piece | what it is |
 |---|---|
-| `service/platform/llm_judge.py`, `llm_judge_rules.py`, `llm_judge_trust.py`, `adapters/pydantic_evals_judge.py` (`BoxJudge`) | the judge wiring: which roles, RTH eligibility, rubric fill-in, the row written, the trust gate. `llm_judge_trust` reads `judge_calibration.jsonl` at runtime today; PR 3 points it at `labels.agreement` over the store |
-| `service/evals/{autopsy,dossier,day_brief,narrator}_graders.py`, `pack_golden.py`, `recorded_model.py` | per-surface graders and wiring over the llm-ports mechanics |
-| `service/usecases/{prompt_eval,llm_gauntlet,churn_eval}.py`, routers `prompt_eval_router.py`, `churn_eval_router.py`, `repositories/{prompt_eval_repo,evals_repo}.py` | the runs (Windmill `prompt_eval` Sat 17:40, `llm_gauntlet` daily 17:20, `churn_eval` Sun 06:30) and their rows (`quant.prompt_eval_run`, `quant.learn_runs`) |
-| `scripts/eval_prompts.py` (Windmill `eval_prompts`, Mon 06:00) | builds Langfuse datasets `macro_gold_v1`, `triage_gold_v1`, `mention_gold_v1` from real inputs, re-runs them through Gemini, scores json/schema/accuracy; accuracy uses expected outputs "hand-labelled in the Langfuse UI" — the label store this design adopts, already in use for three roles |
-| `scripts/{day_brief,narrator,pack}_golden.py`, `harvest_golden_llm.py`, `day_brief_eval.py`, `narrator_eval.py`, `day_brief_plant.py`, `churn_golden_sample.py`, `triage_eval_golden.py`, `triage_golden_replay.py`, `_triage_score.py` | build or replay EDGE golden sets |
-| `scripts/day_brief_calibrate.py` | calibrates the HHEM faithfulness model's threshold (its own torch env). A threshold-vs-label calibration; kept EDGE because it needs torch. Noted as a candidate for `calibration` later |
-| `scripts/judge_kappa.py`, `scripts/llm_judge_calibrate.py` | thin CLIs over `calibration` for the autopsy judge and the sampled judge |
-| `prompts/golden/*.jsonl`, `prompts/packs/*/golden_v1.json`, `docs/triage_golden.jsonl`, `tests/golden/**` | data (labels move per "Where labels live" below; golden INPUTS stay in git for CI) |
-| `POST /journal/autopsy_label/{trade_id}` (`service/admin/journal_router.py:119`) -> `quant.autopsy_calibration` | the operator's existing labelling surface for trade autopsies |
+| the judge wiring, its rules, its trust gate and the judge adapter | which roles, time-window eligibility, rubric fill-in, the row written, the trust gate. The trust gate reads a calibration JSONL at runtime today; PR 3 points it at `labels.agreement` over the store |
+| per-surface graders, the pack-golden runner, the recorded model | per-surface graders and wiring over the llm-ports mechanics |
+| the eval runs, their routers and repositories | the scheduled runs (a weekly prompt eval, a daily gauntlet, a weekly extraction eval) and their rows in the consumer's eval-run and run-ledger tables |
+| a weekly prompt-eval script | builds Langfuse datasets `topic_gold_v1`, `triage_gold_v1`, `mention_gold_v1` from real inputs, re-runs them through Gemini, scores json/schema/accuracy; accuracy uses expected outputs "hand-labelled in the Langfuse UI" — the label store this design adopts, already in use for three roles |
+| golden-set builders and replays (about a dozen scripts) | build or replay the consumer's golden sets |
+| a faithfulness-threshold calibrator | calibrates the HHEM faithfulness model's threshold (its own torch env). A threshold-vs-label calibration; kept in the consumer because it needs torch. Noted as a candidate for `calibration` later |
+| two calibration CLIs | thin CLIs over `calibration` for the review judge and the sampled judge |
+| golden JSONL files, pack `golden_v1.json` files, golden test fixtures | data (labels move per "Where labels live" below; golden INPUTS stay in git for CI) |
+| the operator's review-label endpoint and its table | the operator's existing labelling surface for post-hoc reviews |
 
-**Not LLM evals** (named by the grep, out of scope): `scripts/eval_multileg.py`,
-`scripts/eval_resign.py`, `scripts/reproject_shadow_eval.py`, `scripts/langfuse_parity.py`,
-`scripts/rag_eval.py` (retrieval recall/MRR and the embed-space parity gate; it already uses
-`llm_ports.rag.metrics`), `service/adapters/langfuse_{metrics,reads,observations}.py` (cost reads).
+**Not LLM evals** (named by the grep, out of scope): retrieval recall/MRR and the embed-space
+parity gate (it already uses `llm_ports.rag.metrics`), shadow re-projection evals, a Langfuse
+parity check, and the Langfuse cost reads.
 
-### mattpc-llm-stack
+### A local model host's repository
 
 | piece | what it does | verdict |
 |---|---|---|
-| `evals/goldens.jsonl` (19 rows), `score.py`, `run_eval.py`, `README.md` | stdlib-only eval of the box's research middleware (`-web` tier): live-price fidelity, respects handed ground truth, cites a URL, no filler, tool routing read from `research.log`. Last commit 2026-07-31; nothing invokes it (`git grep` outside `evals/`: no hits) | FOLD (PR 6): the 19 goldens become the Langfuse dataset `golden:research.web`; the output checks become graders in trade-data `service/evals/web_graders.py` run by `GauntletEvaluator` over the web roles' production replies; the tool-routing check (reads the box's own log) stays a serving probe in mattpc-llm-stack under `probes/`, not an eval. `evals/` is deleted with a pointer |
+| a goldens file (19 rows), a scorer, a runner, a README | stdlib-only eval of the host's research middleware (`-web` tier): live-figure fidelity, respects handed ground truth, cites a URL, no filler, tool routing read from the host's own log. Last commit 2026-07-31; nothing invokes it | FOLD (PR 6): the 19 goldens become the Langfuse dataset `golden:research.web`; the output checks become graders run by `GauntletEvaluator` over the web roles' production replies; the tool-routing check (it reads the host's own log) stays a serving probe in that repository, not an eval. The eval directory is deleted with a pointer |
 
-### trade-infra
+### The operations stack
 
 | piece | verdict |
 |---|---|
-| Langfuse v4.72.0 (`docker-compose.yml:388,446`), backed up by `infra/backup/lib_langfuse.sh` | THE label store. No change but one alert rule (below) |
-| `LlmJudgeVerdictFail` alert, gated by `edge_llm_judge_trusted` (trade-infra#815) | keep; the trust gauge becomes computable from labels (`labels.agreement`), not a hand flag |
+| Langfuse v4.72.0, backed up by the stack's backup job | THE label store. No change but one alert rule (below) |
+| a judge-verdict-fail alert, gated by a judge-trusted gauge | keep; the trust gauge becomes computable from labels (`labels.agreement`), not a hand flag |
 
-### Langfuse, live (box API, 2026-11-07)
+### Langfuse, live (2026-11-07)
 
-`/api/public/health` = 4.72.0. Datasets: 3 (`narrator_golden_v1`, `triage_gold_v1`,
-`macro_gold_v1`). Annotation queues: **0**. Score configs: **0**. The SDK in the service image
+`/api/public/health` = 4.72.0. Datasets: 3 (`summary_golden_v1`, `triage_gold_v1`,
+`topic_gold_v1`). Annotation queues: **0**. Score configs: **0**. The SDK in the service image
 (langfuse 5.1.0) exposes `annotation_queues`, `score_configs`, datasets and scores. The labelling
 surface exists and is unused.
 
-### Labelled data that exists today (box + repos, 2026-11-07)
+### Labelled data that exists today (2026-11-07)
 
 | store | shape | n | role(s) |
 |---|---|---|---|
-| `quant.prompt_eval_run` `pack='judge:<role>'` | MACHINE verdicts (the 9B judge) | 1,087 over 20 roles (pass 25) | churn.extract 734, narrative.vision 97, narrative.research 63, trade.autopsy 48, ... |
-| `prompts/golden/judge_calibration.jsonl` | HUMAN verdict on a reply (with Langfuse span id), beside seeded-bad rows | 51 lines, 20 human verdicts | 11 roles, ~2 each |
-| `quant.autopsy_calibration` | HUMAN per-field truth about a trade (Journal UI) | 50 | trade.autopsy |
-| `prompts/golden/churn_golden_labeled.jsonl` | HUMAN/reference expected fields | 203 | churn.extract |
-| Langfuse datasets `triage_gold_v1`, `macro_gold_v1`, `narrator_golden_v1` (live API: 3 datasets) | reference items, expected outputs hand-labelled in the Langfuse UI | (counted in PR 3) | triage.mention, triage.macro, narrator.note |
-| `prompts/packs/*/golden_v1.json` | golden INPUTS (slots), no labels | 3 packs | decision.autopsy, narrator.note, trade.autopsy |
-| `docs/triage_golden.jsonl` | HUMAN expected flag + calls | 18 | triage.mention |
-| Langfuse `day_brief_golden_v1`, `mention_gold_v1` | reference items | (counted in PR 3) | day_brief.*, deep_extract.mentions |
+| the eval-run table, rows `pack='judge:<role>'` | MACHINE verdicts (the small judge) | 1,087 over 20 roles (pass 25) | extract.article 734, vision.describe 97, research.web 63, review.postmortem 48, ... |
+| a judge-calibration JSONL | HUMAN verdict on a reply (with Langfuse span id), beside seeded-bad rows | 51 lines, 20 human verdicts | 11 roles, ~2 each |
+| the operator's review table | HUMAN per-field truth about a reviewed decision (its own UI) | 50 | review.postmortem |
+| a labelled extraction JSONL | HUMAN/reference expected fields | 203 | extract.article |
+| Langfuse datasets `triage_gold_v1`, `topic_gold_v1`, `summary_golden_v1` | reference items, expected outputs hand-labelled in the Langfuse UI | (counted in PR 3) | triage.mention, triage.topic, summary.note |
+| pack `golden_v1.json` files | golden INPUTS (slots), no labels | 3 packs | review.decision, summary.note, review.postmortem |
+| a triage golden JSONL | HUMAN expected flag + calls | 18 | triage.mention |
+| Langfuse `brief_golden_v1`, `mention_gold_v1` | reference items | (counted in PR 3) | brief.*, extract.mentions |
 
 Human verdict labels on LLM replies: **~20**. That is the number this design exists to raise.
 
@@ -147,21 +145,20 @@ Why Langfuse and not a table or jsonl:
   would need that UI built; jsonl has no UI at all.
 - **The label sits on the thing labelled.** A score is keyed by observation id, so a label can
   never drift from the reply it judges, and the judge's own score sits beside it for agreement.
-- **It is already the store**: traces, judge scores and three datasets live there, scripts already
-  write datasets (`scripts/day_brief_eval.py:102`, `scripts/narrator_eval.py:50`,
-  `scripts/eval_prompts.py:266`), and it is backed up (`trade-infra infra/backup/lib_langfuse.sh`).
+- **It is already the store**: traces, judge scores and three datasets live there, three of the
+  consumer's scripts already write datasets, and it is backed up by the operations stack.
 - **Against, and the answer:** CI cannot reach Langfuse. CI does not need labels: CI runs the
   deterministic graders over golden INPUTS (`golden_v1.json`, in git). Labels feed measurement
-  on the box (agreement, coverage), which runs where Langfuse is.
+  on the deployment host (agreement, coverage), which runs where Langfuse is.
 - **Against, and the answer:** a judge replay read a reply cut at exactly 4,000 characters from a
-  Langfuse export (llm-judge-fail notes, 2026-11-07; the cut's source is UNVERIFIED — the library
+  Langfuse export (judge-failure notes, 2026-11-07; the cut's source is UNVERIFIED — the library
   tracer does not cut outputs, `adapters/langfuse/tracer.py`). The queue job therefore enqueues
-  the GENERATION observation and records the output length it saw; PR 3 verifies on the box that a
+  the GENERATION observation and records the output length it saw; PR 3 verifies on the host that a
   queued reply longer than 4,000 characters reads back whole before any label counts.
-- **Stays outside, by design:** `quant.autopsy_calibration` labels the TRADE (did the entry chase,
-  was size appropriate), the operator's record with its own Journal UI. It is domain truth, not a
-  verdict on a reply. Coverage COUNTS it for `trade.autopsy` through a second, read-only source;
-  it is not copied.
+- **Stays outside, by design:** the operator's review table labels the DECISION reviewed (was it
+  timely, was its size appropriate), the operator's record with its own UI. It is domain truth, not
+  a verdict on a reply. Coverage COUNTS it for `review.postmortem` through a second, read-only
+  source; it is not copied.
 
 ## What llm-ports gains (PR 1, release 1.5.0)
 
@@ -184,84 +181,84 @@ Why Langfuse and not a table or jsonl:
 - Adapter `adapters/langfuse/labels.py` `LangfuseLabelStore`: get-or-create the per-role score
   config and annotation queue, add observations to the queue, write model labels as API scores,
   read `label-<role>` and `<role>.llm_judge` scores back as `Label`s.
-- `adapters/langfuse/experiments.py`: `run` / `record_rows`, moved from trade-data
-  `scripts/_langfuse_run.py` (record an offline-graded eval as a dataset experiment; an item the
-  SDK dropped is a named outcome, never a shrunken ratio).
+- `adapters/langfuse/experiments.py`: `run` / `record_rows`, moved from the consumer's experiment
+  helper (record an offline-graded eval as a dataset experiment; an item the SDK dropped is a
+  named outcome, never a shrunken ratio).
 - `testing.FakeLabelStore`; guide `docs/guides/labels.md`; ADR-0010 "labels are scores on the
   labelled observation"; API page; CHANGELOG.
 
-Not in llm-ports: which roles, the targets, the Gemini budget, the schedule. Those are EDGE.
+Not in llm-ports: which roles, the targets, the Gemini budget, the schedule. Those belong to the
+consumer.
 
-## What trade-data does (PRs 2-4)
+## What the consumer does (PRs 2-4)
 
 - **PR 2 (consolidate, no behaviour change):** import `experiments` and `golden.citations_resolve`
-  from llm-ports; delete `scripts/_langfuse_run.py`, the local `citations_resolve`, `evals/`,
-  `scripts/triage_bakeoff.py`, `scripts/ai_spike_cite.py`, `docs/churn_golden_sample.jsonl`; drop
-  their tests where llm-ports now carries them. Prove: the existing suites green, `wc -l` before /
-  after.
+  from llm-ports; delete the local experiment helper, the local `citations_resolve`, the promptfoo
+  harness, the bake-off and spike scripts and the unlabelled sample; drop their tests where
+  llm-ports now carries them. Prove: the existing suites green, `wc -l` before / after.
 - **PR 3 (labels):** below.
-- **Rename into one scheme:** the Langfuse datasets `triage_gold_v1` / `macro_gold_v1` /
-  `mention_gold_v1` / `narrator_golden_v1` / `day_brief_golden_v1` keep their names (renaming a
+- **Rename into one scheme:** the Langfuse datasets `triage_gold_v1` / `topic_gold_v1` /
+  `mention_gold_v1` / `summary_golden_v1` / `brief_golden_v1` keep their names (renaming a
   Langfuse dataset loses its run history); the scheme `golden:<role>` applies to datasets created
   from here on, and the coverage reader maps the five legacy names to their roles explicitly.
 
 ## Labelled-data expansion (PR 3-5)
 
-- **The queue** (`service/usecases/llm_labels.py`, Windmill flow `llm_label_queue`, nightly
-  after 21:35Z, idempotent `/admin/run/llm_label_queue`): per registered role, read the last 7
-  days of generations from Langfuse, `labels.draw` up to `per_run` (default 5) to close the gap to
-  `target` (default 50 human per role), `LabelStore.enqueue`. The operator labels in the
-  Langfuse UI, five minutes at a time, a role at a time.
+- **The queue** (a nightly scheduled job behind an idempotent run endpoint): per registered role,
+  read the last 7 days of generations from Langfuse, `labels.draw` up to `per_run` (default 5) to
+  close the gap to `target` (default 50 human per role), `LabelStore.enqueue`. The operator labels
+  in the Langfuse UI, five minutes at a time, a role at a time.
 - **The cheap labeller**: the same job then asks a strong model to label up to its daily budget
-  (Gemini free tier: 20 requests/day/model, measured 2026-11-07; or llm-box `qwen3.6-27b` in an
-  A/B window, it evicts the 9B) through `PydanticEvalsJudge` + `labels.label_of` -> `put`. Model
-  labels are counted SEPARATELY and never pass for human ones; `agreement` measures the strong model
-  against the human labels before any of its labels are trusted for a role.
-- **Seed the store** once from what exists: `judge_calibration.jsonl` (20 human verdicts with span
-  ids) -> `label-<role>` scores; `churn_golden_labeled.jsonl` (203) -> dataset
-  `golden:churn.extract`; then the jsonl files are deleted and their readers switched.
-- **Coverage** (`GET /llm/labels/coverage`): `labels.coverage` over the role registry
-  (`service/platform/llm_roles.py`, 34 roles) + `quant.autopsy_calibration` for trade.autopsy, and
-  `labels.agreement` per role.
+  (Gemini free tier: 20 requests/day/model, measured 2026-11-07; or a larger self-hosted model in
+  an A/B window, which evicts the small judge) through `PydanticEvalsJudge` + `labels.label_of`
+  -> `put`. Model labels are counted SEPARATELY and never pass for human ones; `agreement`
+  measures the strong model against the human labels before any of its labels are trusted for a
+  role.
+- **Seed the store** once from what exists: the judge-calibration JSONL (20 human verdicts with
+  span ids) -> `label-<role>` scores; the labelled extraction JSONL (203) -> dataset
+  `golden:extract.article`; then the jsonl files are deleted and their readers switched.
+- **Coverage** (a read endpoint): `labels.coverage` over the consumer's role registry (34 roles)
+  + the operator's review table for `review.postmortem`, and `labels.agreement` per role.
 
 ## Telemetry (what fails silently, where it lands, what watches it)
 
 | silent failure | lands in | watched from outside by |
 |---|---|---|
-| queue job stops running | `edge_llm_label_job_last_success_timestamp` stops moving | Prometheus alert `LlmLabelJobStale` (trade-infra, >36h) + the loop registry: the flow is registered as loop `llm-labels` in `docs/LEARNING-LOOPS.md`, so the `loop-stalled` watchdog reads it |
-| job runs but enqueues nothing / Langfuse refuses | `edge_llm_label_enqueued_total{role}` flat, outcome reason on the job row | same alert reads the per-run outcome; a `could_not_reach` outcome exits 2, never 0 |
-| labels stop arriving (nobody labels) | `edge_llm_labels{role,labeller}` flat | visible on the LLM page LABELS card (gap per role); not paged: an unlabelled day is the operator's choice |
-| a judge drifts from humans | `edge_llm_judge_agreement{role}` | the existing `edge_llm_judge_trusted` gate reads it instead of a hand flag |
+| queue job stops running | `llm_label_job_last_success_timestamp` stops moving | a Prometheus staleness alert (>36h) + the consumer's loop registry: the job is registered as a learning loop, so the registry's stalled-loop watchdog reads it |
+| job runs but enqueues nothing / Langfuse refuses | `llm_label_enqueued_total{role}` flat, outcome reason on the job row | same alert reads the per-run outcome; a `could_not_reach` outcome exits 2, never 0 |
+| labels stop arriving (nobody labels) | `llm_labels{role,labeller}` flat | visible on the UI's LABELS card (gap per role); not paged: an unlabelled day is the operator's choice |
+| a judge drifts from humans | `llm_judge_agreement{role}` | the existing judge-trusted gate reads it instead of a hand flag |
 
 ## UI
 
-trade-ui LLM page (`src/pages/Work.tsx`), GAUNTLET tab, a LABELS card beside the existing boards
-(`src/edge/LlmGauntletPanel.tsx`): per role human / model / judge counts, gap to target,
-judge-vs-human kappa when defined, and a link to the role's Langfuse annotation queue. The
-labelling itself happens in Langfuse's queue UI (no new UI is built for it).
+The consumer's LLM page gains a LABELS card beside its existing gauntlet boards: per role human /
+model / judge counts, gap to target, judge-vs-human kappa when defined, and a link to the role's
+Langfuse annotation queue. The labelling itself happens in Langfuse's queue UI (no new UI is
+built for it).
 
 ## PR plan
 
 1. llm-ports: `evals.labels`, `LabelStore` port, `LangfuseLabelStore`, `langfuse.experiments`, fake, guide, ADR-0010 ->
    release 1.5.0.
-2. trade-data: switch every generic duplicate to llm-ports and delete it (table above).
-3. trade-data: pin 1.5.0; label queue job + coverage endpoint + gauges + loop registration; seed
-   the store; Windmill flow.
-4. trade-infra: `LlmLabelJobStale` alert (+ promtool case).
-5. trade-ui: LABELS card.
-6. mattpc-llm-stack: fold `evals/` (dataset + graders in trade-data), keep the routing probe.
+2. The consumer: switch every generic duplicate to llm-ports and delete it (table above).
+3. The consumer: pin 1.5.0; label queue job + coverage endpoint + gauges + loop registration; seed
+   the store; the scheduled job.
+4. The operations stack: the label-job staleness alert (+ a promtool case).
+5. The consumer's UI: LABELS card.
+6. The local model host: fold its eval directory (dataset + graders in the consumer), keep the
+   routing probe.
 
 ### Deviations as built
 
-- **The web output checks became CALL graders, not `service/evals/web_graders.py`.** "Cites a
-  URL" and "no refusal" hold for any research tier, so they are generic: `cites_url` and
-  `no_refusal` in `llm_ports.call.graders` (1.8.0), with `cites_url` in `WEB_ONLY_GRADERS` so a
-  call without `web=True` drops it. Scoring every production reply at call time beats an offline
-  `GauntletEvaluator` pass over a sample, and the existing `LlmGraderFailureRate` rule watches it
-  with no new alert. trade-data's seven box-web structured roles carry them; before enabling,
-  14 days of live replies were measured: `narrative.research` 119/119 cited a URL, `event.brief`
-  0/9 (every stored brief has `sources = []`), a defect the grader now surfaces. "No filler" was
-  not generic enough to move; it stays a trade-data grader candidate.
+- **The web output checks became CALL graders, not consumer graders.** "Cites a URL" and "no
+  refusal" hold for any research tier, so they are generic: `cites_url` and `no_refusal` in
+  `llm_ports.call.graders` (1.8.0), with `cites_url` in `WEB_ONLY_GRADERS` so a call without
+  `web=True` drops it. Scoring every production reply at call time beats an offline
+  `GauntletEvaluator` pass over a sample, and the consumer's existing grader-failure-rate rule
+  watches it with no new alert. The consumer's seven web structured roles carry them; before
+  enabling, 14 days of live replies were measured: `research.web` 119/119 cited a URL,
+  `event.brief` 0/9 (every stored brief has `sources = []`), a defect the grader now surfaces.
+  "No filler" was not generic enough to move; it stays a consumer grader candidate.
 - **Golden-set seeding is `experiments.seed` (1.9.0)**, idempotent by item id, replacing the
   consumer's three hand-rolled dataset-item loops.
 - **Label names use `-`, not `:` (1.9.1).** Langfuse refuses a score-config name outside
@@ -273,7 +270,7 @@ labelling itself happens in Langfuse's queue UI (no new UI is built for it).
 
 ## Not in scope
 
-No fine-tuning or training run: the data comes first. No new judge model decision (a sibling
-session measures Gemini 3.6 Flash). `docs/LEARNING-LOOPS.md` is the platform's registry of
-learning loops (trading and LLM alike); it is not an eval system and is not merged into this one.
-The label loop is REGISTERED there as one row, which is what makes it watched.
+No fine-tuning or training run: the data comes first. No new judge model decision (measured
+separately). The consumer's learning-loop registry is the platform's list of learning loops (of
+every kind); it is not an eval system and is not merged into this one. The label loop is
+REGISTERED there as one row, which is what makes it watched.
