@@ -13,8 +13,8 @@ from tests.conftest import Role
 
 GRADERS = ("schema_complete", "numbers_from_inputs", "echo")
 ROLE = Role("test.graders", tier="local", max_tokens=5, graders=GRADERS)
-PROMPT = "spot 766.2 at the put_wall 765.0; the market rallied hard into the close on strong breadth today."
-COPIED = "The market rallied hard into the close on strong breadth today."
+PROMPT = "level 766.2 at the spillway 765.0; the river rose hard into the evening on heavy rain today."
+COPIED = "The river rose hard into the evening on heavy rain today."
 
 
 class _Note(BaseModel):
@@ -22,19 +22,19 @@ class _Note(BaseModel):
     keys: list[str]
 
 
-class _Level(BaseModel):
-    """A deep_extract.mentions row: the prompt orders null unless the advisor STATED the figure."""
+class _Line(BaseModel):
+    """An extracted row: the prompt orders null unless the source STATED the figure."""
 
-    ticker: str
-    entry_low: float | None = Field(default=None)
+    sku: str
+    unit_low: float | None = Field(default=None)
     note: str | None = None
 
 
-class _Call(BaseModel):
-    thesis: str
-    stop: Optional[float] = None  # noqa: UP045 -- the old spelling must read as nullable too
-    tickers: list[_Level]
-    hedge: _Level | None = None
+class _Order(BaseModel):
+    memo: str
+    cap: Optional[float] = None  # noqa: UP045 -- the old spelling must read as nullable too
+    lines: list[_Line]
+    backup: _Line | None = None
 
 
 class TestLeaves:
@@ -62,87 +62,85 @@ class TestEachGrader:
         assert not none.passed and none.value == 0.0
 
     def test_schema_complete_reads_a_null_on_a_nullable_field_as_an_answer(self) -> None:
-        # The alert this fixes: deep_extract.mentions / post.axes declared `entry_low: float | None`
-        # and ORDERED null when the advisor never said the number -- an honest reply failed by law.
-        ok = cg.schema_complete(PROMPT, _Level(ticker="SPY"), ROLE)
+        # The alert this fixes: two extraction roles declared `unit_low: float | None`
+        # and ORDERED null when the source never said the number -- an honest reply failed by law.
+        ok = cg.schema_complete(PROMPT, _Line(sku="A-1"), ROLE)
         assert (ok.passed, ok.value, ok.reason) == (True, 1.0, ""), ok.reason
         nested = cg.schema_complete(
-            PROMPT, _Call(thesis="t", tickers=[_Level(ticker="SPY", entry_low=1.0), _Level(ticker="QQQ")]), ROLE
+            PROMPT, _Order(memo="t", lines=[_Line(sku="A-1", unit_low=1.0), _Line(sku="B-2")]), ROLE
         )
         assert nested.passed and nested.value == 1.0, nested.reason
-        assert cg.nullable_paths(_Call) == {
-            "stop",
-            "tickers[].entry_low",
-            "tickers[].note",
-            "hedge",
-            "hedge.entry_low",
-            "hedge.note",
+        assert cg.nullable_paths(_Order) == {
+            "cap",
+            "lines[].unit_low",
+            "lines[].note",
+            "backup",
+            "backup.unit_low",
+            "backup.note",
         }
 
     def test_schema_complete_still_fails_a_null_on_a_required_field(self) -> None:
         # The annotation is the law: a REQUIRED field left None (model_construct skips validation,
         # as a grammar-parsed reply with a missing key would) is still unanswered.
-        bad = cg.schema_complete(PROMPT, _Level.model_construct(ticker=None, entry_low=None), ROLE)
-        assert not bad.passed and bad.reason == "empty: ['ticker']"
-        row = _Call.model_construct(thesis="t", stop=None, tickers=[_Level.model_construct(ticker=None)], hedge=None)
+        bad = cg.schema_complete(PROMPT, _Line.model_construct(sku=None, unit_low=None), ROLE)
+        assert not bad.passed and bad.reason == "empty: ['sku']"
+        row = _Order.model_construct(memo="t", cap=None, lines=[_Line.model_construct(sku=None)], backup=None)
         deep = cg.schema_complete(PROMPT, row, ROLE)
-        assert not deep.passed and deep.reason == "empty: ['tickers[0].ticker']", deep.reason
+        assert not deep.passed and deep.reason == "empty: ['lines[0].sku']", deep.reason
         # A dict carries no annotations, so a None in one is graded exactly as before.
-        plain = cg.schema_complete(PROMPT, {"ticker": "SPY", "entry_low": None}, ROLE)
-        assert not plain.passed and plain.value == 0.5 and plain.reason == "empty: ['entry_low']"
+        plain = cg.schema_complete(PROMPT, {"sku": "A-1", "unit_low": None}, ROLE)
+        assert not plain.passed and plain.value == 0.5 and plain.reason == "empty: ['unit_low']"
 
     def test_schema_complete_reads_a_dict_against_a_declared_model(self) -> None:
         # A strict grammar replies a DICT; the declared model supplies the answer paths it cannot carry.
         reply = {
-            "thesis": "t",
-            "stop": None,
-            "tickers": [{"ticker": "SPY", "entry_low": None, "note": None}],
-            "hedge": None,
+            "memo": "t",
+            "cap": None,
+            "lines": [{"sku": "A-1", "unit_low": None, "note": None}],
+            "backup": None,
         }
         assert not cg.schema_complete(PROMPT, reply, ROLE).passed, "undeclared: today's strict read"
-        ok = cg.schema_complete(PROMPT, reply, ROLE, model=_Call)
+        ok = cg.schema_complete(PROMPT, reply, ROLE, model=_Order)
         assert (ok.passed, ok.value, ok.reason) == (True, 1.0, ""), ok.reason
 
     def test_a_declared_model_still_fails_a_null_on_a_required_field_of_a_dict(self) -> None:
-        reply = {"thesis": "", "stop": None, "tickers": [{"ticker": None, "entry_low": None, "note": None}]}
-        bad = cg.schema_complete(PROMPT, reply, ROLE, model=_Call)
-        assert not bad.passed and bad.reason == "empty: ['thesis', 'tickers[0].ticker']", bad.reason
+        reply = {"memo": "", "cap": None, "lines": [{"sku": None, "unit_low": None, "note": None}]}
+        bad = cg.schema_complete(PROMPT, reply, ROLE, model=_Order)
+        assert not bad.passed and bad.reason == "empty: ['memo', 'lines[0].sku']", bad.reason
         assert bad.value == 0.6
 
     def test_named_paths_exempt_only_themselves(self) -> None:
         # A field typed nullable whose prompt never asks for null: the caller names the subset.
-        reply = {"thesis": "t", "stop": None, "tickers": [{"ticker": "SPY", "entry_low": None, "note": None}]}
-        some = cg.schema_complete(PROMPT, reply, ROLE, nullable={"tickers[].entry_low", "tickers[].note"})
-        assert not some.passed and some.reason == "empty: ['stop']", some.reason
-        assert cg.schema_complete(
-            PROMPT, reply, ROLE, nullable={"stop", "tickers[].entry_low", "tickers[].note"}
-        ).passed
-        both = cg.schema_complete(PROMPT, {"x": None, "stop": None}, ROLE, model=_Call, nullable={"x"})
+        reply = {"memo": "t", "cap": None, "lines": [{"sku": "A-1", "unit_low": None, "note": None}]}
+        some = cg.schema_complete(PROMPT, reply, ROLE, nullable={"lines[].unit_low", "lines[].note"})
+        assert not some.passed and some.reason == "empty: ['cap']", some.reason
+        assert cg.schema_complete(PROMPT, reply, ROLE, nullable={"cap", "lines[].unit_low", "lines[].note"}).passed
+        both = cg.schema_complete(PROMPT, {"x": None, "cap": None}, ROLE, model=_Order, nullable={"x"})
         assert both.passed, "model and named paths join"
 
     def test_a_declaration_replaces_a_pydantic_values_own_annotations(self) -> None:
         # Declared = the caller's whole answer set, on any value: an empty declaration is strict.
-        value = _Level(ticker="SPY")
+        value = _Line(sku="A-1")
         strict = cg.schema_complete(PROMPT, value, ROLE, nullable=())
-        assert not strict.passed and strict.reason == "empty: ['entry_low', 'note']", strict.reason
+        assert not strict.passed and strict.reason == "empty: ['unit_low', 'note']", strict.reason
 
     def test_a_bound_declaration_is_a_table_entry(self) -> None:
         from functools import partial
 
-        table = {**cg.GRADERS, "schema_complete": partial(cg.schema_complete, model=_Call)}
-        s = cg.score_one("schema_complete", PROMPT, {"thesis": "t", "stop": None, "tickers": []}, ROLE, table)
+        table = {**cg.GRADERS, "schema_complete": partial(cg.schema_complete, model=_Order)}
+        s = cg.score_one("schema_complete", PROMPT, {"memo": "t", "cap": None, "lines": []}, ROLE, table)
         assert s.passed, s.reason
         assert cg.GRADERS["schema_complete"] is cg.schema_complete, "the built-in table is untouched"
 
     def test_numbers_from_inputs(self) -> None:
-        ok = cg.numbers_from_inputs(PROMPT, {"why": "spot sat at 766.2 above 765.0"}, ROLE)
+        ok = cg.numbers_from_inputs(PROMPT, {"why": "level sat at 766.2 above 765.0"}, ROLE)
         assert ok.passed and ok.value == 0.0
-        bad = cg.numbers_from_inputs(PROMPT, {"why": "spot sat at 999 after a 42 point drop"}, ROLE)
+        bad = cg.numbers_from_inputs(PROMPT, {"why": "level sat at 999 after a 42 point drop"}, ROLE)
         assert not bad.passed and bad.value == 2.0 and "999" in bad.reason
 
     def test_numbers_from_inputs_licenses_one_input_value_shown_coarser_and_nothing_computed(self) -> None:
-        prompt = "realized_r 0.5918 | room_down 14.878 | net_gex -19813893517 | win_rate 0.7486 | vix 28.89"
-        rounded = {"why": "Realized 0.59R with 14.88 of room, -19.8B of gamma and a 75% win rate."}
+        prompt = "ratio_r 0.5918 | room_down 14.878 | net_flow -19813893517 | win_rate 0.7486 | gauge 28.89"
+        rounded = {"why": "Measured 0.59R with 14.88 of room, -19.8B of flow and a 75% win rate."}
         assert cg.numbers_from_inputs(prompt, rounded, ROLE).passed
         invented = cg.numbers_from_inputs(prompt, {"why": "Wait for a 15-minute retest below 28.00."}, ROLE)
         assert not invented.passed and invented.value == 2.0 and "['15', '28']" in invented.reason
@@ -151,15 +149,15 @@ class TestEachGrader:
         ("prompt", "reply", "named"),
         [
             # A level moved to a round figure is not a rounding of the input: 28.89 is 28.89 at two decimals.
-            ("vix 28.89 | spot 766.2", "Stand aside until VIX below 28.00 confirms.", "28"),
+            ("gauge 28.89 | level 766.2", "Hold off until the gauge reads below 28.00.", "28"),
             # A dropped digit is not a percent of the input: -26 is -26%, and -0.026 would be -2.6%.
-            ("pct_from_52w_high -26 | spot 766.2", "It sits -2.6% below its 52-week high.", "2.6"),
+            ("pct_from_52w_high -26 | level 766.2", "It sits -2.6% below its 52-week high.", "2.6"),
             # A bare whole number is never a rounding, and no input holds a 15.
-            ("realized_r 0.5918 | minutes_from_anchor -48.1", "Wait for a 15-minute retest.", "15"),
+            ("ratio_r 0.5918 | minutes_from_anchor -48.1", "Wait for a 15-minute recheck.", "15"),
         ],
     )
     def test_numbers_from_inputs_must_fail_fixtures(self, prompt: str, reply: str, named: str) -> None:
-        # The three sentences the licence must never pass, verbatim from live replies (2026-11-25).
+        # The three sentences the licence must never pass, shaped on live replies (2026-11-25).
         bad = cg.numbers_from_inputs(prompt, {"why": reply}, ROLE)
         assert not bad.passed and bad.value == 1.0, bad.reason
         assert f"'{named}'" in bad.reason, bad.reason
@@ -167,16 +165,16 @@ class TestEachGrader:
     def test_numbers_from_inputs_licenses_a_marked_whole_number_and_never_a_bare_one(self) -> None:
         # Rounding ONE input to fewer digits includes rounding it to none, but only where a percent
         # sign or a scale says which value is meant. Bare, "716" for 715.87 is an invented level.
-        prompt = "net_gex -19813893517 | win_rate 0.7486 | chg_pct 13.49 | put_wall 715.87"
-        marked = {"why": "Gamma is -20B, the win rate 75% and the move 13 percent."}
+        prompt = "net_flow -19813893517 | win_rate 0.7486 | chg_pct 13.49 | floor_mark 715.87"
+        marked = {"why": "Net flow is -20B, the win rate 75% and the move 13 percent."}
         assert cg.numbers_from_inputs(prompt, marked, ROLE).passed
-        bare = cg.numbers_from_inputs(prompt, {"why": "Support sits at 716 and the move was 13 wide."}, ROLE)
+        bare = cg.numbers_from_inputs(prompt, {"why": "The floor sits at 716 and the move was 13 wide."}, ROLE)
         assert not bare.passed and bare.value == 2.0 and "['13', '716']" in bare.reason, bare.reason
 
     def test_numbers_from_inputs_reads_a_spelled_number_as_the_writers_belts_do(self) -> None:
         # A digit-free grammar made the model SPELL it ("nine one point seven million"): no input
         # rendered that figure, and the per-call grader must agree with slots.belt about it.
-        spelled = cg.numbers_from_inputs(PROMPT, {"why": "spot sat seven points above the wall"}, ROLE)
+        spelled = cg.numbers_from_inputs(PROMPT, {"why": "level sat seven points above the spillway"}, ROLE)
         assert not spelled.passed and spelled.value == 1.0 and "seven" in spelled.reason
         # The prompt's own words license a word; a '%' in the prompt licenses 'percent'.
         ok = cg.numbers_from_inputs("nine voters, up 3% (three points)", {"why": "nine voted for three percent"}, ROLE)
@@ -184,7 +182,7 @@ class TestEachGrader:
         assert cg.numbers_from_inputs(PROMPT, {"why": "peak 766.20"}, ROLE).passed, "766.20 is 766.2 by value"
 
     def test_echo(self) -> None:
-        own = cg.echo(PROMPT, {"a": "Breadth was the tell and the dealer book was short gamma all session."}, ROLE)
+        own = cg.echo(PROMPT, {"a": "Rain was the tell and the upstream gauge read high all evening."}, ROLE)
         assert own.passed and own.value == 0.0
         bad = cg.echo(PROMPT, {"a": COPIED, "b": COPIED}, ROLE)
         assert not bad.passed and bad.value == 1.0 and "2/2 sentences copied" in bad.reason
@@ -263,7 +261,7 @@ class TestWebGraders:
 
 
 class TestGradersForInputs:
-    """Moved from trade-data's platform/call_graders (v0.9.0): the text-only exemption."""
+    """Moved from the first consumer's call graders (v0.9.0): the text-only exemption."""
 
     STRUCTURED = ("schema_complete", "numbers_from_inputs", "echo")
 

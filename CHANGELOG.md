@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The vocabulary gate covers everything published, not only the package.** A second
+  `pre-commit` pygrep hook, `no-market-vocabulary`, refuses market terms (exchange symbols, options
+  positioning words, a broker name) and the first consumer's repository and host names across
+  `src/llm_ports/`, `docs/`, `tests/`, `examples/`, `README.md`, `CHANGELOG.md`,
+  `CONTRIBUTING.md`, `CLAUDE.md` and `mkdocs.yml`. Its selftest
+  (`tests/contract/test_vocabulary_gate.py`) runs pre-commit's own engine: every line of a planted
+  fixture must go red, a list of near-misses must pass, the exclusion may name only that fixture,
+  and CI must invoke the hook.
+- Tests, examples and the design docs moved to neutral domains: fixtures read revenue, cities,
+  river levels and order lines; `docs/design/` and `docs/REDESIGN.md` describe "the consumer
+  application" in place of its file map. Every test pins the same outputs it pinned before.
+
 ## [1.32.0] - 2026-11-27
 
 ### Added
@@ -956,7 +970,7 @@ name without a leading underscore, `__all__` per package) is covered by semantic
 ### Changed
 
 - Development status is Production/Stable; the README installs without `--pre`.
-- No change was needed here to adopt rc1 in its first consumer (mjdevaccount/trade-data#2755).
+- No change was needed here to adopt rc1 in its first consumer.
 
 ## [1.0.0rc1] - 2026-11-03
 

@@ -1,5 +1,5 @@
 """chunking: the paragraph-aware overlapping chunker, its tight worst-case bound, and the hash-skip
-rule. Ported from trade-data tests/test_rag_text.py (the RAG index's chunker moved here, v0.9.0)."""
+rule. Ported from the first consumer's chunker tests (the RAG index's chunker moved here, v0.9.0)."""
 
 from __future__ import annotations
 

@@ -53,14 +53,14 @@ def test_exactly_one_model_source_is_required() -> None:
 
 
 async def test_a_valid_reply_is_ok_with_zero_retries() -> None:
-    model, calls = _replies(_j("SPY pinned"))
+    model, calls = _replies(_j("NYC rained"))
     res = await PydanticAIGenerator(model).generate(REQ, _Note)
-    assert res.outcome == "ok" and res.value == _Note(headline="SPY pinned", confidence=0.5)
+    assert res.outcome == "ok" and res.value == _Note(headline="NYC rained", confidence=0.5)
     assert res.retries == 0 and res.problems == () and len(calls) == 1
 
 
 async def test_a_validator_problem_re_asks_with_the_retry_message() -> None:
-    model, calls = _replies(_j(""), _j("QQQ leads"))
+    model, calls = _replies(_j(""), _j("SFO leads"))
     seen: list[str] = []
     res = await PydanticAIGenerator(model).generate(
         REQ,
@@ -68,7 +68,7 @@ async def test_a_validator_problem_re_asks_with_the_retry_message() -> None:
         validate=lambda n: ["empty headline"] if not n.headline else [],
         retry_message=lambda p: seen.append(p[0]) or "fix: " + p[0],
     )
-    assert res.outcome == "ok" and res.value is not None and res.value.headline == "QQQ leads"
+    assert res.outcome == "ok" and res.value is not None and res.value.headline == "SFO leads"
     assert res.retries == 1 and len(calls) == 2 and seen == ["empty headline"]
 
 

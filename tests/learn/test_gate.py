@@ -37,8 +37,8 @@ class TestClauses:
 
 class TestDecide:
     def test_every_clause_passing_is_pass(self) -> None:
-        v = g.decide("cal", [g.at_least("n", 300, 200, role="floor"), g.at_most("ece", 0.01, 0.05)], subject="SPY")
-        assert (v.decision, v.blocker, v.subject) == ("pass", None, "SPY")
+        v = g.decide("cal", [g.at_least("n", 300, 200, role="floor"), g.at_most("ece", 0.01, 0.05)], subject="NYC")
+        assert (v.decision, v.blocker, v.subject) == ("pass", None, "NYC")
         assert v.passed
 
     def test_a_failed_floor_is_insufficient_not_fail(self) -> None:
@@ -104,14 +104,14 @@ class TestDecide:
         assert v.decision == "could_not_run" and not v.passed
 
     def test_could_not_run_carries_its_reason(self) -> None:
-        v = g.could_not_run("cal", "store down", subject="SPY")
+        v = g.could_not_run("cal", "store down", subject="NYC")
         assert (v.decision, v.reason, v.clauses, v.blocker) == ("could_not_run", "store down", (), None)
 
 
 class TestRoundTrip:
     def test_a_verdict_survives_json(self) -> None:
         clauses = [g.at_least("n", 12, 200, role="floor"), g.check("ok", None), g.check("v", True, role="veto")]
-        v = g.decide("cal", clauses, subject="QQQ")
+        v = g.decide("cal", clauses, subject="SFO")
         assert Verdict.from_dict(json.loads(json.dumps(v.as_dict()))) == v
 
     def test_an_unknown_role_reads_as_bar(self) -> None:

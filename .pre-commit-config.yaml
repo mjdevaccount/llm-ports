@@ -11,3 +11,26 @@ repos:
         entry: 'EDGE|edge-host|\bbox[_-](?!chat")|Tradier|trade[-_.]data|narrator|\b\d+B\b|20\d\d-\d\d-\d\d'
         files: ^src/llm_ports/
         types: [python]
+      # Everything published (the package, the docs site, tests, examples, the changelog) uses
+      # neutral domains: no market vocabulary and no names from the first consumer's deployment.
+      # Dates and scale letters are allowed here (changelog headings, number-law fixtures).
+      # The entry is one verbose regex (`(?x)`: whitespace ignored, so a literal space is `\ `);
+      # the YAML folds it onto one line, so it carries no `#` comment. Selftest, must fire on a
+      # planted fixture and stay quiet on near-misses: tests/contract/test_vocabulary_gate.py.
+      - id: no-market-vocabulary
+        name: no market or deployment vocabulary in published files
+        language: pygrep
+        entry: >-
+          (?x)
+          (?<![A-Za-z])(SPY|QQQ|IWM|VIX)(?![A-Za-z])
+          | (?i:(?<![a-z])gex(?![a-z]))
+          | \bEDGE\b
+          | (?i:gamma[\ _-]?(exposure|flip|wall) | (short|long)[\ _-]gamma | \b(put|call)[\ _-]walls?\b)
+          | (?i:\bdealers?\b | \btradier\b | \btickers?\b | \b\d*dte\b)
+          | (?i:\btrade[-_.](data|ui|infra|quant|cascade)\b | \b(edge|home)[-_](host|ci|platform)\b)
+          | (?i:\bllm[-_]box\b | \bmatt-?pc\b | \bwindmill\b | tradingedge | \bte_dex\b | \bnarrator)
+          | (?i:\bfinance[-_]ops\b | \bwork-timeline\b | \bestate-roadmap\b)
+          | mjdevaccount/(?!llm-ports\b|ci-kit\b)
+        files: ^(src/llm_ports/|docs/|tests/|examples/|README\.md$|CHANGELOG\.md$|CONTRIBUTING\.md$|CLAUDE\.md$|mkdocs\.yml$)
+        exclude: ^tests/fixtures/vocabulary/planted\.txt$
+        types: [text]

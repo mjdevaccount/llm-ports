@@ -32,7 +32,7 @@ def test_loose_names_the_figure_so_a_retry_can_say_which() -> None:
 
 def test_problems_name_an_unknown_slot_a_stray_brace_and_a_value_cited_twice() -> None:
     assert slots.problems("in at {entry_px}", VALUES) == []
-    assert slots.problems("in at {strike}", VALUES) == ["unknown slot {strike}"]
+    assert slots.problems("in at {rebate}", VALUES) == ["unknown slot {rebate}"]
     assert slots.problems("in at {entry_px", VALUES) == ["a stray brace; write a slot as {id} or not at all"]
     assert slots.problems("{entry_px} then {entry_px}", VALUES) == [
         "cites {entry_px} twice; cite each value once, next to its name"

@@ -233,7 +233,7 @@ CLAUSES: list[tuple[str, list[Figure], list[Figure], list[str]]] = [
     ("3 a marker ends at an underscore", [fig("19813893517")], [fig("19.8", "B_")], []),
     ("3 the spellings are a closed table", [fig("20")], [fig("20", "MM")], []),
     ("4 the word after a rounding", [fig("0.5918")], [fig("0.6", " billion")], ["billion"]),
-    ("4 a label is no scale", [word("net_gex_bn"), fig("19.8")], [fig("19.8", "bn")], ["19.8bn"]),
+    ("4 a label is no scale", [word("net_flow_bn"), fig("19.8")], [fig("19.8", "bn")], ["19.8bn"]),
     ("4 a word the scan cannot read", [fig("20")], [fig("20", " billion_")], ["20 billion"]),
     ("5 a spelled number needs the prompt's words", [fig("3")], [word("three")], ["three"]),
     ("5 not a number: as printed only", [fig("1.2.3")], [fig("1.2.3", "B"), fig("1.2", "")], ["1.2"]),

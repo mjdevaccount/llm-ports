@@ -13,7 +13,7 @@ ADR-0003 licenses a figure in model output when an input rendered the same value
 right law where code prints every figure the model may use: a slot belt, a cited span. It is the
 wrong law for `call.graders.numbers_from_inputs`, which reads free prose written over raw inputs.
 A prompt that carries `realized_r 0.5918` gets "realized 0.59R" back; one that carries
-`net_gex -19813893517` gets "-19.8B of gamma". Both are the input, shown the way a person would
+`net_flow -19813893517` gets "-19.8B of flow". Both are the input, shown the way a person would
 show it, and both fail.
 
 Read against two weeks of replies on three roles that write a paragraph over a table of floats,
@@ -123,13 +123,13 @@ judgement of what a rounding is.
   input 15234567. Nothing on the page tells the two readings apart.
 - Bad: a scale the inputs spell another way is refused. "1M" for 999,999 fails (the run is not
   the value at that scale to the decimals written), and so does "19.8MM".
-- Bad: a scale the inputs carry in a LABEL is refused. Beside `{"net_gex_bn": -19.8}` or
+- Bad: a scale the inputs carry in a LABEL is refused. Beside `{"net_flow_bn": -19.8}` or
   "volume (millions): 20", the replies "-19.8bn" and "20 million" are named (`19.8bn`,
   `million`): the law reads a scale after the figure, never in a key or a heading, and so does
   not know these from "20B" beside a date's 20. Exact comparison passed them. A prompt that
   prints the unit on the value ("-19.8bn") is read; measure a role with labelled units in shadow.
-- Bad: any one input is a magnitude, a year or a strike included. Beside a date `2026-11-20`,
-  "about 2K contracts" is 2026 shown in thousands and passes, as "2 thousand" does. It is the
+- Bad: any one input is a magnitude, a year or a price level included. Beside a date `2026-11-20`,
+  "about 2K units" is 2026 shown in thousands and passes, as "2 thousand" does. It is the
   rounding rule working on a value the law cannot know is a date.
 - Bad: the scale spellings are a closed table. `$20m`, `20 bn`, `20MM`, `20 mln` and
   `20 billions` are read as no scale at all, so beside a date's `20` each passes as the run it
@@ -154,7 +154,7 @@ The law asks whether SOME input renders as the figure, so the more values a prom
 more made-up figures land on one. Measured on synthetic prompts of 150 values, 40,000 made-up
 figures per shape, the share that passes:
 
-| a made-up figure | 50 probabilities, 50 values in 1 to 100, 50 strikes | 150 values in 0 to 800 |
+| a made-up figure | 50 probabilities, 50 values in 1 to 100, 50 price levels | 150 values in 0 to 800 |
 |---|---|---|
 | a whole percentage, "37%" | 63% | 16% |
 | one decimal below 1, "0.4" | 98% | 1% |

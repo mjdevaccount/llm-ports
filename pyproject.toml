@@ -341,7 +341,7 @@ ignore_names = [
     "limiter", "pricer",
     "propose_new_texts", "date_from", "date_to", "question", "extras", "model_config", "create_score",
     # fields of test models that exist to shape a schema
-    "confidence", "conviction", "entry_low", "hedge", "stop", "summary", "thesis", "ticker", "tickers",
+    "confidence", "conviction", "unit_low", "backup", "cap", "summary", "memo", "sku", "lines",
     # a Protocol's call signature; a result field the retry layer fills; a function only mypy reads
     "__call__", "waited_s", "exhaustive",
     # pytest reads it by name (the root conftest turns on `pytester`)

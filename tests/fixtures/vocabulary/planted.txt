@@ -1,0 +1,39 @@
+SPY closed at 580.5
+QQQ leads
+IWM lags
+VIX near 28
+net_gex -19813893517
+GEX flipped
+the EDGE cockpit
+gamma exposure
+the gamma flip
+dealers were short gamma
+long gamma into the close
+the put wall at 765
+call_wall 790
+a dealer book
+Tradier chain
+ticker: A
+tickers[0]
+2 DTE
+0dte
+trade-data#2755
+trade_ui
+trade.infra
+trade-quant
+trade-cascade
+edge-host
+home_host
+edge-ci
+edge-platform
+llm-box
+mattpc-llm-stack
+Matt-PC
+a Windmill flow
+TradingEdge.Scraper
+te_dex rows
+the narrator role
+finance-ops
+work-timeline
+estate-roadmap
+mjdevaccount/home-host

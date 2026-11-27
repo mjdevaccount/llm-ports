@@ -20,7 +20,7 @@ class Mean:
     bar: float = 0.0
     fail_at: str = ""
     kind: str = "mean"
-    subject: str = "SPY"
+    subject: str = "NYC"
     params: Mapping[str, Any] = field(default_factory=lambda: {"window": 3})
     applied: list[str] = field(default_factory=list[str])
 
@@ -60,7 +60,7 @@ async def test_a_passing_run_records_verdict_model_and_metrics() -> None:
     got = await run(Mean([1.0, 2.0, 3.0]), ledger, clock=_clock())
     assert (got.verdict.decision, got.recorded.ok, got.seconds) == ("pass", True, 0.25)
     (row,) = ledger.rows
-    assert (row.kind, row.subject, row.params) == ("mean", "SPY", {"window": 3})
+    assert (row.kind, row.subject, row.params) == ("mean", "NYC", {"window": 3})
     assert row.metrics["learn_model"] == {"mean": 2.0}, "a reserved key replaces the fit's metric of the same name"
     assert row.metrics["verdict"] == "kept", "a consumer's own verdict key is never touched"
     assert "gate" not in row.metrics
@@ -119,10 +119,10 @@ async def test_a_loop_may_choose_the_unevaluated_policy() -> None:
 
 async def test_record_writes_a_verdict_row_outside_a_loop() -> None:
     ledger = MemoryRunLedger()
-    v = g.decide("card-system", [g.check("sealed_gate_passed", True)], subject="SPY")
+    v = g.decide("card-system", [g.check("sealed_gate_passed", True)], subject="NYC")
     got = await record(ledger, "card_system", v, metrics={"n": 4})
     (row,) = ledger.rows
-    assert got.ok and row.subject == "SPY" and row.metrics[VERDICT_KEY] == v.as_dict() and row.verdict == v
+    assert got.ok and row.subject == "NYC" and row.metrics[VERDICT_KEY] == v.as_dict() and row.verdict == v
     assert (await record(_Raising(), "k", v)).outcome == "unavailable"
 
 
@@ -183,7 +183,7 @@ async def test_a_loop_attribute_that_raises_is_a_recorded_could_not_run() -> Non
     got = await run(_BadParams(Mean([1.0, 2.0, 3.0])), ledger)
     assert got.verdict.decision == "could_not_run"
     assert got.verdict.reason.startswith("loop: RuntimeError: config gone")
-    assert (got.kind, got.subject, got.applied) == ("mean", "SPY", "")
+    assert (got.kind, got.subject, got.applied) == ("mean", "NYC", "")
     (row,) = ledger.rows
     assert row.decision == "could_not_run"
 
@@ -220,7 +220,7 @@ async def test_as_dict_carries_the_verdict_the_row_and_the_fit() -> None:
     body = got.as_dict()
     assert body == {
         "kind": "mean",
-        "subject": "SPY",
+        "subject": "NYC",
         "decision": "insufficient",
         "reason": got.verdict.reason,
         "blocker": "n",

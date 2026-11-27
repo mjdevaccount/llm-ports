@@ -28,8 +28,9 @@ auditing why it was written.
    its own sentence. Capitals are for constants and acronyms.
 4. **Neutral examples.** Orders, documents, tickets, invoices.
 
-`ruff` enforces the Google layout (`D` rules). A `pre-commit` hook (`.pre-commit-config.yaml`)
-rejects deployment vocabulary in `src/llm_ports/`.
+`ruff` enforces the Google layout (`D` rules). Two `pre-commit` hooks (`.pre-commit-config.yaml`)
+reject deployment vocabulary in `src/llm_ports/`, and market or deployment vocabulary in every
+published file (the package, `docs/`, `tests/`, `examples/`, the README and the changelog).
 
 ## Where history goes
 
