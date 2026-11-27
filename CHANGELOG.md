@@ -7,6 +7,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-11-27
+
+### Added
+
+- **`evals.claim_judge`: a judge asked one claim at a time** (ADR-0031). `grade(reply, input,
+  judge=, policy=)` decomposes the reply, settles in code what it can, asks the judge about each
+  remaining claim in its own call, holds every verdict to a quote from the facts and applies the
+  ADR-0029 case rule with abstention (`aggregate`, `CaseRuling.counts()`). `Policy` is the
+  consumer's field contract (`kind_of`, `material_of`, `question_of`, `pre`, `allowed`).
+  `GenerateClaimJudge` renders the consumer's claim pack (`claim_slots`, shared prefix first) and
+  calls the consumer's `generate` under a per-question grammar (`verdict_schema`: a closed-set
+  value or a stated absence is asked only whether a fact contradicts it). `read_verdict` abstains
+  on a quote that is not in the facts and on a `contradicted` with no quote.
+- **`evals.decompose`, the pure half.** `leaves` (one claim per JSON scalar at its path, one per
+  prose sentence), `facts_from_text` (the Input numbered `F1`, ...), `occurs` (whole words; a
+  value of `SHORT` characters or fewer matched as written), `prematch` (rules only `supported`: a
+  verbatim `quote`/`extract` value, or a figure the number law licenses), `enums` (allowed values
+  per field from a JSON schema, `$ref`-aware).
+- Measured before release on one consumer's 31-case gold set and local judge: case kappa 0.10 ->
+  0.55 [0.23, 0.87], in-sample (ADR-0031 has the table and why it is not yet a proven gain).
+- Example `examples/claim_judge/` and the "Judging claim by claim" section of the claim-grounding
+  guide.
+
 ## [1.31.0] - 2026-11-26
 
 ### Fixed

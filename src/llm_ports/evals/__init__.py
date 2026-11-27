@@ -1,9 +1,19 @@
-"""Evaluation: the board, the sampled judge, judge calibration, golden-set runs, labelled data and claim refutation.
+"""Evaluation: the board, the judges (sampled, and claim by claim), calibration, golden sets, labels, refutation.
 
-`GauntletEvaluator`, `judge`, `calibration`, `golden`, `labels`, `refute`.
+`GauntletEvaluator`, `judge`, `calibration`, `golden`, `labels`, `refute`, `decompose`, `claim_judge`.
 """
 
-from llm_ports.evals import calibration, golden, judge, labels, refute
+from llm_ports.evals import calibration, claim_judge, decompose, golden, judge, labels, refute
 from llm_ports.evals._gauntlet import BOARD_EXAMPLES, GauntletEvaluator
 
-__all__ = ["BOARD_EXAMPLES", "GauntletEvaluator", "calibration", "golden", "judge", "labels", "refute"]
+__all__ = [
+    "BOARD_EXAMPLES",
+    "GauntletEvaluator",
+    "calibration",
+    "claim_judge",
+    "decompose",
+    "golden",
+    "judge",
+    "labels",
+    "refute",
+]

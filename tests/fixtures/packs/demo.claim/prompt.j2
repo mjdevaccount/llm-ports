@@ -1,0 +1,6 @@
+{{ context }}
+FACTS:
+{{ facts }}
+CLAIM {{ field }} = {{ value }} ({{ kind }}, {{ question }})
+{% if hints %}{{ hints }}
+{% endif %}Answer one of: {{ labels }}; quote at most {{ quote_chars }} chars.

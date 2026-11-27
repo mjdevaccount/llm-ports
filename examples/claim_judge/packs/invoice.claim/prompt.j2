@@ -1,0 +1,19 @@
+You check ONE claim from a model's reply against the numbered facts of the Input that model was given. The facts are the only evidence.
+
+{{ context }}
+FACTS:
+{{ facts }}
+
+CLAIM
+field: {{ field }}
+value: {{ value }}
+{% if hints %}What code already checked:
+{{ hints }}
+{% endif %}
+{% if question == "contradiction" -%}
+QUESTION: does any fact CONTRADICT this value? A fact that does not mention it is not a contradiction.
+{%- else -%}
+QUESTION: is the claim supported (a fact states it), derived (it follows by a plain step), not_in_input (the reply added it) or contradicted (a fact states otherwise)?
+{%- endif %}
+
+Reply in JSON: "fact_ids", "quote" (exact words from one fact, at most {{ quote_chars }} characters, "" when none decides it), "label" (one of: {{ labels }}), "reason".
