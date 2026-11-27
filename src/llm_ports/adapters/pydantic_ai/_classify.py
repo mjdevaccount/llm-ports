@@ -16,6 +16,7 @@ own categories as step 4, walking the whole exception chain:
 | `RunCancelled` (the application cancelled the run), `UsageLimitExceeded`, `ConcurrencyLimitExceeded` (the agent's own queue is full) | `caller_limit` |
 | `ModelConnectionError` | `transport`, with its phase |
 | `ModelServerError`, `ModelUnavailableError` | `server` |
+| `ModelEmptyResponseError` (pydantic-ai 2.75+: a 200 with `choices: []`) | `malformed_response`, retryable |
 | `ContentFilterError` | `refused` |
 | `ModelRequestRejectedError` (other) | `bad_request`, or `context_overflow` when its code says so |
 | `UnexpectedModelBehavior` (other) | `refused` on a refusal, `truncated` on a length finish, else `invalid_output` |
@@ -39,6 +40,7 @@ from llm_ports.ports import Failure, FailureKind, Outcome, Phase, UnifiedFinish,
 from llm_ports.ports.outcomes import failure_reason
 
 with extra("pydantic-ai"):
+    import pydantic_ai.exceptions as _pai_exc
     from pydantic_ai.exceptions import (
         ConcurrencyLimitExceeded,
         ContentFilterError,
@@ -63,6 +65,11 @@ with extra("pydantic-ai"):
         UserError,
     )
 
+#: pydantic-ai >= 2.75 names the empty reply (a 200 with `choices: []`); below it the same reply
+#: reaches step 9 as an IndexError raised in the provider client. Looked up, not imported, so the
+#: `>=2.64` floor and the newest release type-check alike.
+_EMPTY_RESPONSE: type[BaseException] | None = getattr(_pai_exc, "ModelEmptyResponseError", None)
+
 #: The OpenAI-wire finish reasons and what each means; anything else is `other`. `tool_call` is
 #: pydantic-ai's own reading, met when a response came through the framework rather than the wire.
 OPENAI_FINISH: Mapping[str, UnifiedFinish] = {
@@ -77,6 +84,9 @@ OPENAI_FINISH: Mapping[str, UnifiedFinish] = {
 
 #: pydantic-ai's error categories, most specific first (a subclass precedes its base).
 _CATEGORIES: tuple[tuple[type[BaseException], FailureKind], ...] = (
+    # Before every base it shares (ModelAPIError, UnexpectedModelBehavior): an empty 200 is the
+    # provider's malformed reply, retryable, never the caller's `invalid_output`.
+    *(((_EMPTY_RESPONSE, "malformed_response"),) if _EMPTY_RESPONSE is not None else ()),
     (ModelRateLimitError, "rate_limited"),
     (ModelQuotaExceededError, "quota"),
     (ModelOverloadedError, "overloaded"),
