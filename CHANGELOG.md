@@ -7,6 +7,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-11-27
+
+### Added
+
+- **`call.graders.ungrounded_refusals(text)`**: the refusal phrases in a text, or none when the
+  text is grounded (it cites a URL and states at least `GROUNDED_MIN_FIGURES` distinct figures
+  outside its URLs). Pure; the check a research loop runs on a final answer before accepting it.
+
+### Changed
+
+- **`no_refusal` judges the reply whole through `ungrounded_refusals`.** A grounded reply that
+  hedges ("please check the source") now passes; measured on a research loop, the phrases-only
+  check flagged 4 of 4 grounded answers, the grounded override 1 of 4.
+- **The refusal phrasebook covers the punts it missed**: "I don't have enough/current ...",
+  "as of my last update", "unable to find/determine", "I cannot/am not able to determine, find,
+  provide", "the search did not return", "no results were found". "Cannot confirm" and "no data
+  was available" stay out: a grounded reply says both about a gap.
+
 ## [1.33.0] - 2026-11-27
 
 ### Added

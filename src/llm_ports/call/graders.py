@@ -64,15 +64,24 @@ _WS = re.compile(r"\s+")
 _INDEX = re.compile(r"\[\d+\]")  # `items[3].price` -> `items[].price`: the field, not the row
 _URL = re.compile(r"https?://[^\s)\]>\"'`]+")
 #: Whole-claim refusal phrases; kept narrow so a stray word in honest prose never matches.
+#: "cannot confirm" is left out on purpose: a grounded reply says it about one disputed figure.
+#: So is "no data was available": that is how an honest reply names a gap in its sources.
 _REFUSAL = re.compile(
     r"\b(?:i (?:do not|don'?t|cannot|can'?t) (?:have )?(?:access|browse|real-?time)"
-    r"|unable to (?:provide|retrieve|access|browse)"
-    r"|as of my (?:last )?(?:training|knowledge)"
+    r"|i (?:do not|don'?t) have (?:enough|current|up-to-date)"
+    r"|i (?:cannot|can'?t|am not able to) (?:determine|find|provide)"
+    r"|unable to (?:provide|retrieve|access|browse|find|determine)"
+    r"|as of my (?:last )?(?:training|knowledge|update)"
     r"|my (?:training|knowledge) (?:data|cutoff)"
+    r"|(?:the )?search (?:did not|didn'?t) return"
+    r"|no (?:relevant |specific |useful )?results? (?:were |was )?(?:found|returned)"
     r"|please (?:check|consult|refer to)"
     r"|recommend (?:checking|consulting|visiting))\b",
     re.I,
 )
+#: A reply that cites a URL and carries at least this many distinct figures is an answer,
+#: however much it hedges, so its refusal phrases are not counted (`ungrounded_refusals`).
+GROUNDED_MIN_FIGURES = 3
 
 
 @dataclass(frozen=True)
@@ -311,9 +320,28 @@ def cites_url(_prompt: str, value: Any, _role: Role) -> CallScore:
     return CallScore("cites_url", float(len(urls)), bool(urls), "" if urls else "the reply cites no URL")
 
 
+def ungrounded_refusals(text: str) -> list[str]:
+    """Return the refusal phrases in `text`, or none when the text is grounded.
+
+    Grounded means it cites at least one http(s) URL and carries at least
+    `GROUNDED_MIN_FIGURES` distinct figures outside its URLs. Such a reply is an answer
+    that hedges ("please check the source for the full table"), not a refusal; scoring it
+    by phrases alone flags it. Text with no URL, or fewer figures, is judged by the
+    phrases. Pure: no model, no I/O.
+    """
+    text = text or ""
+    if _URL.search(text) and len(digits(_URL.sub(" ", text))) >= GROUNDED_MIN_FIGURES:
+        return []
+    return [m.group(0) for m in _REFUSAL.finditer(text)]
+
+
 def no_refusal(_prompt: str, value: Any, _role: Role) -> CallScore:
-    """Count the ungrounded-refusal phrases in the reply's prose. Passes only at zero."""
-    hits = [m.group(0) for s in prose(value) for m in _REFUSAL.finditer(s)]
+    """Count the ungrounded refusal phrases in the reply's prose. Passes only at zero.
+
+    The reply is judged whole (`ungrounded_refusals` over all its strings joined), so a URL in
+    one field and the figures in another still make it grounded.
+    """
+    hits = ungrounded_refusals("\n".join(prose(value)))
     return CallScore("no_refusal", float(len(hits)), not hits, f"refusal: {hits[:2]}" if hits else "")
 
 
@@ -404,6 +432,7 @@ __all__ = [
     "ECHO_MAX_SHARE",
     "ECHO_MIN_CHARS",
     "GRADERS",
+    "GROUNDED_MIN_FIGURES",
     "NULLISH",
     "TEXT_ONLY_GRADERS",
     "WEB_ONLY_GRADERS",
@@ -423,4 +452,5 @@ __all__ = [
     "schema_complete",
     "score_all",
     "score_one",
+    "ungrounded_refusals",
 ]

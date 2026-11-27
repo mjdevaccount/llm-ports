@@ -259,6 +259,53 @@ class TestWebGraders:
         s = cg.no_refusal("", {"summary": "The sources do not cover the guidance cut; access fees rose 3%."}, ROLE)
         assert (s.value, s.passed) == (0.0, True)
 
+    def test_no_refusal_fires_on_the_punts_the_old_phrasebook_missed(self) -> None:
+        """MUST FIRE: each was a measured punt that the narrower phrasebook let through."""
+        for text in (
+            "I don't have enough information to answer that.",
+            "I do not have current figures for this.",
+            "As of my last update, I cannot say.",
+            "I was unable to find the release.",
+            "I am unable to determine the cause.",
+            "I cannot determine which version shipped.",
+            "I am not able to provide a figure.",
+            "The search did not return anything useful.",
+            "No relevant results were found.",
+        ):
+            s = cg.no_refusal("", {"summary": text}, ROLE)
+            assert not s.passed and s.value >= 1, text
+
+    def test_no_refusal_passes_honest_hedges(self) -> None:
+        """MUST NOT FIRE: naming a gap or an unconfirmed figure is grounded prose, not a refusal."""
+        for text in (
+            "I cannot confirm the second figure; the two sources disagree.",
+            "No data was available for the third quarter, so it is left out.",
+            "The page does not state the date.",
+        ):
+            s = cg.no_refusal("", {"summary": text}, ROLE)
+            assert (s.value, s.passed) == (0.0, True), text
+
+    def test_a_grounded_reply_is_not_scored_by_its_hedges(self) -> None:
+        """A URL plus three distinct figures is an answer; its "please check" is a hedge."""
+        text = "Revenue was 12.4, margin 31% and units 870 (https://example.com/q3). Please check the source."
+        assert cg.ungrounded_refusals(text) == []
+        s = cg.no_refusal("", {"summary": text}, ROLE)
+        assert (s.value, s.passed) == (0.0, True)
+
+    def test_grounding_is_judged_over_the_whole_reply(self) -> None:
+        """The URL in one field and the figures in another still ground the reply."""
+        value = {"source": "https://example.com/r", "summary": "Rose 4%, to 210, from 198. Please check."}
+        assert cg.no_refusal("", value, ROLE).passed
+
+    def test_figures_inside_the_url_do_not_ground_it(self) -> None:
+        """MUST FIRE: the digits of a URL are not figures the reply states."""
+        text = "Please check https://example.com/2026/11/27/item-4410 for details."
+        assert cg.ungrounded_refusals(text) == ["Please check"]
+
+    def test_a_url_with_too_few_figures_is_still_a_refusal(self) -> None:
+        text = "I am unable to provide the total; see https://example.com/r for 2 figures."
+        assert cg.ungrounded_refusals(text) == ["unable to provide"]
+
 
 class TestGradersForInputs:
     """Moved from the first consumer's call graders (v0.9.0): the text-only exemption."""
