@@ -1,5 +1,5 @@
 """pydantic_ai_replay: record once, replay by prompt key, refuse a prompt never recorded. Moved from
-trade-data's evals/recorded_model.py (v0.9.0); the key spelling is FROZEN (recorded golden sets
+the first consumer's recorded-model helper (v0.9.0); the key spelling is FROZEN (recorded golden sets
 on disk are keyed by it)."""
 
 from __future__ import annotations

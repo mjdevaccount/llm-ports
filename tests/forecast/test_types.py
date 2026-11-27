@@ -12,11 +12,11 @@ T0 = datetime(2026, 1, 5, 14, 30, tzinfo=UTC)
 def make(**kw: object) -> Forecast:
     base: dict[str, object] = {
         "author": "author-a",
-        "subject": "SPY",
+        "subject": "river-level",
         "kind": "direction",
         "forecast_time": T0,
         "resolve_time": T0 + timedelta(days=1),
-        "text": "SPY likely higher into Friday",
+        "text": "The river likely higher into Friday",
         "hedge": "likely",
     }
     base.update(kw)

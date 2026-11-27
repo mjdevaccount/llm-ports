@@ -144,7 +144,7 @@ def test_construction_needs_a_url_and_a_model() -> None:
 async def test_the_shipped_rerankers_satisfy_the_port() -> None:
     assert isinstance(HttpReranker(URL, "m"), ports.Reranker)
     assert isinstance(StubReranker(), ports.Reranker)
-    res = await StubReranker().rerank("spy gamma", ["spy gamma flip", "weather", "gamma"])
+    res = await StubReranker().rerank("rain gauge", ["rain gauge reading", "traffic", "gauge"])
     assert res.scores == (2.0, 0.0, 1.0)
     assert (await StubReranker(fail="unavailable").rerank("q", ["d"])).outcome == "unavailable"
 

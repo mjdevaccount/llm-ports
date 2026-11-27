@@ -168,18 +168,18 @@ async def test_rows_land_as_mlflow_runs(ledger: MlflowRunLedger, client: MlflowC
         "huge": 10**400,
         VERDICT_KEY: {"decision": "pass"},
     }
-    wrote = await ledger.append("land", subject="SPY", params={**many, **odd, "obj": {"a": 1}}, metrics=metrics)
+    wrote = await ledger.append("land", subject="NYC", params={**many, **odd, "obj": {"a": 1}}, metrics=metrics)
     assert wrote.ok and wrote.ref
     got = client.get_run(wrote.ref)
     assert got.info.status == "FINISHED"
     assert got.data.metrics == {"n": 3.0, "err": 0.5}
     assert set(got.data.params) == set(many)
-    assert got.data.tags["llm_ports.subject"] == "SPY" and got.data.tags["llm_ports.decision"] == "pass"
+    assert got.data.tags["llm_ports.subject"] == "NYC" and got.data.tags["llm_ports.decision"] == "pass"
     assert client.get_experiment(got.info.experiment_id).name == "t/land"
-    row = (await ledger.latest("land", subject="SPY", decisions=("pass",))).row
+    row = (await ledger.latest("land", subject="NYC", decisions=("pass",))).row
     assert row is not None and row.ref == wrote.ref and row.params["obj"] == {"a": 1} and row.params["a//b"] == 1
     assert row.metrics["huge"] == 10**400
-    assert (await ledger.latest("land", subject="QQQ")).row is None
+    assert (await ledger.latest("land", subject="SFO")).row is None
 
 
 async def test_a_large_row_spans_parts_and_many_metrics_span_batches(ledger: MlflowRunLedger) -> None:

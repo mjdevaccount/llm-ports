@@ -17,11 +17,11 @@ family (`extra_body.chat_template_kwargs`), so a model that spells it differentl
 listed. Where a model is served, and with which key, lived in the consumer's wiring code, outside
 the reviewed table.
 
-The 1.22 pack loader (`load_packs`) shared a defect class with every plugin loader the estate had
+The 1.22 pack loader (`load_packs`) shared a defect class with every plugin loader the consumer had
 reviewed: it never raised, so a pack that failed to import was a log line and the scheduler ran
 without it; load order followed install order; an equal re-declaration with a different handler
 replaced the held one silently; and a misspelled hook name loaded as a plugin that did nothing.
-Providers by kind are the second entry-point group, and the third use of the estate's plugin
+Providers by kind are the second entry-point group, and the third use of the consumer's plugin
 contract, so they and packs should share one loader that fails loudly.
 
 ## Decision

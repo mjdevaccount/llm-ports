@@ -175,7 +175,7 @@ async def test_a_tier_refused_by_a_gate_reports_its_scores_before_the_fallback_a
     async def on_scores(r: roles.Role, scores: tuple[Any, ...]) -> None:
         noted.append((r.name, scores[0].reason))
 
-    res = await generate(role, prompt="room_down 14.878", generator=gen, hooks=Hooks(on_scores=on_scores))
+    res = await generate(role, prompt="headroom 14.878", generator=gen, hooks=Hooks(on_scores=on_scores))
     assert res.outcome == "ok" and res.answered is not None and res.answered.tier == "cloud"
     assert noted == [("t.fallback", "numbers no input rendered: ['15']"), ("t.fallback", "")]
     assert [(a.tier, a.failure.kind) for a in res.attempts] == [("local", "invalid_output")]
@@ -193,6 +193,6 @@ async def test_the_last_tier_of_a_chain_is_reported_once_even_when_its_refusal_i
     async def on_scores(_r: roles.Role, scores: tuple[Any, ...]) -> None:
         noted.append(scores[0].reason)
 
-    res = await generate(role, prompt="room_down 14.878", generator=gen, hooks=Hooks(on_scores=on_scores))
+    res = await generate(role, prompt="headroom 14.878", generator=gen, hooks=Hooks(on_scores=on_scores))
     assert res.outcome == "invalid" and res.answered is not None and res.answered.tier == "cloud"
     assert noted == ["numbers no input rendered: ['15']", "numbers no input rendered: ['30']"], "each tier once"

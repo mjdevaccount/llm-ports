@@ -1,8 +1,8 @@
 # pr-autoupdate -- merge main into the NEXT armed PR in line (a serial queue, below), on every push
-# to main and whenever the ci workflow finishes. The estate's caller shape (trade-data, home-host,
-# edge-host) over ci-kit's reusable pr-autoupdate.yml; ci-kit declares the secrets by its own names,
+# to main and whenever the ci workflow finishes. The owner's shared caller shape over ci-kit's
+# reusable pr-autoupdate.yml; ci-kit declares the secrets by its own names,
 # so they are MAPPED below -- `secrets: inherit` only works when the caller's names match.
-# Moved off edge-ci's reusable (its old home, update-everything only) 2026-11-14.
+# Moved off an older reusable (update-everything only) 2026-11-14.
 #
 # It is what makes "require branches to be up to date" (strict protection) affordable: strict with
 # nothing updating branches stalls every armed PR BEHIND. A conflicting PR gets label `conflict`
@@ -25,8 +25,8 @@ on:
     workflows: [ci]
     types: [completed]
   # ARMING STARTS A PASS (ci-kit v1.32.0): enabling auto-merge is neither a push nor a CI run, so a
-  # newly armed PR waited for the next one (Scraper#161, home-host#245, trade-infra#888 sat until a
-  # hand dispatch, 2026-11-14). pull_request_target runs THIS file from the base branch with its
+  # newly armed PR waited for the next one (three PRs in sibling repos sat until a hand
+  # dispatch, 2026-11-14). pull_request_target runs THIS file from the base branch with its
   # secrets, and the reusable checks out no PR code; the job guard below refuses a fork's PR.
   pull_request_target: # zizmor: ignore[dangerous-triggers] -- base-branch file, no PR checkout, forks refused
     types: [auto_merge_enabled]
@@ -58,7 +58,7 @@ jobs:
           && github.event.pull_request.head.repo.full_name == github.repository)
     uses: mjdevaccount/ci-kit/.github/workflows/pr-autoupdate.yml@v1
     with:
-      # SERIAL QUEUE (operator, 2026-11-14: one PR at a time per repo; trade-data's shape since
+      # SERIAL QUEUE (owner, 2026-11-14: one PR at a time per repo; a sibling repo's shape since
       # 2026-10-24): one armed PR tested against current main at a time, lowest PR number first; a
       # PR whose own required checks are red or running is held. Updating every armed PR on every
       # push re-ran CI on all of them for one merge -- under strict only ONE PR merges per main sha.

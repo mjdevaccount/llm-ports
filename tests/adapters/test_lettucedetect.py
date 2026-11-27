@@ -13,16 +13,16 @@ from llm_ports.grounding import NumberLawGrounder
 from llm_ports.ports import Chunk, Claim, Grounder
 from llm_ports.testing import StubDetector
 
-SPAN = Chunk(id="a", text="SPY closed at 580.5", title="Close")
+SPAN = Chunk(id="a", text="Net closed at 580.5", title="Report")
 
 
 def test_supported_when_no_span_is_flagged() -> None:
     fake = StubDetector()
-    v = lg.LettuceDetectGrounder(fake).verdict(Claim("SPY at 580.5", ("a",)), [SPAN])
+    v = lg.LettuceDetectGrounder(fake).verdict(Claim("Net at 580.5", ("a",)), [SPAN])
     assert v.supported is True and v.score == 1.0 and v.checker == "lettucedetect"
     assert fake.calls[0] == {
-        "context": ["Close: SPY closed at 580.5"],
-        "answer": "SPY at 580.5",
+        "context": ["Report: Net closed at 580.5"],
+        "answer": "Net at 580.5",
         "output_format": "spans",
     }
 
@@ -30,8 +30,8 @@ def test_supported_when_no_span_is_flagged() -> None:
 def test_title_is_part_of_the_premise_like_the_number_law() -> None:
     """`numbers.uncited` counts a digit in a span's TITLE as cited, so the model must read the
     title too or two Grounders disagree on the same Chunk."""
-    chunk = Chunk(id="t", title="SPY 580 close", text="SPY closed flat")
-    claim = Claim("SPY at 580", ("t",))
+    chunk = Chunk(id="t", title="Net 580 report", text="Net closed flat")
+    claim = Claim("Net at 580", ("t",))
     assert NumberLawGrounder().verdict(claim, [chunk]).supported is True
     assert lg.LettuceDetectGrounder(StubDetector()).verdict(claim, [chunk]).supported is True
     fake = StubDetector()
@@ -47,18 +47,18 @@ def test_a_flagged_span_without_confidence_has_no_score_not_a_perfect_one() -> N
         def predict(self, *, context: list[str], answer: str, output_format: str) -> list[dict[str, Any]]:
             return [{"text": "581", "start": 7, "end": 10}]
 
-    v = lg.LettuceDetectGrounder(NoConfidence()).verdict(Claim("SPY at 581", ("a",)), [SPAN])
+    v = lg.LettuceDetectGrounder(NoConfidence()).verdict(Claim("Net at 581", ("a",)), [SPAN])
     assert v.supported is False and v.score is None and "581" in v.reason
 
 
 def test_unsupported_names_the_span_and_scores_one_minus_worst() -> None:
-    v = lg.LettuceDetectGrounder(StubDetector()).verdict(Claim("SPY at 581", ("a",)), [SPAN])
+    v = lg.LettuceDetectGrounder(StubDetector()).verdict(Claim("Net at 581", ("a",)), [SPAN])
     assert v.supported is False and "581" in v.reason and v.score == pytest.approx(0.1)
 
 
 def test_no_spans_is_never_supported_and_never_calls_the_model() -> None:
     fake = StubDetector()
-    v = lg.LettuceDetectGrounder(fake).verdict(Claim("SPY at 580.5"), [])
+    v = lg.LettuceDetectGrounder(fake).verdict(Claim("Net at 580.5"), [])
     assert v.supported is False and fake.calls == []
 
 

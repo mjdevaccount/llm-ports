@@ -14,7 +14,7 @@ import pytest
 from llm_ports.adapters.http import grounder as gh
 from llm_ports.ports import Chunk, Claim, Grounder
 
-SPAN = Chunk(id="a", text="SPY closed at 580.5", title="Close")
+SPAN = Chunk(id="a", text="Net closed at 580.5", title="Report")
 
 
 def _client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
@@ -33,13 +33,13 @@ def test_posts_the_claim_and_spans_and_maps_the_verdict_back() -> None:
         return httpx.Response(200, json={"supported": False, "reason": "581", "score": 0.1, "checker": "lettucedetect"})
 
     g = gh.HttpGrounder("http://grounder:8094/", client=_client(handler))
-    v = g.verdict(Claim("SPY at 581", ("a",)), [SPAN])
+    v = g.verdict(Claim("Net at 581", ("a",)), [SPAN])
     assert v.supported is False and v.reason == "581" and v.score == 0.1 and v.checker == "lettucedetect"
     assert g.checker == "lettucedetect", "the sidecar's name replaces the transport's"
     assert seen[0].url == "http://grounder:8094/verdict"
     assert json.loads(seen[0].content) == {
-        "claim": "SPY at 581",
-        "spans": [{"id": "a", "title": "Close", "text": "SPY closed at 580.5"}],
+        "claim": "Net at 581",
+        "spans": [{"id": "a", "title": "Report", "text": "Net closed at 580.5"}],
     }
 
 

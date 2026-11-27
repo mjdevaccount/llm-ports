@@ -11,3 +11,31 @@ repos:
         entry: 'EDGE|edge-host|\bbox[_-](?!chat")|Tradier|trade[-_.]data|narrator|\b\d+B\b|20\d\d-\d\d-\d\d'
         files: ^src/llm_ports/
         types: [python]
+      # Everything published (the package, the docs site, tests, examples, the changelog, the
+      # PyPI metadata) uses neutral domains: no market vocabulary and no names from the first
+      # consumer's deployment. Dates and scale letters are allowed here (changelog headings,
+      # number-law fixtures). A word is bounded by LETTERS, not by `\b`, so it is caught inside a
+      # snake_case or CamelCase identifier too (`tradier_chain`, `TradierClient`): the trailing
+      # lookahead refuses only a following lowercase letter. The list is not exhaustive, and it
+      # refuses some words in their everyday sense as well (a card dealer, a windmill farm, a
+      # novel's narrator, a ticker-tape parade): pick another word rather than loosen the gate.
+      # The entry is one verbose regex (`(?x)`: whitespace ignored, so a literal space is `\ `);
+      # the YAML folds it onto one line, so it carries no `#` comment. Selftest, must fire on a
+      # planted fixture and stay quiet on near-misses: tests/contract/test_vocabulary_gate.py.
+      - id: no-market-vocabulary
+        name: no market or deployment vocabulary in published files
+        language: pygrep
+        entry: >-
+          (?x)
+          (?<![A-Za-z])(SPY|QQQ|IWM|VIX|EDGE)(?![A-Za-z])
+          | (?i:(?<![a-z])gex(?![a-z]))
+          | (?i:gamma[\ _-]?(exposure|flip|wall) | (short|long)[\ _-]gamma | tradingedge)
+          | (?i:(?<![a-z])narrator)
+          | (?i:(?<![a-z])(dealers? | tradier | tickers? | \d*dte | rth | p_up | windmills?
+          | trade[-_.](data|ui|infra|quant|cascade) | (edge|home)[-_](host|ci|platform)
+          | (put|call)[\ _-]walls? | llm[-_]box | matt-?pc | te_dex | finance[-_]ops
+          | work-timeline | estate-roadmap)(?-i:(?![a-z])))
+          | mjdevaccount/(?!(llm-ports|ci-kit)(?![\w-]))
+        files: ^(src/llm_ports/|docs/|tests/|examples/|README\.md$|CHANGELOG\.md$|CONTRIBUTING\.md$|CLAUDE\.md$|mkdocs\.yml$|pyproject\.toml$)
+        exclude: ^tests/fixtures/vocabulary/planted\.txt$
+        types: [text]

@@ -8,7 +8,7 @@ from llm_ports import ports
 from llm_ports.ports import Chunk, GenRequest
 from llm_ports.testing import STUB_MODEL, Reply, StubCiter, StubGenerator
 
-SPAN = Chunk(id="a", text="SPY closed at 580.5, up 3%", title="Close")
+SPAN = Chunk(id="a", text="Net closed at 580.5, up 3%", title="Report")
 
 
 async def test_the_stub_citer_keeps_the_citer_laws() -> None:
