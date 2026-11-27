@@ -9,6 +9,15 @@ place.
 On a failure the caller keeps the order it already had: a reranker that is down degrades ranking,
 never search.
 
+Compatibility facts:
+    - The score scale belongs to the model. One family returns raw logits (unbounded, negative
+      allowed), another a normalized 0-1 relevance. Rank by the scores of one reply; never
+      threshold a score, or compare scores across models, without calibrating that model first.
+    - llama.cpp's server batches every query-document pair of one request together, so a
+      request's logical batch is the sum over its pairs. A two-document smoke test can pass where
+      a full-size request fails; size the server's batch, or the documents per request, to real
+      traffic.
+
 Invariants:
     - An `ok` reply scores every document exactly once: its indices are exactly 0..n-1, so a
       duplicate index cannot pass a count check and leave one document unscored.
@@ -27,7 +36,7 @@ re-sent request is an `Attempt` on the result. None (the default) sends one requ
 Rationale: ADR-0001, ADR-0020, ADR-0021.
 
 Example:
-    reranker = HttpReranker("http://localhost:8080/v1/rerank", "bge-reranker-v2-m3")
+    reranker = HttpReranker("http://localhost:8080/v1/rerank", "my-reranker")
     res = await reranker.rerank("late shipment refund", [doc.text for doc in docs])
     if res.ok:
         ranked = sorted(zip(res.scores, docs), key=lambda t: -t[0])

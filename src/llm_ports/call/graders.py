@@ -16,7 +16,8 @@ Built-in graders, for structured outputs (a dict or pydantic value under a gramm
   field fails. A dict value has no annotations to read, so every None in it is unanswered, unless
   the caller declares the answer paths: `schema_complete(..., model=Out)` reads them off a model,
   `nullable={"items[].stop"}` names them, and `partial(schema_complete, nullable=...)` binds them
-  into a table entry.
+  into a table entry. `nullish=True` also counts an abstention spelled as text (`NULLISH`: "N/A",
+  "none", "tbd", ...) as unanswered: a grammar admits the string where the schema meant null.
 - `numbers_from_inputs`: figures in the reply's prose that no part of the prompt rendered, digit
   runs by value and spelled numbers alike (`numbers.loose`): the number law, per call. A figure
   that shows one prompt value again, coarser (rounded, in millions, as a percentage), is that
@@ -119,8 +120,47 @@ def prose(value: Any) -> list[str]:
     return [v for _p, v in leaves(value) if isinstance(v, str)]
 
 
-def _empty(v: Any) -> bool:
-    return v is None or (isinstance(v, str) and not v.strip())
+#: The spellings a model writes for "no value" inside a string field, compared stripped and
+#: case-folded. A grammar enforces the type, not the meaning: a field typed `string | null` accepts
+#: the four characters "none", which then reads as an answer to every `is None` check downstream.
+NULLISH: frozenset[str] = frozenset(
+    {
+        "",
+        "-",
+        "--",
+        "n/a",
+        "na",
+        "nil",
+        "none",
+        "not applicable",
+        "not disclosed",
+        "not specified",
+        "not stated",
+        "null",
+        "tbd",
+        "unknown",
+        "unstated",
+    }
+)
+
+
+def is_nullish(v: Any) -> bool:
+    """Return whether `v` is None or a string that spells no value (`NULLISH`)."""
+    return v is None or (isinstance(v, str) and v.strip().casefold() in NULLISH)
+
+
+def nullish_to_none(v: Any) -> Any:
+    """Return None for a nullish string (`NULLISH`); return every other value unchanged.
+
+    Pure. For a `mode="before"` field validator on an optional field, so the abstention validates
+    as None instead of failing a number parse or reading as an answer. Anything else passes
+    through: a malformed value still fails validation, where it is seen.
+    """
+    return None if isinstance(v, str) and v.strip().casefold() in NULLISH else v
+
+
+def _empty(v: Any, nullish: bool = False) -> bool:
+    return is_nullish(v) if nullish else v is None or (isinstance(v, str) and not v.strip())
 
 
 def _admits_none(ann: Any) -> bool:
@@ -178,6 +218,7 @@ def schema_complete(
     *,
     model: type[BaseModel] | None = None,
     nullable: Iterable[str] | None = None,
+    nullish: bool = False,
 ) -> CallScore:
     """Score the share of the reply's fields that carry a value.
 
@@ -192,6 +233,8 @@ def schema_complete(
             a dict reply included.
         nullable: Answer paths named directly, index-free (`items[].stop`). Taken with `model`, the
             two sets are joined.
+        nullish: Also count a nullish string (`NULLISH`) as unanswered. A schema whose own choices
+            include such a word (an enum value "none") declares that path in `nullable`.
 
     Returns:
         A `CallScore`; never raises on a value `leaves` can walk.
@@ -199,7 +242,9 @@ def schema_complete(
     Invariants:
         - With neither `model` nor `nullable`, a pydantic value's own annotations decide and a dict's
           every None is unanswered: the grader the built-in table carries.
-        - A declared path exempts None and blank text only; a non-empty value scores the same.
+        - A declared path exempts None, blank text and (with `nullish`) a nullish string only; any
+          other value scores the same.
+        - `nullish=False`, the default and the built-in table's entry, scores exactly as before.
     """
     fields = list(leaves(value))
     if not fields:
@@ -208,7 +253,7 @@ def schema_complete(
         exempt = nullable_paths(type(value)) if isinstance(value, BaseModel) else frozenset()
     else:
         exempt = (nullable_paths(model) if model is not None else frozenset()) | frozenset(nullable or ())
-    empty = [p for p, v in fields if _empty(v) and _INDEX.sub("[]", p) not in exempt]
+    empty = [p for p, v in fields if _empty(v, nullish) and _INDEX.sub("[]", p) not in exempt]
     share = round(1 - len(empty) / len(fields), 4)
     return CallScore("schema_complete", share, not empty, f"empty: {empty[:4]}" if empty else "")
 
@@ -359,6 +404,7 @@ __all__ = [
     "ECHO_MAX_SHARE",
     "ECHO_MIN_CHARS",
     "GRADERS",
+    "NULLISH",
     "TEXT_ONLY_GRADERS",
     "WEB_ONLY_GRADERS",
     "CallGrader",
@@ -367,9 +413,11 @@ __all__ = [
     "cites_url",
     "echo",
     "graders_for_inputs",
+    "is_nullish",
     "leaves",
     "no_refusal",
     "nullable_paths",
+    "nullish_to_none",
     "numbers_from_inputs",
     "prose",
     "schema_complete",

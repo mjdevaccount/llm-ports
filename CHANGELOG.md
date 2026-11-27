@@ -7,6 +7,31 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-11-27
+
+### Added
+
+- **`call.graders.nullish_to_none`, `is_nullish` and `NULLISH`**: the spellings a model writes for
+  "no value" inside a string field ("N/A", "none", "tbd", "not stated", ...). `nullish_to_none` is
+  a `mode="before"` field validator body: an abstention validates as None, a malformed value still
+  fails.
+- **`schema_complete(..., nullish=True)`** also counts a nullish string as unanswered. A grammar
+  admits `"none"` where the schema meant null, so a parsed reply is not an answered one. The
+  default (and the built-in table's entry) scores exactly as before; a schema whose own choices
+  include such a word declares that path in `nullable`.
+- **`evals.golden` fires an item's `images`** (`(bytes, media type)` pairs) beside the prompt, the
+  graded row carries their count rather than the bytes, and a board with any image item drops
+  `TEXT_ONLY_GRADERS`, as the live call does.
+- Docs: "When the input is an image" in the slots guide (print what you know, keep annotations
+  off the data, an image-delivery check as a validator), and ADR-0032: the research scratchpad
+  stays first.
+
+### Changed
+
+- The `/rerank` adapter's docstring states two compatibility facts: the score scale belongs to
+  the model (raw logits or 0-1; rank, never threshold across models), and llama.cpp batches every
+  pair of one request together.
+
 ## [1.32.1] - 2026-11-27
 
 ### Fixed
