@@ -302,6 +302,12 @@ class TestWebGraders:
         text = "Please check https://example.com/2026/11/27/item-4410 for details."
         assert cg.ungrounded_refusals(text) == ["Please check"]
 
+    def test_is_grounded_needs_a_url_and_three_figures_outside_it(self) -> None:
+        assert cg.is_grounded("Up 4% to 210 from 198, per https://example.com/r")
+        assert not cg.is_grounded("Up 4% to 210 from 198.")  # no URL
+        assert not cg.is_grounded("See https://example.com/2026/11/27/4410 for 2 figures.")
+        assert not cg.is_grounded("")
+
     def test_a_url_with_too_few_figures_is_still_a_refusal(self) -> None:
         text = "I am unable to provide the total; see https://example.com/r for 2 figures."
         assert cg.ungrounded_refusals(text) == ["unable to provide"]
