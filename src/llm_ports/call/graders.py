@@ -320,19 +320,29 @@ def cites_url(_prompt: str, value: Any, _role: Role) -> CallScore:
     return CallScore("cites_url", float(len(urls)), bool(urls), "" if urls else "the reply cites no URL")
 
 
+def is_grounded(text: str) -> bool:
+    """True when `text` cites an http(s) URL and states `GROUNDED_MIN_FIGURES` distinct figures.
+
+    Figures inside the URLs do not count: a path's date or id is not something the text
+    states. Pure: no model, no I/O. A caller with a stricter refusal phrasebook of its own
+    applies it only when this is False, as `ungrounded_refusals` does with the built-in one.
+    """
+    text = text or ""
+    return bool(_URL.search(text)) and len(digits(_URL.sub(" ", text))) >= GROUNDED_MIN_FIGURES
+
+
 def ungrounded_refusals(text: str) -> list[str]:
     """Return the refusal phrases in `text`, or none when the text is grounded.
 
-    Grounded means it cites at least one http(s) URL and carries at least
+    Grounded (`is_grounded`) means it cites at least one http(s) URL and carries at least
     `GROUNDED_MIN_FIGURES` distinct figures outside its URLs. Such a reply is an answer
     that hedges ("please check the source for the full table"), not a refusal; scoring it
     by phrases alone flags it. Text with no URL, or fewer figures, is judged by the
     phrases. Pure: no model, no I/O.
     """
-    text = text or ""
-    if _URL.search(text) and len(digits(_URL.sub(" ", text))) >= GROUNDED_MIN_FIGURES:
+    if is_grounded(text):
         return []
-    return [m.group(0) for m in _REFUSAL.finditer(text)]
+    return [m.group(0) for m in _REFUSAL.finditer(text or "")]
 
 
 def no_refusal(_prompt: str, value: Any, _role: Role) -> CallScore:
@@ -442,6 +452,7 @@ __all__ = [
     "cites_url",
     "echo",
     "graders_for_inputs",
+    "is_grounded",
     "is_nullish",
     "leaves",
     "no_refusal",

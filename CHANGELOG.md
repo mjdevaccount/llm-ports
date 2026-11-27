@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-11-27
+
+### Added
+
+- **`call.graders.is_grounded(text)`**: the grounding test `ungrounded_refusals` applies, public,
+  so a caller with a stricter refusal phrasebook of its own (a research loop that also treats
+  "cannot confirm" as a punt) applies it only to ungrounded text instead of re-deriving the test.
+
 ## [1.34.0] - 2026-11-27
 
 ### Added
