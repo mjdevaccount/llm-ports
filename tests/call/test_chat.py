@@ -249,10 +249,10 @@ async def test_a_conversation_is_graded_and_never_gated() -> None:
 
     hooks, events = _hooks(on_scores=on_scores)
     stub = StubChat([Turn.reply("wait for a 15-minute retest")])
-    res = await call.chat(role, messages=[_user("room_down 14.878")], chat=stub, hooks=hooks)
+    res = await call.chat(role, messages=[_user("headroom 14.878")], chat=stub, hooks=hooks)
     assert res.outcome == "ok" and res.value == "wait for a 15-minute retest"
     assert call.GATES_FAILED not in res.stamp and noted == [[False]]
     assert _names(events) == ["llm_call_graded"], "measured, and no llm_call_failed"
     gen = StubGenerator([Reply.ok("wait for a 15-minute retest"), Reply.ok("wait for a 15-minute retest")])
-    refused = await call.generate(role, prompt="room_down 14.878", generator=gen)
+    refused = await call.generate(role, prompt="headroom 14.878", generator=gen)
     assert refused.outcome == "invalid" and refused.stamp[call.GATES_FAILED] == ("numbers_from_inputs",)

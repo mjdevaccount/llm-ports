@@ -128,7 +128,7 @@ class TestRerenders:
         assert not numbers.rerenders(run, after, {value})
 
     def test_loose_names_the_invented_figure_and_keeps_the_rounded_ones(self) -> None:
-        allowed = numbers.digits("ratio_r 0.5918, room_down 14.878, gauge 28.89, net_flow -19813893517")
+        allowed = numbers.digits("ratio 0.5918, headroom 14.878, gauge 28.89, net_flow -19813893517")
         text = "Measured 0.59R with 14.88 of room and -19.8B of flow; wait for a 15-minute recheck below 28.00."
         assert numbers.loose(text, allowed, rerender=True) == ["15", "28"]
 
@@ -150,11 +150,11 @@ class TestRerenders:
             ("a 100% chance", "step 1. read the log", ["100"]),
             ("up 200%", "2 days left", ["200"]),
             ("up 200.0%", "2 days left", ["200"]),
-            ("75% of sessions, 150% of the range", "p_up 0.7486 ratio 1.5", []),
+            ("75% of sessions, 150% of the range", "p 0.7486 ratio 1.5", []),
             # a newline ends the figure: the marker is on the next line, so it marks nothing
-            ("was 75" + chr(10) + "percent of", "p_up 0.7486", ["75", "percent"]),
+            ("was 75" + chr(10) + "percent of", "p 0.7486", ["75", "percent"]),
             ("19.8" + chr(10) + "billion", "net 19813893517", ["19.8", "billion"]),
-            ("was 75 percent of", "p_up 0.7486", []),
+            ("was 75 percent of", "p 0.7486", []),
         ],
     )
     def test_a_marker_is_read_narrowly(self, text: str, inputs: str, unlicensed: list[str]) -> None:
@@ -165,8 +165,8 @@ class TestRerenders:
         [
             # the run equals another input (a date's 20, a day count of 75) and re-renders the one meant
             ("net flow is -20 billion", "date 2026-11-20 net_flow -19813893517", []),
-            ("about 75 percent", "days 75 p_up 0.7486", []),
-            ("about 75 pct", "days 75 p_up 0.7486", []),
+            ("about 75 percent", "days 75 p 0.7486", []),
+            ("about 75 pct", "days 75 p 0.7486", []),
             # and with no input for the scale to re-render, the scale word is still invented
             ("about 20 billion", "date 2026-11-20", ["billion"]),
             ("about 20 thousand", "date 2026-11-20 lots 21000", ["thousand"]),
@@ -235,8 +235,8 @@ class TestRerenders:
             ("flow near 0.59B", "flow 0.5918B", []),
             ("cap of 3.2 billion", "date 2026-11-20 cap 3.2 billion", []),
             # a percentage the value already was keeps its word, with decimals or without
-            ("IV 18.4 percent", "iv 18.37", []),
-            ("IV 18 percent", "iv 18", []),
+            ("rate 18.4 percent", "rate 18.37", []),
+            ("rate 18 percent", "rate 18", []),
         ],
     )
     def test_a_scale_after_a_licensed_run_needs_an_input_at_that_scale(

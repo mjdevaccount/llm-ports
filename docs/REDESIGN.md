@@ -268,7 +268,7 @@ The `pypi` environment admits `v*` tags and `main` only.
 
 **Decided (operator, 2026-11-03): keep `llm-ports`** (import `llm_ports`). "Ports" names the
 ports-and-adapters design engineers recognise; the README's first line carries the value. No repo
-rename, no estate reference changes, and no import-prefix change beyond the 1.0 subpackage paths.
+rename, no consumer reference changes, and no import-prefix change beyond the 1.0 subpackage paths.
 Rejected: renames such as `groundwire` and `grounded-llm` — a metaphor that needs explaining, or
 a rename cost bought for a marginal gain.
 

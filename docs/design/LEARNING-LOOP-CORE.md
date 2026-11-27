@@ -353,7 +353,7 @@ budget; a miss is a core defect to fix, not a number to restate.
 - `tests/contract/test_core_imports.py` (the `core-only` CI job, a bare install) walks `llm_ports.learn`
   with the rest of the core and asserts it loads no vendor module; `examples/learning_loop.py` runs on every pytest leg.
 - The vocabulary pre-commit hooks already reject consumer and deployment names in
-  `src/llm_ports/`, and market and estate names across the docs, tests and examples too.
+  `src/llm_ports/`, and market and deployment names across the docs, tests and examples too.
 - Docs say how to plug in a ledger: implement two methods.
 
 ## Telemetry (what fails silently, where it lands, what watches it)

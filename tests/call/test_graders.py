@@ -139,7 +139,7 @@ class TestEachGrader:
         assert not bad.passed and bad.value == 2.0 and "999" in bad.reason
 
     def test_numbers_from_inputs_licenses_one_input_value_shown_coarser_and_nothing_computed(self) -> None:
-        prompt = "ratio_r 0.5918 | room_down 14.878 | net_flow -19813893517 | win_rate 0.7486 | gauge 28.89"
+        prompt = "ratio 0.5918 | headroom 14.878 | net_flow -19813893517 | win_rate 0.7486 | gauge 28.89"
         rounded = {"why": "Measured 0.59R with 14.88 of room, -19.8B of flow and a 75% win rate."}
         assert cg.numbers_from_inputs(prompt, rounded, ROLE).passed
         invented = cg.numbers_from_inputs(prompt, {"why": "Wait for a 15-minute retest below 28.00."}, ROLE)
@@ -153,7 +153,7 @@ class TestEachGrader:
             # A dropped digit is not a percent of the input: -26 is -26%, and -0.026 would be -2.6%.
             ("pct_from_52w_high -26 | level 766.2", "It sits -2.6% below its 52-week high.", "2.6"),
             # A bare whole number is never a rounding, and no input holds a 15.
-            ("ratio_r 0.5918 | minutes_from_anchor -48.1", "Wait for a 15-minute recheck.", "15"),
+            ("ratio 0.5918 | minutes_from_anchor -48.1", "Wait for a 15-minute recheck.", "15"),
         ],
     )
     def test_numbers_from_inputs_must_fail_fixtures(self, prompt: str, reply: str, named: str) -> None:

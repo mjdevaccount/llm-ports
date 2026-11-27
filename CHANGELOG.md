@@ -13,7 +13,9 @@ All notable changes to this project are documented here. The format is based on
   `pre-commit` pygrep hook, `no-market-vocabulary`, refuses market terms (exchange symbols, options
   positioning words, a broker name) and the first consumer's repository and host names across
   `src/llm_ports/`, `docs/`, `tests/`, `examples/`, `README.md`, `CHANGELOG.md`,
-  `CONTRIBUTING.md`, `CLAUDE.md` and `mkdocs.yml`. Its selftest
+  `CONTRIBUTING.md`, `CLAUDE.md`, `mkdocs.yml` and `pyproject.toml`. A refused word is bounded by
+  letters rather than `\b`, so it is caught inside a snake_case or CamelCase identifier
+  (a broker table or client class name) too. Its selftest
   (`tests/contract/test_vocabulary_gate.py`) runs pre-commit's own engine: every line of a planted
   fixture must go red, a list of near-misses must pass, the exclusion may name only that fixture,
   and CI must invoke the hook.

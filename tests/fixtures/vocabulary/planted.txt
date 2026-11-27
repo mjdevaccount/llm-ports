@@ -2,7 +2,7 @@ SPY closed at 580.5
 QQQ leads
 IWM lags
 VIX near 28
-net_gex -19813893517
+net_gex -1
 GEX flipped
 the EDGE cockpit
 gamma exposure
@@ -37,3 +37,19 @@ finance-ops
 work-timeline
 estate-roadmap
 mjdevaccount/home-host
+tradier_chain
+TradierClient
+get_tradier_quote
+trade_data_url
+te_dex_rows
+edge_host_ip
+EDGE_HOST
+windmill_flow
+ticker_list
+llm_box_url
+finance_ops_db
+put_wall_strike
+silence_clock="rth"
+p_up 0.7
+mjdevaccount/llm-ports-private
+mjdevaccount/ci-kit-x

@@ -226,7 +226,7 @@ class TestGraders:
 GATED = Role("test.gated", tier="local", graders=GRADERS, gates=("numbers_from_inputs",))
 INVENTED = {"summary": "wait for a 15-minute retest"}
 GROUNDED = {"summary": "held 14.88 of room"}
-PROMPT = "room_down 14.878"
+PROMPT = "headroom 14.878"
 
 
 class TestGates:

@@ -22,16 +22,20 @@ PLANTED = "tests/fixtures/vocabulary/planted.txt"
 HOOK_ID = "no-market-vocabulary"
 
 #: Words that sit next to a refused term and must still pass: a test double, an English word,
-#: a substring, a public repository path, a date and a scale letter.
+#: a substring (a refused word is bounded by letters, so it may not continue into a lowercase
+#: one), a public repository path, a date and a scale letter.
 NEAR_MISSES = (
     "class _Spy(WrapperModel): a test spy",
     "an edge case at the Edge of the map",
     "spyware, stickers, a dealership, an update",
+    "a Dealership in town, worth it, north of here, a setup_upgrade",
+    "the edge_city and home_cinema",
     "alpha, beta and gamma hold",
     "the work market and its kill switch",
     "a trade-off between edge_weights and home pages",
     "narrow it down",
     "https://github.com/mjdevaccount/llm-ports and mjdevaccount/ci-kit",
+    "see mjdevaccount/llm-ports.",
     "## [1.32.0] - 2026-11-27",
     "-19.8B of flow",
 )
@@ -53,7 +57,7 @@ def _run(path: Path) -> int:
 
 def test_the_planted_fixture_goes_red_on_every_line(tmp_path: Path) -> None:
     lines = (ROOT / PLANTED).read_bytes().splitlines()
-    assert len(lines) == 39, "one line per refused term: add a line when the list grows"
+    assert len(lines) == 55, "one line per refused term: add a line when the list grows"
     assert _run(ROOT / PLANTED) == 1, "MUST FIRE: the planted fixture passed the gate"
     # pygrep compiles the entry as bytes with no flags; each line alone must be a finding
     for i, line in enumerate(lines):
@@ -79,7 +83,10 @@ def test_the_gate_covers_every_published_root_and_excludes_only_the_fixture() ->
         "examples/x.py",
         "README.md",
         "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "CLAUDE.md",
         "mkdocs.yml",
+        "pyproject.toml",
     ):
         assert files.search(path) and not exclude.search(path), path
     assert files.search(PLANTED) and exclude.search(PLANTED)

@@ -42,7 +42,7 @@ def test_each_freshness_rule_alone_is_admitted(kw: dict[str, Any]) -> None:
 @pytest.mark.parametrize(
     ("kw", "match"),
     [
-        ({"silence_clock": "rth"}, "silence_clock"),
+        ({"silence_clock": "business"}, "silence_clock"),
         ({"desired_ttl": "18 hours"}, "desired_ttl: bad interval"),
         ({"cadence": "1w"}, "cadence: bad interval"),
         ({"max_silence_h": 0}, "max_silence_h must be > 0"),
@@ -62,9 +62,9 @@ def test_a_malformed_field_is_refused(kw: dict[str, Any], match: str) -> None:
 
 
 def test_a_registry_can_accept_its_own_clocks() -> None:
-    reg = ActionRegistry(clocks=(*SILENCE_CLOCKS, "rth"))
-    reg.action(feature="zz", action="probe", desired_ttl="6h", **CACHE, silence_clock="rth")(_handler)
-    assert reg.clocks == ("wall", "session", "rth")
+    reg = ActionRegistry(clocks=(*SILENCE_CLOCKS, "business"))
+    reg.action(feature="zz", action="probe", desired_ttl="6h", **CACHE, silence_clock="business")(_handler)
+    assert reg.clocks == ("wall", "session", "business")
     assert reg.find("zz", "probe") is not None
 
 
@@ -164,9 +164,9 @@ def test_include_is_all_or_nothing() -> None:
     assert main.find("g", "x") is None, "no action of a refused pack joins"
     assert events.seen[-1][1] == "market_action_refused"
 
-    clocked = ActionRegistry("clocked", clocks=("wall", "rth"))
-    clocked.action(feature="h", action="y", desired_ttl="6h", **CACHE, silence_clock="rth")(_handler)
-    with pytest.raises(ValueError, match="silence_clock 'rth'"):
+    clocked = ActionRegistry("clocked", clocks=("wall", "business"))
+    clocked.action(feature="h", action="y", desired_ttl="6h", **CACHE, silence_clock="business")(_handler)
+    with pytest.raises(ValueError, match="silence_clock 'business'"):
         main.include(clocked)
 
     equal = ActionRegistry("equal")

@@ -309,9 +309,9 @@ async def test_a_gate_re_ask_through_the_real_adapter_leaves_its_witness() -> No
 
     role = Role("test.adapter_gate", tier="local", graders=("numbers_from_inputs",), gates=("numbers_from_inputs",))
     model, calls = _replies("wait for a 15-minute retest", "held 14.88 of room")
-    res = await call.generate(role, prompt="room_down 14.878", generator=PydanticAIGenerator(model))
+    res = await call.generate(role, prompt="headroom 14.878", generator=PydanticAIGenerator(model))
     assert (res.outcome, res.value, res.retries) == ("ok", "held 14.88 of room", 1) and len(calls) == 2
     assert res.stamp[call.GATES_REASKED] == ("numbers_from_inputs",)
     model, calls = _replies("held 14.88 of room")
-    res = await call.generate(role, prompt="room_down 14.878", generator=PydanticAIGenerator(model))
+    res = await call.generate(role, prompt="headroom 14.878", generator=PydanticAIGenerator(model))
     assert res.outcome == "ok" and len(calls) == 1 and call.GATES_REASKED not in res.stamp
