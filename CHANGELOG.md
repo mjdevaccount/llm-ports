@@ -23,6 +23,17 @@ All notable changes to this project are documented here. The format is based on
   river levels and order lines; `docs/design/` and `docs/REDESIGN.md` describe "the consumer
   application" in place of its file map. Every test pins the same outputs it pinned before.
 
+## [1.32.1] - 2026-11-27
+
+### Fixed
+
+- **A 200 with `choices: []` stays `malformed_response` on pydantic-ai 2.75.** pydantic-ai 2.75
+  raises a typed `ModelEmptyResponseError` (an `UnexpectedModelBehavior`) for an empty reply, where
+  earlier versions raised from inside the provider client. The generator classified the new type
+  as the caller's `invalid_output` (not retryable). It now maps to `malformed_response` under
+  `unavailable`, retryable, as step 9 of the classification order already promised. The import is
+  guarded, so the `>=2.64` floor is unchanged.
+
 ## [1.32.0] - 2026-11-27
 
 ### Added
