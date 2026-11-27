@@ -34,6 +34,8 @@ def research_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
 
     Pure. A free-text `analysis` property (`RESEARCH_ANALYSIS`) is injected first, and `required`
     lists every property, including the ones pydantic marks optional because they have a default.
+
+    Rationale: ADR-0032.
     """
     out = dict(schema)
     props: dict[str, Any] = {ANALYSIS_KEY: RESEARCH_ANALYSIS}

@@ -4,8 +4,10 @@ A golden item is a mapping with an `id` and the pack's template context under `s
 for a pack with no slots). An item that also carries `user` fires as a system and user pair: the
 rendered pack is the system prompt and `user` is the prompt, the shape of a producer whose fixed
 instructions ride as the system so a prefix cache holds them. Every other key of the item (a
-stratum, the keys a reply may cite) rides onto the graded row, where a grader can read it. The
-flow:
+stratum, the keys a reply may cite) rides onto the graded row, where a grader can read it. An
+item's `images`, a sequence of `(bytes, media type)` pairs, ride beside the prompt
+(`generate(images=...)`) and onto the row as their count; a board with any image item drops
+`call.graders.TEXT_ONLY_GRADERS`, as the live call does. The flow:
 
     fire:   rendered = pack.render_source(source, **item.get("slots", {}))
             result   = generate(role, prompt=rendered, output=output(item), generator=generator)
@@ -44,7 +46,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from llm_ports.call import generate as call_generate
-from llm_ports.call.graders import GRADERS, CallGrader, board_graders
+from llm_ports.call.graders import GRADERS, TEXT_ONLY_GRADERS, CallGrader, board_graders
 from llm_ports.call.roles import Role
 from llm_ports.evals._gauntlet import GauntletEvaluator
 from llm_ports.observability import EventHook, log_events
@@ -86,9 +88,11 @@ async def fire_one(
     user = item.get("user")
     prompt, system = (rendered, "") if user is None else (str(user), rendered)
     gen, attempts = generator_for()
-    sys_kw = {"system": system} if system else {}  # a facade with no `system` keyword still fits
+    kw: dict[str, Any] = {"system": system} if system else {}  # a facade with no `system` keyword still fits
+    if images := tuple(item.get("images") or ()):
+        kw["images"] = images
     async with gate:
-        res = await generate(role, prompt=prompt, output=output(item), generator=gen, **sys_kw)
+        res = await generate(role, prompt=prompt, output=output(item), generator=gen, **kw)
     verdict = res.outcome if res.outcome in ("ok", "gated") else "error"
     (on_event or log_events("llm_ports.evals.golden"))(
         logging.INFO,
@@ -145,7 +149,8 @@ async def fire(
 def rows_of(items: Sequence[Mapping[str, Any]], outs: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Return the graded row per item: the item's own keys except `slots`, under the reply.
 
-    An item with no result is `outcome="not_run"` with no value.
+    An item with no result is `outcome="not_run"` with no value. An item's `images` become their
+    count: the row is a report, and image bytes are not.
     """
     rows = []
     for it in items:
@@ -153,6 +158,7 @@ def rows_of(items: Sequence[Mapping[str, Any]], outs: Mapping[str, Mapping[str, 
         rows.append(
             {
                 **{k: v for k, v in it.items() if k != "slots"},
+                **({"images": len(it["images"])} if it.get("images") else {}),
                 "prompt": o.get("prompt"),
                 "value": o.get("value"),
                 "outcome": o.get("outcome", "not_run"),
@@ -193,7 +199,10 @@ def grade(
     Returns:
         The board and the graded rows.
     """
-    graders = {**board_graders(role, table), **(extra or {})}
+    board = board_graders(role, table)
+    if any(it.get("images") for it in items):  # what the live call drops for an image beside the prompt
+        board = {n: g for n, g in board.items() if n not in TEXT_ONLY_GRADERS}
+    graders = {**board, **(extra or {})}
     rows = rows_of(items, outs)
     return evaluator.run(role.pack or role.name, rows, graders, monitors=monitors), rows
 

@@ -295,3 +295,39 @@ class TestGradersForInputs:
             "cites_url",
             "no_refusal",
         )
+
+
+class TestNullish:
+    @pytest.mark.parametrize("v", ["N/A", " none ", "TBD", "-", "", "Not Stated", "unknown", None])
+    def test_an_abstention_spelling_is_nullish(self, v: Any) -> None:
+        assert cg.is_nullish(v) and cg.nullish_to_none(v) is None
+
+    @pytest.mark.parametrize("v", ["nonetheless", "n/a/b", "12", 0, 0.0, False, [], "unknown origin"])
+    def test_a_value_passes_through_unchanged(self, v: Any) -> None:
+        assert not cg.is_nullish(v) and cg.nullish_to_none(v) is v
+
+    def test_a_pydantic_before_validator_turns_the_abstention_into_none(self) -> None:
+        from pydantic import field_validator
+
+        class Out(BaseModel):
+            price: float | None
+
+            @field_validator("price", mode="before")
+            @classmethod
+            def _abstain(cls, v: Any) -> Any:
+                return cg.nullish_to_none(v)
+
+        assert Out.model_validate({"price": "N/A"}).price is None
+        assert Out.model_validate({"price": "4.5"}).price == 4.5
+        with pytest.raises(ValueError):
+            Out.model_validate({"price": "four"})  # malformed is still seen, never nulled
+
+    def test_schema_complete_scores_nullish_as_unanswered_when_asked(self) -> None:
+        reply = {"a": "x", "b": "N/A", "c": "none"}
+        assert cg.schema_complete(PROMPT, reply, ROLE).passed, "the default scores exactly as before"
+        s = cg.schema_complete(PROMPT, reply, ROLE, nullish=True)
+        assert not s.passed and s.value == 0.3333 and s.reason == "empty: ['b', 'c']"
+
+    def test_a_declared_path_exempts_a_nullish_choice(self) -> None:
+        s = cg.schema_complete(PROMPT, {"a": "x", "category": "none"}, ROLE, nullish=True, nullable={"category"})
+        assert s.passed

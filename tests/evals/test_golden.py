@@ -4,6 +4,7 @@ is named, not graded."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -143,3 +144,62 @@ class TestCitationsResolve:
         assert g({"value": {"cited": "a"}, "known": ["a"]}) == (False, "cited is str, not a list")
         ok, why = g({"value": {"cited": ["a", "z"]}, "known": ["a"]})
         assert not ok and "z" in why
+
+
+PNG = (b"\x89PNG\r\n\x1a\n", "image/png")
+
+
+class TestImages:
+    async def test_an_items_images_reach_generate(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        async def generate(role: Any, **kw: Any) -> Generated[Any]:
+            seen.append(kw)
+            return Generated(value=REPLY, outcome="ok")
+
+        item = {"id": "i-1", "slots": {"who": "a clerk", "what": "hi"}, "images": [PNG]}
+        out = await golden.fire_one(
+            item,
+            role=ROLE,
+            pack=PACK,
+            source=PACK.source,
+            output=_output,
+            generator_for=lambda: (StubGenerator(REPLY), []),
+            gate=asyncio.Semaphore(1),
+            generate=generate,
+        )
+        assert seen[0]["images"] == (PNG,) and out["verdict"] == "ok"
+
+    async def test_an_item_without_images_sends_no_images_keyword(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        async def generate(role: Any, **kw: Any) -> Generated[Any]:  # a facade with no `images` still fits
+            seen.append(kw)
+            return Generated(value=REPLY, outcome="ok")
+
+        await golden.fire_one(
+            ITEMS[0],
+            role=ROLE,
+            pack=PACK,
+            source=PACK.source,
+            output=_output,
+            generator_for=lambda: (StubGenerator(REPLY), []),
+            gate=asyncio.Semaphore(1),
+            generate=generate,
+        )
+        assert "images" not in seen[0]
+
+    def test_a_row_carries_the_image_count_never_the_bytes(self) -> None:
+        item = {"id": "i-1", "images": [PNG, PNG]}
+        (row,) = golden.rows_of([item], {"i-1": {"value": REPLY, "outcome": "ok", "prompt": "p"}})
+        assert row["images"] == 2
+
+    def test_an_image_board_drops_the_text_only_graders_as_the_live_call_does(self) -> None:
+        role = Role("test.vision", tier="local", graders=("schema_complete", "numbers_from_inputs"))
+        reply = {"summary": "The total is 4417."}  # read off the image: no prompt rendered it
+        outs = {"i-1": {"value": reply, "outcome": "ok", "prompt": "Read the total."}}
+        board, _ = golden.grade([{"id": "i-1", "images": [PNG]}], outs, role, GauntletEvaluator())
+        assert set(board["by_grader"]) == {"schema_complete"}
+        # both directions: the same reply on a text board is held to the number law
+        board, _ = golden.grade([{"id": "i-1"}], outs, role, GauntletEvaluator())
+        assert board["by_grader"]["numbers_from_inputs"]["fail"] == 1
